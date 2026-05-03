@@ -184,7 +184,8 @@ PITCHING_DERIVED_CTE = f"""
 agg AS (
     SELECT
         player_id,
-        SUM(g) AS g, SUM(gs) AS gs, SUM(w) AS w, SUM(l) AS l, SUM(s) AS sv, SUM(hld) AS hld,
+        SUM(g) AS g, SUM(gs) AS gs, SUM(gf) AS gf,
+        SUM(w) AS w, SUM(l) AS l, SUM(s) AS sv, SUM(hld) AS hld,
         SUM(outs) AS outs,
         SUM(ha) AS ha, SUM(hra) AS hra, SUM(r) AS r, SUM(er) AS er,
         SUM(bb) AS bb, SUM(k) AS k, SUM(hp) AS hp, SUM(bf) AS bf,
@@ -193,6 +194,7 @@ agg AS (
         SUM(cg) AS cg, SUM(sho) AS sho,
         SUM(sb) AS sb_against, SUM(cs) AS cs_against, SUM(iw) AS iw, SUM(wp) AS wp, SUM(bk) AS bk,
         SUM(ir) AS ir, SUM(irs) AS irs, SUM(wpa) AS wpa, SUM(li) AS li,
+        AVG(li) FILTER (WHERE g > 0) AS li_avg,
         SUM(sd) AS sd, SUM(md) AS md, SUM(war) AS war, SUM(ra9war) AS ra9war,
         SUM(sf) AS sf
     FROM career_pit
@@ -202,7 +204,7 @@ agg AS (
 derived AS (
     SELECT
         a.player_id,
-        a.g, a.gs, a.w, a.l, a.sv, a.hld, a.outs,
+        a.g, a.gs, a.gf, a.w, a.l, a.sv, a.hld, a.outs,
         a.ha, a.hra, a.r, a.er, a.bb, a.k, a.hp, a.bf, a.ab, a.tb,
         a.gb, a.fb, a.pitches_thrown, a.dp, a.qs, a.svo, a.bs, a.ra, a.cg, a.sho,
         a.sb_against, a.cs_against, a.iw, a.wp, a.bk, a.ir, a.irs, a.wpa, a.li,
@@ -218,10 +220,17 @@ derived AS (
         ROUND(9.0 * a.k   / NULLIF(a.outs / 3.0, 0), 2) AS k9,
         ROUND(1.0 * a.k / NULLIF(a.bb, 0), 2) AS k_per_bb,
         ROUND(1.0 * a.w / NULLIF(a.w + a.l, 0), 3) AS win_pct,
-        ROUND(1.0 * a.sv / NULLIF(a.svo, 0), 3) AS sv_pct,
+        -- SV%: OOTP uses sv / (sv + bs) — successful saves / save situations.
+        ROUND(1.0 * a.sv / NULLIF(a.sv + a.bs, 0), 3) AS sv_pct,
         ROUND(1.0 * a.qs / NULLIF(a.gs, 0), 3) AS qs_pct,
-        ROUND(100.0 * a.gb / NULLIF(a.gb + a.fb, 0), 1) AS go_pct,
-        ROUND(1.0 * a.pitches_thrown / NULLIF(a.g, 0), 1) AS ppg
+        -- GO% as decimal fraction (OOTP convention: 0.17 = 17%)
+        ROUND(1.0 * a.gb / NULLIF(a.gb + a.fb, 0), 3) AS go_pct,
+        -- PPG: OOTP truncates (FLOOR), not rounds.
+        FLOOR(1.0 * a.pitches_thrown / NULLIF(a.g, 0)) AS ppg,
+        -- pLi: career_pit.li is a per-stint average; aggregating with SUM
+        -- over multiple stints overstates. AVG approximates without per-stint
+        -- appearance weighting (TODO: add weighted-avg once stint-level kept).
+        ROUND(a.li_avg, 2) AS p_li
     FROM agg a
 )
 """
@@ -326,17 +335,21 @@ derived AS (
         sr.running_ratings_speed                AS spe,
         sr.running_ratings_stealing             AS ste,
         sr.running_ratings_baserunning          AS run,
-        -- DEF in import_export = highest fielding pos rating? Or running_baserunning? TBD
-        GREATEST(
-            COALESCE(sr.fielding_rating_pos2, 0),
-            COALESCE(sr.fielding_rating_pos3, 0),
-            COALESCE(sr.fielding_rating_pos4, 0),
-            COALESCE(sr.fielding_rating_pos5, 0),
-            COALESCE(sr.fielding_rating_pos6, 0),
-            COALESCE(sr.fielding_rating_pos7, 0),
-            COALESCE(sr.fielding_rating_pos8, 0),
-            COALESCE(sr.fielding_rating_pos9, 0)
-        ) AS def
+        -- DEF = the player's fielding rating at their primary position
+        -- (sr.position is 1=P, 2=C, 3=1B, 4=2B, 5=3B, 6=SS, 7=LF, 8=CF, 9=RF).
+        -- NOT max-of-positions; a 3B with strong 1B/LF backup ratings still
+        -- shows the 3B number in IE.
+        CASE sr.position
+            WHEN 1 THEN sr.fielding_rating_pos1
+            WHEN 2 THEN sr.fielding_rating_pos2
+            WHEN 3 THEN sr.fielding_rating_pos3
+            WHEN 4 THEN sr.fielding_rating_pos4
+            WHEN 5 THEN sr.fielding_rating_pos5
+            WHEN 6 THEN sr.fielding_rating_pos6
+            WHEN 7 THEN sr.fielding_rating_pos7
+            WHEN 8 THEN sr.fielding_rating_pos8
+            WHEN 9 THEN sr.fielding_rating_pos9
+        END AS def
     FROM scouted_ratings sr
     WHERE sr.scouting_team_id = 4    -- Red Sox view
       AND sr.league_id = 203
@@ -366,13 +379,866 @@ BATTING_RATINGS = FileSpec(
         ColSpec("BFH",     "bfh",        "A", tolerance=RATING_TOLERANCE),
         ColSpec("SPE",     "spe",        "A", tolerance=RATING_TOLERANCE),
         ColSpec("STE",     "ste",        "A", tolerance=RATING_TOLERANCE),
-        ColSpec("DEF",     "def",        "G", tolerance=RATING_TOLERANCE,
-                notes="best of fielding_rating_pos2..9 — formula TBD"),
+        ColSpec("DEF",     "def",        "A", tolerance=RATING_TOLERANCE,
+                notes="fielding_rating_pos[player.position] — primary-position rating, not max"),
     ],
 )
 
 
-ALL_FILES = [BATTING_STATS_1, BATTING_STATS_2, PITCHING_STATS_1, FIELDING_STATS, BATTING_RATINGS]
+# ─────────────────────────────────────────────────────────────────────────────
+# Group A — Ratings & potential (5 files, all from `scouted_ratings`)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# Reuses RATINGS_DERIVED_CTE base: pulls the Red Sox scouting-team view of every
+# player at scouting_team_id=4. We just extend it with potential / pitching /
+# fielding / per-pitch columns by referencing scouted_ratings directly.
+
+POTENTIAL_DERIVED_CTE = """
+derived AS (
+    SELECT
+        sr.player_id,
+        sr.overall_rating AS ovr_2080,
+        sr.talent_rating  AS pot_2080,
+        -- Batting potential
+        sr.batting_ratings_talent_contact      AS con_p,
+        sr.batting_ratings_talent_gap          AS gap_p,
+        sr.batting_ratings_talent_power        AS pow_p,
+        sr.batting_ratings_talent_eye          AS eye_p,
+        sr.batting_ratings_talent_strikeouts   AS k_p,
+        sr.batting_ratings_talent_babip        AS ht_p,
+        -- Running (no potential, take current)
+        sr.running_ratings_speed               AS spe,
+        sr.running_ratings_stealing            AS ste,
+        sr.running_ratings_baserunning         AS run,
+        -- DEF in batting_potential is the *current* primary-position rating
+        -- (verified empirically; OOTP's potential view shows current DEF).
+        CASE sr.position
+            WHEN 1 THEN sr.fielding_rating_pos1
+            WHEN 2 THEN sr.fielding_rating_pos2
+            WHEN 3 THEN sr.fielding_rating_pos3
+            WHEN 4 THEN sr.fielding_rating_pos4
+            WHEN 5 THEN sr.fielding_rating_pos5
+            WHEN 6 THEN sr.fielding_rating_pos6
+            WHEN 7 THEN sr.fielding_rating_pos7
+            WHEN 8 THEN sr.fielding_rating_pos8
+            WHEN 9 THEN sr.fielding_rating_pos9
+        END AS def
+    FROM scouted_ratings sr
+    WHERE sr.scouting_team_id = 4
+      AND sr.league_id = 203
+)
+"""
+
+
+BATTING_POTENTIAL = FileSpec(
+    ie_filename="boston_red_sox_organization_-_roster_batting_potential.csv",
+    short_name="batting_potential",
+    derived_cte=POTENTIAL_DERIVED_CTE,
+    cols=[
+        ColSpec("POT",   "pot_2080", "A", tolerance=RATING_TOLERANCE),
+        ColSpec("CON P", "con_p",    "A", tolerance=RATING_TOLERANCE),
+        ColSpec("HT P",  "ht_p",     "A", tolerance=RATING_TOLERANCE,
+                notes="best-guess: batting_ratings_talent_babip"),
+        ColSpec("K P",   "k_p",      "A", tolerance=RATING_TOLERANCE),
+        ColSpec("GAP P", "gap_p",    "A", tolerance=RATING_TOLERANCE),
+        ColSpec("POW P", "pow_p",    "A", tolerance=RATING_TOLERANCE),
+        ColSpec("EYE P", "eye_p",    "A", tolerance=RATING_TOLERANCE),
+        ColSpec("SPE",   "spe",      "A", tolerance=RATING_TOLERANCE),
+        ColSpec("STE",   "ste",      "A", tolerance=RATING_TOLERANCE),
+        ColSpec("RUN",   "run",      "A", tolerance=RATING_TOLERANCE),
+        ColSpec("DEF",   "def",      "A", tolerance=RATING_TOLERANCE,
+                notes="fielding_rating_pos[player.position] (current, not potential)"),
+    ],
+)
+
+
+PITCHING_RATINGS_CTE = """
+derived AS (
+    SELECT
+        sr.player_id,
+        sr.overall_rating AS ovr_2080,
+        sr.talent_rating  AS pot_2080,
+        -- Pitching overall
+        sr.pitching_ratings_overall_stuff      AS stu,
+        sr.pitching_ratings_overall_movement   AS mov,
+        sr.pitching_ratings_overall_hra        AS hra,
+        sr.pitching_ratings_overall_pbabip     AS pbabip,
+        sr.pitching_ratings_overall_control    AS con,
+        sr.pitching_ratings_vsl_stuff          AS stu_vl,
+        sr.pitching_ratings_vsr_stuff          AS stu_vr,
+        -- Pitching talent
+        sr.pitching_ratings_talent_stuff       AS stu_p,
+        sr.pitching_ratings_talent_movement    AS mov_p,
+        sr.pitching_ratings_talent_hra         AS hra_p,
+        sr.pitching_ratings_talent_pbabip      AS pbabip_p,
+        sr.pitching_ratings_talent_control     AS con_p,
+        -- Misc
+        sr.pitching_ratings_misc_velocity      AS velo,
+        sr.pitching_ratings_misc_stamina       AS stm,
+        sr.pitching_ratings_misc_ground_fly    AS go_fly,
+        sr.pitching_ratings_misc_hold          AS hld,
+        sr.pitching_ratings_misc_arm_slot      AS arm_slot
+    FROM scouted_ratings sr
+    WHERE sr.scouting_team_id = 4
+      AND sr.league_id = 203
+)
+"""
+
+
+PITCHING_RATINGS = FileSpec(
+    ie_filename="boston_red_sox_organization_-_roster_pitching_ratings.csv",
+    short_name="pitching_ratings",
+    derived_cte=PITCHING_RATINGS_CTE,
+    cols=[
+        ColSpec("OVR",    "ovr_2080", "A", tolerance=RATING_TOLERANCE),
+        ColSpec("STU",    "stu",      "A", tolerance=RATING_TOLERANCE),
+        ColSpec("MOV",    "mov",      "A", tolerance=RATING_TOLERANCE),
+        ColSpec("HRA",    "hra",      "A", tolerance=RATING_TOLERANCE),
+        ColSpec("PBABIP", "pbabip",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("CON",    "con",      "A", tolerance=RATING_TOLERANCE),
+        ColSpec("STU vL", "stu_vl",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("STU vR", "stu_vr",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("VELO",   "velo",     "G", notes="integer→'75-80 Mph' string mapping needed"),
+        ColSpec("STM",    "stm",      "A", tolerance=RATING_TOLERANCE),
+        ColSpec("G/F",    "go_fly",   "G", notes="integer→'EX FB/FB/NTRL/GB/EX GB' mapping needed"),
+        ColSpec("HLD",    "hld",      "A", tolerance=RATING_TOLERANCE),
+    ],
+)
+
+
+PITCHING_POTENTIAL = FileSpec(
+    ie_filename="boston_red_sox_organization_-_roster_pitching_potential.csv",
+    short_name="pitching_potential",
+    derived_cte=PITCHING_RATINGS_CTE,
+    cols=[
+        ColSpec("POT",      "pot_2080", "A", tolerance=RATING_TOLERANCE),
+        ColSpec("STU P",    "stu_p",    "A", tolerance=RATING_TOLERANCE),
+        ColSpec("MOV P",    "mov_p",    "A", tolerance=RATING_TOLERANCE),
+        ColSpec("HRA P",    "hra_p",    "A", tolerance=RATING_TOLERANCE),
+        ColSpec("PBABIP P", "pbabip_p", "A", tolerance=RATING_TOLERANCE),
+        ColSpec("CON P",    "con_p",    "A", tolerance=RATING_TOLERANCE),
+        ColSpec("VELO",     "velo",     "G", notes="integer→'75-80 Mph' string mapping needed"),
+        ColSpec("STM",      "stm",      "A", tolerance=RATING_TOLERANCE),
+        ColSpec("G/F",      "go_fly",   "G", notes="integer→'EX FB/FB/NTRL/GB/EX GB' mapping needed"),
+        ColSpec("HLD",      "hld",      "A", tolerance=RATING_TOLERANCE),
+    ],
+)
+
+
+FIELDING_RATINGS_CTE = """
+derived AS (
+    SELECT
+        sr.player_id,
+        sr.fielding_ratings_catcher_ability    AS c_abi,
+        sr.fielding_ratings_catcher_arm        AS c_arm,
+        sr.fielding_ratings_infield_range      AS if_rng,
+        sr.fielding_ratings_infield_error      AS if_err,
+        sr.fielding_ratings_infield_arm        AS if_arm,
+        sr.fielding_ratings_turn_doubleplay    AS tdp,
+        sr.fielding_ratings_outfield_range     AS of_rng,
+        sr.fielding_ratings_outfield_error     AS of_err,
+        sr.fielding_ratings_outfield_arm       AS of_arm
+    FROM scouted_ratings sr
+    WHERE sr.scouting_team_id = 4
+      AND sr.league_id = 203
+)
+"""
+
+
+FIELDING_RATINGS = FileSpec(
+    ie_filename="boston_red_sox_organization_-_roster_fielding_ratings.csv",
+    short_name="fielding_ratings",
+    derived_cte=FIELDING_RATINGS_CTE,
+    cols=[
+        ColSpec("C ABI",  "c_abi",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("C ARM",  "c_arm",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("IF RNG", "if_rng",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("IF ERR", "if_err",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("IF ARM", "if_arm",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("TDP",    "tdp",     "A", tolerance=RATING_TOLERANCE),
+        ColSpec("OF RNG", "of_rng",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("OF ERR", "of_err",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("OF ARM", "of_arm",  "A", tolerance=RATING_TOLERANCE),
+    ],
+)
+
+
+PITCH_RATINGS_CTE = """
+derived AS (
+    SELECT
+        sr.player_id,
+        -- current
+        sr.pitching_ratings_pitches_fastball     AS fb,
+        sr.pitching_ratings_pitches_changeup     AS ch,
+        sr.pitching_ratings_pitches_curveball    AS cb,
+        sr.pitching_ratings_pitches_slider       AS sl,
+        sr.pitching_ratings_pitches_sinker       AS si,
+        sr.pitching_ratings_pitches_splitter     AS sp,
+        sr.pitching_ratings_pitches_cutter       AS ct,
+        sr.pitching_ratings_pitches_forkball     AS fo,
+        sr.pitching_ratings_pitches_circlechange AS cc,
+        sr.pitching_ratings_pitches_screwball    AS sc,
+        sr.pitching_ratings_pitches_knucklecurve AS kc,
+        sr.pitching_ratings_pitches_knuckleball  AS kn,
+        -- potential
+        sr.pitching_ratings_pitches_talent_fastball     AS fbp,
+        sr.pitching_ratings_pitches_talent_changeup     AS chp,
+        sr.pitching_ratings_pitches_talent_curveball    AS cbp,
+        sr.pitching_ratings_pitches_talent_slider       AS slp,
+        sr.pitching_ratings_pitches_talent_sinker       AS sip,
+        sr.pitching_ratings_pitches_talent_splitter     AS spp,
+        sr.pitching_ratings_pitches_talent_cutter       AS ctp,
+        sr.pitching_ratings_pitches_talent_forkball     AS fop,
+        sr.pitching_ratings_pitches_talent_circlechange AS ccp,
+        sr.pitching_ratings_pitches_talent_screwball    AS scp,
+        sr.pitching_ratings_pitches_talent_knucklecurve AS kcp,
+        sr.pitching_ratings_pitches_talent_knuckleball  AS knp,
+        sr.pitching_ratings_misc_velocity                AS velo,
+        sr.pitching_ratings_misc_stamina                 AS stm,
+        -- PIT = count of non-zero pitch ratings
+        (CASE WHEN sr.pitching_ratings_pitches_fastball  > 0 THEN 1 ELSE 0 END
+       + CASE WHEN sr.pitching_ratings_pitches_changeup  > 0 THEN 1 ELSE 0 END
+       + CASE WHEN sr.pitching_ratings_pitches_curveball > 0 THEN 1 ELSE 0 END
+       + CASE WHEN sr.pitching_ratings_pitches_slider    > 0 THEN 1 ELSE 0 END
+       + CASE WHEN sr.pitching_ratings_pitches_sinker    > 0 THEN 1 ELSE 0 END
+       + CASE WHEN sr.pitching_ratings_pitches_splitter  > 0 THEN 1 ELSE 0 END
+       + CASE WHEN sr.pitching_ratings_pitches_cutter    > 0 THEN 1 ELSE 0 END
+       + CASE WHEN sr.pitching_ratings_pitches_forkball  > 0 THEN 1 ELSE 0 END
+       + CASE WHEN sr.pitching_ratings_pitches_circlechange > 0 THEN 1 ELSE 0 END
+       + CASE WHEN sr.pitching_ratings_pitches_screwball > 0 THEN 1 ELSE 0 END
+       + CASE WHEN sr.pitching_ratings_pitches_knucklecurve > 0 THEN 1 ELSE 0 END
+       + CASE WHEN sr.pitching_ratings_pitches_knuckleball  > 0 THEN 1 ELSE 0 END) AS pit
+    FROM scouted_ratings sr
+    WHERE sr.scouting_team_id = 4
+      AND sr.league_id = 203
+)
+"""
+
+
+INDIVIDUAL_PITCH_RATINGS = FileSpec(
+    ie_filename="boston_red_sox_organization_-_roster_individual_pitch_ratings.csv",
+    short_name="individual_pitch_ratings",
+    derived_cte=PITCH_RATINGS_CTE,
+    cols=[
+        ColSpec("FB",   "fb",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("CH",   "ch",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("CB",   "cb",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("SL",   "sl",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("SI",   "si",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("SP",   "sp",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("CT",   "ct",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("FO",   "fo",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("CC",   "cc",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("SC",   "sc",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("KC",   "kc",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("KN",   "kn",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("PIT",  "pit",  "A", notes="count of non-zero pitch ratings"),
+        ColSpec("VELO", "velo", "G", notes="integer→'75-80 Mph' string mapping needed"),
+        ColSpec("STM",  "stm",  "A", tolerance=RATING_TOLERANCE),
+    ],
+)
+
+
+INDIVIDUAL_PITCH_POTENTIAL = FileSpec(
+    ie_filename="boston_red_sox_organization_-_roster_individual_pitch_potential.csv",
+    short_name="individual_pitch_potential",
+    derived_cte=PITCH_RATINGS_CTE,
+    cols=[
+        ColSpec("FBP",  "fbp",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("CHP",  "chp",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("CBP",  "cbp",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("SLP",  "slp",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("SIP",  "sip",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("SPP",  "spp",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("CTP",  "ctp",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("FOP",  "fop",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("CCP",  "ccp",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("SCP",  "scp",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("KCP",  "kcp",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("KNP",  "knp",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("PIT",  "pit",  "A", notes="count of non-zero pitch ratings"),
+        ColSpec("VELO", "velo", "G", notes="integer→'75-80 Mph' string mapping needed"),
+        ColSpec("STM",  "stm",  "A", tolerance=RATING_TOLERANCE),
+    ],
+)
+
+
+POSITION_RATINGS_CTE = """
+derived AS (
+    SELECT
+        sr.player_id,
+        sr.fielding_rating_pos1 AS p,
+        sr.fielding_rating_pos2 AS c,
+        sr.fielding_rating_pos3 AS b1,
+        sr.fielding_rating_pos4 AS b2,
+        sr.fielding_rating_pos5 AS b3,
+        sr.fielding_rating_pos6 AS ss,
+        sr.fielding_rating_pos7 AS lf,
+        sr.fielding_rating_pos8 AS cf,
+        sr.fielding_rating_pos9 AS rf,
+        CASE sr.position
+            WHEN 1 THEN sr.fielding_rating_pos1
+            WHEN 2 THEN sr.fielding_rating_pos2
+            WHEN 3 THEN sr.fielding_rating_pos3
+            WHEN 4 THEN sr.fielding_rating_pos4
+            WHEN 5 THEN sr.fielding_rating_pos5
+            WHEN 6 THEN sr.fielding_rating_pos6
+            WHEN 7 THEN sr.fielding_rating_pos7
+            WHEN 8 THEN sr.fielding_rating_pos8
+            WHEN 9 THEN sr.fielding_rating_pos9
+        END AS def
+    FROM scouted_ratings sr
+    WHERE sr.scouting_team_id = 4
+      AND sr.league_id = 203
+)
+"""
+
+
+POSITION_RATINGS = FileSpec(
+    ie_filename="boston_red_sox_organization_-_roster_position_ratings.csv",
+    short_name="position_ratings",
+    derived_cte=POSITION_RATINGS_CTE,
+    cols=[
+        ColSpec("DEF", "def", "A", tolerance=RATING_TOLERANCE,
+                notes="fielding_rating_pos[player.position]"),
+        ColSpec("P",   "p",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("C",   "c",   "A", tolerance=RATING_TOLERANCE),
+        ColSpec("1B",  "b1",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("2B",  "b2",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("3B",  "b3",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("SS",  "ss",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("LF",  "lf",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("CF",  "cf",  "A", tolerance=RATING_TOLERANCE),
+        ColSpec("RF",  "rf",  "A", tolerance=RATING_TOLERANCE),
+    ],
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Group B — pitching_stats_2 (career_pit-backed, extends PITCHING_DERIVED_CTE)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+PITCHING_STATS_2 = FileSpec(
+    ie_filename="boston_red_sox_organization_-_roster_pitching_stats_2.csv",
+    short_name="pitching_stats_2",
+    derived_cte=PITCHING_DERIVED_CTE,
+    cols=[
+        ColSpec("G",     "g",       "A"),
+        ColSpec("WIN%",  "win_pct", "B", tolerance=RATE_TOLERANCE),
+        ColSpec("SV%",   "sv_pct",  "B", tolerance=RATE_TOLERANCE,
+                notes="OOTP uses sv / (sv + bs)"),
+        ColSpec("BS",    "bs",      "A"),
+        ColSpec("SD",    "sd",      "A"),
+        ColSpec("MD",    "md",      "A"),
+        ColSpec("IP",    "ip",      "B", tolerance=0.1),
+        ColSpec("BF",    "bf",      "A"),
+        ColSpec("DP",    "dp",      "A"),
+        # RA: IE shows small ints that don't match either career_pit.r or per-9 RA.
+        # Possibly "Run Average" rounded to integer or a different metric — TBD.
+        ColSpec("RA",    "NULL",    "C", notes="formula TBD — neither raw r nor 9r/IP matches IE"),
+        ColSpec("GF",    "gf",      "A"),
+        ColSpec("IR",    "ir",      "A"),
+        ColSpec("IRS%",  "ROUND(100.0 * d.irs / NULLIF(d.ir, 0), 1)", "B", tolerance=0.5),
+        ColSpec("pLi",   "NULL",    "C",
+                notes="career_pit.li meaning unclear — neither sum/g, AVG(li), nor SUM(li) reproduces IE values; needs per-game leverage data"),
+        ColSpec("QS",    "qs",      "A"),
+        ColSpec("QS%",   "qs_pct",  "B", tolerance=RATE_TOLERANCE),
+        ColSpec("CG",    "cg",      "A"),
+        ColSpec("CG%",   "ROUND(1.0 * d.cg / NULLIF(d.gs, 0), 3)", "B", tolerance=RATE_TOLERANCE),
+        ColSpec("SHO",   "sho",     "A"),
+        # PPG presented as integer in IE, derived as decimal — round to int.
+        ColSpec("PPG",   "ROUND(d.ppg, 0)", "B"),
+        ColSpec("RSG",   "NULL",    "C",
+                notes="run support per game — needs team runs while pitcher started"),
+        # GO% in IE is a decimal fraction with 2-decimal precision (0.17 = 17%).
+        ColSpec("GO%",   "ROUND(d.go_pct, 2)", "B", tolerance=RATE_TOLERANCE),
+        ColSpec("SIERA", "NULL",    "C", notes="needs league constants"),
+        ColSpec("SB",    "sb_against", "A"),
+        ColSpec("CS",    "cs_against", "A"),
+        ColSpec("WPA",   "ROUND(d.wpa, 1)", "A", tolerance=0.05),
+    ],
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Group C — Statcast superstats_1 (at-bat-derived)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# Batter Statcast: aggregate at-bat events per batter.
+# AtBatResult codes: 4=GO, 5=FO, 6=1B, 7=2B, 8=3B, 9=HR.
+# BIP = ground/fly outs + all hits (codes 4,5,6,7,8,9).
+# Statcast values populated mainly for MLB at-bats (non-MLB at-bats lack EV/LA).
+BATTING_SUPERSTATS_CTE = """
+ab AS (
+    -- Join in batter's bats and pitcher's throws so we can decode spray
+    -- direction. Switch hitters (bats=3) bat opposite to pitcher's throwing
+    -- hand: vs RHP -> bats L, vs LHP -> bats R. hit_xy is a packed 16x16
+    -- coord; x = hit_xy/16 with x in [0,4]=LF-side, [5,10]=CF, [11,15]=RF-side.
+    SELECT
+        a.player_id,
+        a.result, a.exit_velo, a.launch_angle, a.hit_loc, a.sac, a.hit_xy,
+        CASE
+            WHEN bat.bats = 1 THEN 'R'
+            WHEN bat.bats = 2 THEN 'L'
+            WHEN bat.bats = 3 AND pit.throws = 1 THEN 'L'
+            WHEN bat.bats = 3 AND pit.throws = 2 THEN 'R'
+        END AS eff_bats,
+        CASE
+            WHEN a.hit_xy IS NULL THEN NULL
+            WHEN FLOOR(a.hit_xy / 16) <= 4 THEN 'LF'
+            WHEN FLOOR(a.hit_xy / 16) <= 10 THEN 'CF'
+            ELSE 'RF'
+        END AS spray_zone
+    FROM at_bats a
+    LEFT JOIN players bat ON bat.player_id = a.player_id
+    LEFT JOIN players pit ON pit.player_id = a.opponent_player_id
+),
+agg AS (
+    SELECT
+        player_id,
+        -- BIP excludes sacrifices (sac=1 bunt, sac=2 SF) per OOTP convention.
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0) AS bip,
+        COUNT(*) FILTER (WHERE result = 9) AS hr,
+        -- LA buckets (Statcast): GB <10, LD 10-25, FB 25-50, PU >50.
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle < 10) AS gb_la,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle BETWEEN 10 AND 25) AS ld_la,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle BETWEEN 25 AND 50) AS fb_la,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle > 50) AS pu_la,
+        -- Spray counts (only BIP with hit_xy populated).
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND spray_zone = 'CF') AS cent,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0
+                           AND ((eff_bats='R' AND spray_zone='LF')
+                             OR (eff_bats='L' AND spray_zone='RF'))) AS pull,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0
+                           AND ((eff_bats='R' AND spray_zone='RF')
+                             OR (eff_bats='L' AND spray_zone='LF'))) AS oppo,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0
+                           AND spray_zone IS NOT NULL AND eff_bats IS NOT NULL) AS spray_bip,
+        -- EV buckets — placeholder cutoffs (Soft<85, Avg 85-100, Solid >=100). TBD.
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo < 85) AS soft,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo BETWEEN 85 AND 100) AS avg_ev,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 100) AS solid,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 95) AS hhi,
+        COUNT(*) FILTER (
+            WHERE result IN (4,5,6,7,8,9) AND sac = 0
+              AND exit_velo >= 98
+              AND launch_angle BETWEEN GREATEST(8, 26-(exit_velo-98)) AND LEAST(50, 30+(exit_velo-98))
+        ) AS bar,
+        AVG(exit_velo)    FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0) AS avg_ev_v,
+        MAX(exit_velo)    FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0) AS max_ev_v,
+        AVG(launch_angle) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0) AS avg_la_v,
+        -- Pop-ups (LA > 50, infield) approximate IFFB.
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle > 50) AS pu_count,
+        -- Bunt indicator: sac > 0 (bunt-attempt set; sac=1 is bunt, sac=2 sac-fly)
+        COUNT(*) FILTER (WHERE sac = 1 AND result IN (6,7,8,9)) AS buh,
+        COUNT(*) FILTER (WHERE sac = 1) AS bunt_attempts
+    FROM ab
+    GROUP BY player_id
+),
+derived AS (
+    SELECT
+        a.player_id,
+        a.bip,
+        -- GB/FB using LA buckets (matches OOTP convention).
+        ROUND(1.0 * a.gb_la / NULLIF(a.fb_la + a.pu_la, 0), 2)                           AS gb_fb,
+        ROUND(100.0 * a.ld_la / NULLIF(a.bip, 0), 1)                                     AS ld_pct,
+        ROUND(100.0 * a.gb_la / NULLIF(a.bip, 0), 1)                                     AS gb_pct,
+        ROUND(100.0 * (a.fb_la + a.pu_la) / NULLIF(a.bip, 0), 1)                         AS fb_pct,
+        -- IFFB as % of FB (matches IE display).
+        ROUND(100.0 * a.pu_count / NULLIF(a.fb_la + a.pu_la, 0), 1)                      AS iffb_pct,
+        ROUND(100.0 * a.hr / NULLIF(a.fb_la + a.pu_la, 0), 1)                            AS hr_fb,
+        NULL                                                                              AS ifh_pct,
+        ROUND(100.0 * a.buh / NULLIF(a.bunt_attempts, 0), 1)                             AS buh_pct,
+        ROUND(100.0 * a.pull / NULLIF(a.spray_bip, 0), 1)                                AS pull_pct,
+        ROUND(100.0 * a.cent / NULLIF(a.spray_bip, 0), 1)                                AS cent_pct,
+        ROUND(100.0 * a.oppo / NULLIF(a.spray_bip, 0), 1)                                AS oppo_pct,
+        ROUND(100.0 * a.soft   / NULLIF(a.bip, 0), 1)                                    AS soft_pct,
+        ROUND(100.0 * a.avg_ev / NULLIF(a.bip, 0), 1)                                    AS avg_pct,
+        ROUND(100.0 * a.solid  / NULLIF(a.bip, 0), 1)                                    AS solid_pct,
+        ROUND(a.avg_ev_v, 1)                                                             AS ev,
+        ROUND(a.max_ev_v, 1)                                                             AS m_ev,
+        ROUND(a.avg_la_v, 1)                                                             AS la,
+        a.bar,
+        ROUND(100.0 * a.bar / NULLIF(a.bip, 0), 1)                                       AS bar_pct,
+        a.hhi,
+        ROUND(100.0 * a.hhi / NULLIF(a.bip, 0), 1)                                       AS hhi_pct
+    FROM agg a
+)
+"""
+
+
+BATTING_SUPERSTATS_1 = FileSpec(
+    ie_filename="boston_red_sox_organization_-_roster_batting_superstats_1.csv",
+    short_name="batting_superstats_1",
+    derived_cte=BATTING_SUPERSTATS_CTE,
+    cols=[
+        ColSpec("BIP",   "bip",       "E"),
+        ColSpec("GB/FB", "gb_fb",     "E", tolerance=0.05),
+        ColSpec("LD%",   "ld_pct",    "E", tolerance=1.0),
+        ColSpec("GB%",   "gb_pct",    "E", tolerance=1.0),
+        ColSpec("FB%",   "fb_pct",    "E", tolerance=1.0),
+        ColSpec("IFFB",  "iffb_pct",  "E", tolerance=2.0, notes="pop-ups (LA>50) as % of FB"),
+        ColSpec("HR/FB", "hr_fb",     "E", tolerance=2.0),
+        ColSpec("IFH%",  "ifh_pct",   "E", notes="needs hit_loc decoding"),
+        ColSpec("BUH%",  "buh_pct",   "E", tolerance=2.0),
+        ColSpec("Pull%", "pull_pct",  "E", tolerance=2.0,
+                notes="hit_xy/16 spray with [0,4]/[5,10]/[11,15] x-bins; consistent ~5-10pp under-count vs IE — exact OOTP spray boundary still TBD"),
+        ColSpec("Cent%", "cent_pct",  "E", tolerance=2.0),
+        ColSpec("Oppo%", "oppo_pct",  "E", tolerance=2.0,
+                notes="consistent ~5-10pp over-count vs IE — same boundary issue as Pull%"),
+        ColSpec("Soft%", "soft_pct",  "E", tolerance=2.0, notes="EV cutoff approx — TBD"),
+        ColSpec("Avg%",  "avg_pct",   "E", tolerance=2.0),
+        ColSpec("Solid%","solid_pct", "E", tolerance=2.0),
+        ColSpec("EV",    "ev",        "E", tolerance=0.5),
+        ColSpec("mEV",   "m_ev",      "E", tolerance=0.5),
+        ColSpec("LA",    "la",        "E", tolerance=0.5),
+        ColSpec("BAR",   "bar",       "E"),
+        ColSpec("BAR%",  "bar_pct",   "E", tolerance=1.0),
+        ColSpec("HHi",   "hhi",       "E"),
+        ColSpec("HHi%",  "hhi_pct",   "E", tolerance=1.0),
+        ColSpec("xBA",   "NULL",      "D", notes="modeled from EV/LA — not implemented"),
+        ColSpec("xSLG",  "NULL",      "D"),
+        ColSpec("xwOBA", "NULL",      "D"),
+    ],
+)
+
+
+# Pitcher Statcast — same metrics but joined via opponent_player_id.
+PITCHING_SUPERSTATS_CTE = """
+ab AS (
+    SELECT
+        opponent_player_id AS player_id,
+        result, exit_velo, launch_angle, hit_loc, sac
+    FROM at_bats
+),
+agg AS (
+    SELECT
+        player_id,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0) AS bip,
+        COUNT(*) FILTER (WHERE result = 9) AS hr,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle < 10) AS gb_la,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle BETWEEN 10 AND 25) AS ld_la,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle BETWEEN 25 AND 50) AS fb_la,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle > 50) AS pu_la,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo < 85) AS soft,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo BETWEEN 85 AND 100) AS med_ev,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 100) AS solid,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle > 50) AS pu_count,
+        AVG(exit_velo) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0) AS avg_ev_v
+    FROM ab
+    WHERE player_id IS NOT NULL
+    GROUP BY player_id
+),
+gp AS (
+    SELECT player_id, SUM(g) AS g, SUM(gs) AS gs
+    FROM career_pit
+    WHERE year = 2029 AND split_id = 1
+    GROUP BY player_id
+),
+derived AS (
+    SELECT
+        COALESCE(a.player_id, gp.player_id) AS player_id,
+        gp.g, gp.gs,
+        a.bip,
+        ROUND(1.0 * a.gb_la / NULLIF(a.fb_la + a.pu_la, 0), 2)                AS gb_fb,
+        ROUND(100.0 * a.ld_la / NULLIF(a.bip, 0), 1)                          AS ld_pct,
+        ROUND(100.0 * a.gb_la / NULLIF(a.bip, 0), 1)                          AS gb_pct,
+        ROUND(100.0 * (a.fb_la + a.pu_la) / NULLIF(a.bip, 0), 1)              AS fb_pct,
+        ROUND(100.0 * a.pu_count / NULLIF(a.fb_la + a.pu_la, 0), 1)           AS iffb_pct,
+        ROUND(100.0 * a.hr / NULLIF(a.fb_la + a.pu_la, 0), 1)                 AS hr_fb,
+        ROUND(100.0 * a.soft   / NULLIF(a.bip, 0), 1)                         AS soft_pct,
+        ROUND(100.0 * a.med_ev / NULLIF(a.bip, 0), 1)                         AS med_pct,
+        ROUND(100.0 * a.solid  / NULLIF(a.bip, 0), 1)                         AS solid_pct,
+        ROUND(a.avg_ev_v, 1)                                                  AS ev
+    FROM gp
+    LEFT JOIN agg a ON a.player_id = gp.player_id
+)
+"""
+
+
+PITCHING_SUPERSTATS_1 = FileSpec(
+    ie_filename="boston_red_sox_organization_-_roster_pitching_superstats_1.csv",
+    short_name="pitching_superstats_1",
+    derived_cte=PITCHING_SUPERSTATS_CTE,
+    cols=[
+        ColSpec("G",     "g",         "A"),
+        ColSpec("GS",    "gs",        "A"),
+        ColSpec("BIP",   "bip",       "E"),
+        ColSpec("GB/FB", "gb_fb",     "E", tolerance=0.05),
+        ColSpec("LD%",   "ld_pct",    "E", tolerance=1.0),
+        ColSpec("GB%",   "gb_pct",    "E", tolerance=1.0),
+        ColSpec("FB%",   "fb_pct",    "E", tolerance=1.0),
+        ColSpec("IFFB",  "iffb_pct",  "E", tolerance=2.0, notes="pop-ups (LA>50) as % of FB"),
+        ColSpec("HR/FB", "hr_fb",     "E", tolerance=2.0),
+        ColSpec("Soft%", "soft_pct",  "E", tolerance=2.0, notes="EV cutoff approx"),
+        ColSpec("Med%",  "med_pct",   "E", tolerance=2.0),
+        ColSpec("Solid%","solid_pct", "E", tolerance=2.0),
+        ColSpec("EV",    "ev",        "E", tolerance=0.5),
+        ColSpec("xBA",   "NULL",      "D"),
+        ColSpec("xSLG",  "NULL",      "D"),
+        ColSpec("xwOBA", "NULL",      "D"),
+        ColSpec("xERA",  "NULL",      "D"),
+    ],
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Group D — F-tier plate-discipline files (skip per Decision D5)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+F_TIER_CTE = """
+derived AS (
+    SELECT player_id FROM scouted_ratings WHERE 1=0
+)
+"""
+
+
+BATTING_SUPERSTATS_2 = FileSpec(
+    ie_filename="boston_red_sox_organization_-_roster_batting_superstats_2.csv",
+    short_name="batting_superstats_2",
+    derived_cte=F_TIER_CTE,
+    notes="All F-tier per Decision D5 — needs per-pitch zone/type data not in dump",
+    cols=[
+        ColSpec(c, "NULL", "F", notes="per-pitch zone/type data not in dump")
+        for c in ("PI", "WH%", "CH%", "Z%", "CL%", "OS%", "ZS%", "SW%", "OC%",
+                 "ZC%", "CTC%", "FF%", "BR%", "OFF%", "RV-FB", "RV-BR", "RV-OFF", "RV")
+    ],
+)
+
+
+PITCHING_SUPERSTATS_2 = FileSpec(
+    ie_filename="boston_red_sox_organization_-_roster_pitching_superstats_2.csv",
+    short_name="pitching_superstats_2",
+    derived_cte=F_TIER_CTE,
+    notes="All F-tier per Decision D5",
+    cols=[
+        ColSpec(c, "NULL", "F", notes="per-pitch zone/type data not in dump")
+        for c in ("PI", "SW", "WH", "CH", "OS%", "ZS%", "SW%", "OC%", "ZC%",
+                 "Z%", "WH%", "CH%", "CL%", "RV-FB", "RV-BR", "RV-OFF", "RV")
+    ],
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Group E — Player metadata (default, popularity, personality)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# `default` joins players (bio, morale, popularity) with scouted_ratings (OVR/POT)
+# and contracts (SLR/YL). String fields like ORG/LG/Lev/NAT/HT/WT need lookup
+# tables and aren't worth full reconciliation; we focus on numeric fields.
+DEFAULT_DERIVED_CTE = """
+sr AS (
+    SELECT player_id, overall_rating, talent_rating, scouting_accuracy
+    FROM scouted_ratings
+    WHERE scouting_team_id = 4 AND league_id = 203
+),
+ct AS (
+    SELECT player_id, salary0 AS slr, years AS yl, current_year AS cy
+    FROM contracts
+),
+derived AS (
+    SELECT
+        p.player_id,
+        p.age,
+        sr.overall_rating AS ovr,
+        sr.talent_rating  AS pot,
+        ct.slr,
+        (ct.yl - ct.cy + 1) AS yl,
+        p.weight, p.height
+    FROM players p
+    LEFT JOIN sr ON sr.player_id = p.player_id
+    LEFT JOIN ct ON ct.player_id = p.player_id
+)
+"""
+
+
+DEFAULT = FileSpec(
+    ie_filename="boston_red_sox_organization_-_roster_default.csv",
+    short_name="default",
+    derived_cte=DEFAULT_DERIVED_CTE,
+    notes="Bio + ratings + contract overview. ORG/LG/Lev/NAT/HT/WT need string lookups (deferred).",
+    cols=[
+        ColSpec("Age", "age", "A"),
+        ColSpec("OVR", "ovr", "A", tolerance=RATING_TOLERANCE),
+        ColSpec("POT", "pot", "A", tolerance=RATING_TOLERANCE),
+        # SLR formatted as "$X XXX XXX" string in IE; numeric compare not viable as-is
+        ColSpec("SLR", "slr", "F", notes="formatted '$28 800 000' in IE — string mismatch by design"),
+        ColSpec("YL",  "yl",  "F", notes="formatted '3' or '1 (auto.)' in IE — string mismatch"),
+        ColSpec("MLY", "NULL", "F", notes="major-league years — derivation TBD"),
+    ],
+)
+
+
+POPULARITY_DERIVED_CTE = """
+sr AS (
+    SELECT player_id, overall_rating, talent_rating, scouting_accuracy
+    FROM scouted_ratings
+    WHERE scouting_team_id = 4
+),
+derived AS (
+    SELECT
+        p.player_id,
+        p.age,
+        -- local_pop / national_pop are 0-6 ints; IE shows the label string
+        CASE p.local_pop
+            WHEN 0 THEN 'Unknown' WHEN 1 THEN 'Insignificant' WHEN 2 THEN 'Fair'
+            WHEN 3 THEN 'Well Known' WHEN 4 THEN 'Popular' WHEN 5 THEN 'Very Popular'
+            WHEN 6 THEN 'Extremely Popular'
+        END AS local_pop,
+        CASE p.national_pop
+            WHEN 0 THEN 'Unknown' WHEN 1 THEN 'Insignificant' WHEN 2 THEN 'Fair'
+            WHEN 3 THEN 'Well Known' WHEN 4 THEN 'Popular' WHEN 5 THEN 'Very Popular'
+            WHEN 6 THEN 'Extremely Popular'
+        END AS national_pop,
+        -- scouting_accuracy 1-5 -> V.Low/Low/Avg/High/V.High
+        CASE sr.scouting_accuracy
+            WHEN 1 THEN 'V.Low' WHEN 2 THEN 'Low' WHEN 3 THEN 'Avg'
+            WHEN 4 THEN 'High' WHEN 5 THEN 'V.High'
+        END AS sct_acc,
+        sr.overall_rating AS ovr,
+        sr.talent_rating  AS pot
+    FROM players p
+    LEFT JOIN sr ON sr.player_id = p.player_id
+)
+"""
+
+
+POPULARITY_INFO = FileSpec(
+    ie_filename="boston_red_sox_organization_-_roster_popularity_info.csv",
+    short_name="popularity_info",
+    derived_cte=POPULARITY_DERIVED_CTE,
+    cols=[
+        ColSpec("Age", "age", "A"),
+        ColSpec("Nat. Pop.", "national_pop", "A",
+                notes="players.national_pop 0-6 -> Unknown/Insignificant/Fair/Well Known/Popular/Very Popular/Extremely Popular"),
+        ColSpec("Loc. Pop.", "local_pop", "A",
+                notes="players.local_pop 0-6 -> same 7-bucket scale"),
+        ColSpec("OVR", "ovr", "A", tolerance=RATING_TOLERANCE),
+        ColSpec("POT", "pot", "A", tolerance=RATING_TOLERANCE),
+        ColSpec("SctAcc", "sct_acc", "A",
+                notes="scouted_ratings.scouting_accuracy 1-5 -> V.Low/Low/Avg/High/V.High"),
+    ],
+)
+
+
+PERSONALITY_DERIVED_CTE = """
+derived AS (
+    SELECT
+        p.player_id,
+        p.age,
+        -- 0-200 personality values bucket as <60='Low', 60-139='Normal', >=140='High'.
+        -- IE shows 'Unknown' for ~4 newly-acquired-2029 players the org hasn't
+        -- fully scouted yet (experience<=1, acquired_date in current year);
+        -- the bucket logic still produces a hard label for them and they'll
+        -- show up as a small mismatch.
+        CASE WHEN p.personality_leader      < 60 THEN 'Low'
+             WHEN p.personality_leader      < 140 THEN 'Normal'
+             ELSE 'High' END AS lea,
+        CASE WHEN p.personality_loyalty     < 60 THEN 'Low'
+             WHEN p.personality_loyalty     < 140 THEN 'Normal'
+             ELSE 'High' END AS loy,
+        CASE WHEN p.personality_greed       < 60 THEN 'Low'
+             WHEN p.personality_greed       < 140 THEN 'Normal'
+             ELSE 'High' END AS fin,
+        CASE WHEN p.personality_work_ethic  < 60 THEN 'Low'
+             WHEN p.personality_work_ethic  < 140 THEN 'Normal'
+             ELSE 'High' END AS we,
+        CASE WHEN p.personality_intelligence < 60 THEN 'Low'
+             WHEN p.personality_intelligence < 140 THEN 'Normal'
+             ELSE 'High' END AS int_rating
+    FROM players p
+)
+"""
+
+
+PERSONALITY_MORALE = FileSpec(
+    ie_filename="boston_red_sox_organization_-_roster_personality___morale.csv",
+    short_name="personality___morale",
+    derived_cte=PERSONALITY_DERIVED_CTE,
+    notes="LEA/LOY/FIN/WE/INT bucketed Low/Normal/High; morale columns (Inf/Txn/Tm/Perf/Role/Chem/Mor) are NULL in IE for org rosters",
+    cols=[
+        ColSpec("Age",  "age",         "A"),
+        ColSpec("LEA",  "lea",         "A", notes="personality_leader bucketed (<60/60-139/>=140)"),
+        ColSpec("LOY",  "loy",         "A", notes="personality_loyalty bucketed"),
+        ColSpec("FIN",  "fin",         "A", notes="personality_greed bucketed"),
+        ColSpec("WE",   "we",          "A", notes="personality_work_ethic bucketed"),
+        ColSpec("INT",  "int_rating",  "A", notes="personality_intelligence bucketed"),
+    ],
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Group F — financial_info (contracts-backed)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+FINANCIAL_DERIVED_CTE = """
+ct AS (
+    SELECT
+        player_id, salary0, years, current_year,
+        salary0 + COALESCE(salary1,0) + COALESCE(salary2,0) + COALESCE(salary3,0)
+                + COALESCE(salary4,0) + COALESCE(salary5,0) + COALESCE(salary6,0)
+                + COALESCE(salary7,0) AS contract_value
+    FROM contracts
+),
+derived AS (
+    SELECT
+        p.player_id,
+        p.age,
+        ct.salary0     AS slr,
+        ct.years       AS ty,
+        ct.current_year,
+        (ct.years - ct.current_year + 1) AS yl,
+        ct.contract_value AS cv
+    FROM players p
+    LEFT JOIN ct ON ct.player_id = p.player_id
+)
+"""
+
+
+FINANCIAL_INFO = FileSpec(
+    ie_filename="boston_red_sox_organization_-_roster_financial_info.csv",
+    short_name="financial_info",
+    derived_cte=FINANCIAL_DERIVED_CTE,
+    notes="SLR/CV formatted as '$X XXX XXX' strings in IE — numeric compare won't match",
+    cols=[
+        ColSpec("Age", "age", "A"),
+        ColSpec("SLR", "slr", "F", notes="dollar-formatted string in IE"),
+        ColSpec("YL",  "yl",  "F", notes="formatted '3' or '1 (auto.)' in IE"),
+        ColSpec("CV",  "cv",  "F", notes="dollar-formatted string in IE"),
+        ColSpec("TY",  "ty",  "A", notes="contract years total"),
+        ColSpec("ECV", "NULL", "C", notes="extension contract value — needs contract_extension table"),
+        ColSpec("ETY", "NULL", "C", notes="extension years"),
+        ColSpec("MLY", "NULL", "C", notes="major-league years"),
+        ColSpec("SECY","NULL", "C"),
+        ColSpec("OPT", "NULL", "C", notes="option years remaining"),
+        ColSpec("OY",  "NULL", "C"),
+        ColSpec("ON40","NULL", "C", notes="on 40-man roster — needs roster_status decode"),
+    ],
+)
+
+
+ALL_FILES = [
+    BATTING_STATS_1, BATTING_STATS_2, PITCHING_STATS_1, FIELDING_STATS, BATTING_RATINGS,
+    # Group A
+    BATTING_POTENTIAL, PITCHING_RATINGS, PITCHING_POTENTIAL, FIELDING_RATINGS,
+    INDIVIDUAL_PITCH_RATINGS, INDIVIDUAL_PITCH_POTENTIAL, POSITION_RATINGS,
+    # Group B
+    PITCHING_STATS_2,
+    # Group C
+    BATTING_SUPERSTATS_1, PITCHING_SUPERSTATS_1,
+    # Group D
+    BATTING_SUPERSTATS_2, PITCHING_SUPERSTATS_2,
+    # Group E
+    DEFAULT, POPULARITY_INFO, PERSONALITY_MORALE,
+    # Group F
+    FINANCIAL_INFO,
+]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -394,6 +1260,12 @@ def _connect(save: SaveConfig, dump: str) -> duckdb.DuckDBPyConnection:
         "player_value":   "players_value.csv",
         "players":        "players.csv",
         "games":          "games.csv",
+        "at_bats":        "players_at_bat_batting_stats.csv",
+        "contracts":      "players_contract.csv",
+        "roster_status":  "players_roster_status.csv",
+        "teams":          "teams.csv",
+        "leagues":        "leagues.csv",
+        "nations":        "nations.csv",
     }
     csv_dir = save.csv_dir(dump)
     for view, fname in csvs.items():
@@ -405,15 +1277,34 @@ def _connect(save: SaveConfig, dump: str) -> duckdb.DuckDBPyConnection:
 
 
 def _is_match(ie_val, derived_val, tol: float) -> bool | None:
-    """Return True/False, or None if either side is null/empty."""
+    """Return True/False, or None if either side is null/empty.
+
+    IE files use a few presentation conventions we need to normalize before
+    comparing:
+      - "-"  : "no value" sentinel (treat as null)
+      - "9.1%" : trailing percent suffix (strip)
+      - "$28 800 000" : currency with thousands-space (strip $ and spaces)
+      - "1 (auto.)" : auto-renewal annotation on contract years (strip suffix)
+    """
     if ie_val is None or derived_val is None:
         return None
-    # Strings that look numeric: try numeric compare
+    s_ie = str(ie_val).strip()
+    s_dv = str(derived_val).strip()
+    if s_ie in ("-", "", "nan", "NaN"):
+        return None
+    # Try numeric compare with IE-side normalization
     try:
-        ie_f = float(str(ie_val).replace(",", "").strip() or "nan")
+        ie_clean = (s_ie
+                    .replace("(auto.)", "")
+                    .replace(",", "")
+                    .replace(" ", "")
+                    .replace("$", "")
+                    .rstrip("%")
+                    .strip())
+        ie_f = float(ie_clean) if ie_clean else float("nan")
         dv_f = float(derived_val)
     except (ValueError, TypeError):
-        return str(ie_val).strip() == str(derived_val).strip()
+        return s_ie == s_dv
     import math
     if math.isnan(ie_f) or math.isnan(dv_f):
         return None

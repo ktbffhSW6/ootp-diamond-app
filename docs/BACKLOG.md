@@ -16,40 +16,50 @@
   - [x] `players_streak.streak_id` — 21 codes profiled; names best-guess pending OOTP docs
   - [x] `players_injury_history.body_part` — 12 codes profiled; names best-guess
 - [ ] **Verify the 13 unmapped `leader.category` codes** by computing the missing derived stats (RC, wOBA, FIP, SIERA, K%, SV%, QS%, CG%, SHO%, GO/AO) and re-running the matcher
-- [ ] **Build league constants module** — `league_constants` table, computed from `league_history_*` totals + park factors from `parks.csv`. Per league-year:
-  - linear weights (wOBA, wRAA, wRC, wRC+)
-  - FIP constant (cFIP)
-  - lgERA, lgOPS (for ERA+/OPS+)
-  - park factors (avg, hr, etc.)
-  - Bill James RC factor
+- [ ] **Build league constants module** — *simpler than originally scoped*: `league_history_batting_stats` ships with **wOBA, RC, RC/27, ISO, OPS, BABIP, K%, BB%** pre-computed per league/year/level, and `league_history_pitching_stats` ships with **FIP, ERA, WHIP, WAR, RA9-WAR, K-BB%, H/9, K/9, BB/9, HR/9, KBB ratio** pre-computed. Park factors from `parks.csv`. So the module is mostly a *lookup* over league_history rows, not a recompute. Per league-year:
+  - lgERA, lgOPS (for ERA+/OPS+) — direct from league_history
+  - lgwOBA + linear-weights coefficients (for wRC+ scaling)
+  - FIP constant (back out from league FIP value)
+  - park factors (avg, hr, etc. — from `parks.csv`)
   - Unlocks the 6 C-tier reconciliation holdouts AND Tier 3 advanced stats.
-- [ ] **Finish reconciliation of remaining 16 `import_export` files**:
-  - [ ] `batting_potential`
-  - [ ] `batting_superstats_1` (Statcast — EV, LA, BAR, xBA/xSLG/xwOBA)
-  - [ ] `batting_superstats_2` (mostly F-tier — plate discipline)
-  - [ ] `pitching_stats_2`
-  - [ ] `pitching_potential`
-  - [ ] `pitching_ratings`
-  - [ ] `pitching_superstats_1`
-  - [ ] `pitching_superstats_2`
-  - [ ] `fielding_ratings`
-  - [ ] `individual_pitch_ratings`
-  - [ ] `individual_pitch_potential`
-  - [ ] `position_ratings`
-  - [ ] `default` (roster overview)
-  - [ ] `financial_info`
-  - [ ] `popularity_info`
-  - [ ] `personality___morale`
+- [x] **Finish reconciliation of remaining 16 `import_export` files** — DONE
+  - [x] `batting_potential` — **11/11** (DEF decoded 2026-05-03)
+  - [x] `batting_superstats_1` — 22/25 partial (E-tier, Statcast)
+  - [x] `batting_superstats_2` — all F-tier per D5
+  - [x] `pitching_stats_2` — 22/26 (RA/RSG/SIERA/pLi C-tier)
+  - [x] `pitching_potential` — 8/10 (VELO + G/F G-tier)
+  - [x] `pitching_ratings` — 10/12
+  - [x] `pitching_superstats_1` — 13/17 partial (E-tier)
+  - [x] `pitching_superstats_2` — all F-tier per D5
+  - [x] `fielding_ratings` — 9/9 PERFECT
+  - [x] `individual_pitch_ratings` — 14/15
+  - [x] `individual_pitch_potential` — 14/15
+  - [x] `position_ratings` — **10/10** (DEF decoded 2026-05-03)
+  - [x] `default` — 3/6 (string-formatted display fields)
+  - [x] `financial_info` — 2/12 (extension/option columns C-tier)
+  - [x] `popularity_info` — **6/6** (Nat./Loc. Pop. + SctAcc decoded 2026-05-03)
+  - [x] `personality___morale` — **6/6** (LEA/LOY/FIN/WE/INT bucketed 2026-05-03; 4 fresh-acquisition mismatches expected)
+- [ ] **Build integer→string mapping layer** for remaining G-tier cells. DEF, popularity, personality, and SctAcc are all done as of 2026-05-03. Still outstanding:
+  - VELO (1..N → "75-80 Mph", "80-85 Mph", ...) — pitching_ratings + pitching_potential + individual_pitch_*
+  - G/F (1..N → "EX FB", "FB", "NTRL", "GB", "EX GB") — pitching_ratings/potential
+  - Contract auto-renewal flag and dollar formatting (financial_info)
+  - Personality "Type" archetype (Captain/Selfish/Humble/Sparkplug/etc.) — derived from 5 traits + scouting_accuracy
+- [ ] **Investigate OOTP's EV-bucket cutoffs** for Soft%/Avg%/Solid% in batting_superstats_1.
+  Current placeholder: <85 / 85-100 / >=100 mph. Per-row diff against IE shows systematic offset.
+- [ ] **Decode `pLi`** — career_pit.li doesn't behave as a sum/avg in any obvious way.
+- [ ] **Decode `RA`** in pitching_stats_2 — small int, doesn't match raw `r` or per-9 RA.
+- [ ] **Calibrate `hit_xy` spray boundaries** — basic decode landed 2026-05-03 (`x = floor(hit_xy/16)`, switch hitters use opposite of pitcher.throws). Naive bins (LF=[0,4]/CF=[5,10]/RF=[11,15]) under-count Pull% by ~5–10pp consistently. Either OOTP's x-bin boundaries are different, or `hit_loc` weighs into the spray classification. Investigate: for a known IE Pull% (e.g., Eric Coles 44.1%), grid-search x-boundaries to find the cut that matches, then cross-validate.
 
 ### Medium
 
-- [ ] Investigate the **DEF rating formula** in `batting_ratings` (only 29% match with `MAX(fielding_rating_pos2..9)`)
+- [x] **DEF rating formula** — DONE (2026-05-03). Formula is `fielding_rating_pos[player.position]` (primary-position rating, not max). 220/220 exact match across batting_ratings, batting_potential, position_ratings.
+- [ ] **Broaden ratings-CTE audit population** — drop the `league_id=203` filter from the 6 ratings CTEs in `reconcile.py`. Each player has exactly 1 row at `scouting_team_id=4` across all leagues, so dropping the league filter widens the joined population from 24 → 220 IE rows (9.2x) without duplicates. This is the next ratings-audit win after the DEF fix.
 - [ ] Investigate small rounding edge cases:
   - [ ] OPS at 79% match (OBP+SLG sum precision)
   - [ ] HR/9, K/9 at 91-95% (likely IP convention difference: true innings vs displayed `172.1`)
   - [ ] Pitching WAR at 84% (only 16 mismatches — likely multi-org players)
-- [ ] Investigate why **`league_history_all_star`** has no 2029 entries
-- [ ] Verify HOF induction year is recoverable through `players_awards` (cross-reference with `players.inducted`)
+- [x] **All-Star 2029 gap** — confirmed by helpful_files cross-ref: `league_history_all_star` is written at year-end / postseason rollup. The 2029 absence in a Nov dump is expected behavior (file appears once the season closes); not a formula bug.
+- [x] **HOF induction year** — DONE: `players.inducted` (year, 0=not inducted) and `players.hall_of_fame` (0/1 flag) are direct columns. No cross-reference with `players_awards` needed.
 - [ ] Decode the `<entity:type#id>` tag format in `trade_history.summary` for structured parsing
 
 ## Schema & ingest phase (next)

@@ -224,3 +224,217 @@ Mean runs from this state to end of half-inning, per (base_state, outs):
 | Loaded | 1.96 | 0.98 | 0.41 |
 
 Slightly compressed vs real-MLB matrix (e.g., real bases-empty-0-out is ~0.48), suggesting OOTP's run environment is marginally higher-leverage than real MLB.
+
+---
+
+## Findings from full 21-file `import_export` reconciliation (2026-05-02)
+
+### IE display conventions
+
+The `import_export` files apply UI formatting to numeric dump fields. The
+reconciliation matcher now normalizes these:
+
+- **`-`** is the "no value" sentinel (treated as null).
+- **Trailing `%`** on percentages: `"9.1%"` ↔ `9.1`.
+- **Currency**: `"$28 800 000"` (dollar prefix, space thousands-separator) ↔ `28800000`.
+- **Auto-renewal annotation**: `"1 (auto.)"` on contract years field.
+
+When a field is a **categorical string** in IE (e.g. VELO `"75-80 Mph"`,
+G/F `"EX FB"`, popularity `"Well Known"`, personality `"Normal"`, scouting
+accuracy `"V.High"`), the dump stores a small integer that maps to it. We
+don't yet have these mapping tables — they're tagged G-tier.
+
+### Pitching career-stats discoveries
+
+- **PPG**: OOTP truncates (`FLOOR`), not rounds, when displaying integer.
+- **GO%**: IE displays as decimal fraction (`0.17` = 17%), 2-decimal precision —
+  not a percentage.
+- **SV%**: OOTP uses `sv / (sv + bs)` (saves over save situations), not
+  `sv / svo`.
+- **GF**: pull `career_pit.gf` directly — *not* `g - gs` (which is "relief
+  appearances", a different concept).
+- **WPA**: IE rounds to 1 decimal; per-stint sums round nicely.
+
+### Unreconciled formula puzzles (TBD)
+
+- **DEF (G-tier)**: appears in batting_ratings, batting_potential,
+  position_ratings. The `MAX(fielding_rating_pos2..9)` formula is consistently
+  5-15 points HIGHER than IE values (e.g. ie=55, derived=60). DEF likely
+  applies a positional difficulty adjustment or a weighted average of the
+  underlying skill ratings (range/error/arm), not a simple positional max.
+- **pLi (career_pit.li)**: neither `SUM(li)`, `AVG(li)`, nor `SUM(li)/SUM(g)`
+  reproduces IE values. Some pitchers come out 12× too high; others ~300× too
+  high. The semantics of `career_pit.li` are unclear — may need per-game
+  leverage sums elsewhere.
+- **RA in pitching_stats_2**: a small integer (often <10) that doesn't match
+  raw `career_pit.r` (much larger) or per-9 RA (decimal). Possibly some
+  unearned-runs-only or specific-context metric.
+
+### Statcast (at-bat-derived) approximations
+
+`batting_superstats_1` and `pitching_superstats_1` derive ~22 columns from
+the per-PA `players_at_bat_batting_stats` event log. Formulas are
+approximately right but exact reconciliation needs:
+
+- **EV buckets** for Soft%/Avg%/Solid%: OOTP's exact cutoffs unknown.
+  Currently using `<85 / 85-100 / >=100` mph as a placeholder.
+- **`hit_xy` + `bats` decoding**: needed for Pull%/Cent%/Oppo% spray-direction
+  classification (currently NULL).
+- **`hit_loc` decoding**: needed for IFH% (infield-hit %).
+- **xBA/xSLG/xwOBA/xERA** (D-tier): require a regression model from
+  (EV, LA, hit_loc) → outcome probability.
+
+The basic distribution shapes (LD%, GB%, FB%, BIP, EV mean/max, BAR, HHi)
+match within a few percent. The per-PA event log is internally consistent
+with OOTP's output; the gaps are about discovering OOTP's exact thresholds.
+
+### `BIP` definition
+
+OOTP excludes sacrifices (`sac > 0`, both bunts and SF) from BIP counts.
+`bip = COUNT(*) WHERE result IN (4,5,6,7,8,9) AND sac = 0`.
+
+### Scope / source tables for IE files
+
+Each of the 21 IE files maps to one or more dump tables:
+
+| IE file | Primary dump source |
+|---|---|
+| `batting_stats_1`, `batting_stats_2` | `players_career_batting_stats` |
+| `pitching_stats_1`, `pitching_stats_2` | `players_career_pitching_stats` |
+| `fielding_stats` | `players_career_fielding_stats` (use `split_id=0`) |
+| `batting_ratings`, `batting_potential`, `pitching_ratings`, `pitching_potential`, `fielding_ratings`, `individual_pitch_ratings`, `individual_pitch_potential`, `position_ratings` | `players_scouted_ratings` (filter `scouting_team_id=4 AND league_id=203`) |
+| `batting_superstats_1`, `pitching_superstats_1` | `players_at_bat_batting_stats` |
+| `batting_superstats_2`, `pitching_superstats_2` | F-tier (per-pitch zone/type data — not in dump) |
+| `default`, `popularity_info`, `personality___morale` | `players` (+ scouted_ratings for OVR/POT) |
+| `financial_info` | `players_contract` (+ players for age) |
+
+## DEF rating formula (decoded 2026-05-03)
+
+The `DEF` column shown in `batting_ratings`, `batting_potential`, and
+`position_ratings` is **the player's fielding rating at their primary
+position** — not max-of-positions, not an average.
+
+```sql
+CASE players_scouted_ratings.position
+    WHEN 1 THEN fielding_rating_pos1   -- P
+    WHEN 2 THEN fielding_rating_pos2   -- C
+    WHEN 3 THEN fielding_rating_pos3   -- 1B
+    ...
+    WHEN 9 THEN fielding_rating_pos9   -- RF
+END
+```
+
+Verified: 220/220 exact match across all three IE files. The previous
+"max-of-positions" hypothesis was wrong because a 3B with strong 1B/LF
+backup ratings would show his 3B number in IE, not the higher backup rating.
+
+`batting_potential.DEF` shows **current** primary-position rating, not
+potential — OOTP's potential view doesn't separately surface a "DEF
+potential" because each per-position rating already has its own
+`fielding_rating_posN_pot`.
+
+### Audit population caveat
+
+The ratings CTEs filter `scouted_ratings` by `scouting_team_id=4 AND
+league_id=203`, which restricts joins to MLB-level players (24 of 220 IE
+rows). Each Red Sox-org player has exactly 1 row at `scouting_team_id=4`
+across all leagues, so dropping the league filter would broaden the
+audit population to all 220 IE rows without introducing duplicates.
+
+## Codebooks decoded 2026-05-03 (from helpful_files cross-reference)
+
+### Popularity (`players.local_pop`, `players.national_pop`) — 7-bucket scale
+
+| int | IE string |
+|---|---|
+| 0 | Unknown |
+| 1 | Insignificant |
+| 2 | Fair |
+| 3 | Well Known |
+| 4 | Popular |
+| 5 | Very Popular |
+| 6 | Extremely Popular |
+
+Verified empirically: 220/220 exact match in IE `popularity_info`.
+
+### Scouting accuracy (`players_scouted_ratings.scouting_accuracy`) — 1..5
+
+| int | IE string |
+|---|---|
+| 1 | V.Low |
+| 2 | Low |
+| 3 | Avg |
+| 4 | High |
+| 5 | V.High |
+
+Verified empirically: 220/220 exact match in IE `popularity_info.SctAcc`.
+
+### Personality bucket (`players.personality_*`)
+
+The 5 personality fields (`personality_leader`, `personality_loyalty`,
+`personality_greed`, `personality_work_ethic`, `personality_intelligence`)
+are 0–200 internal values. IE shows them as `'Low' | 'Normal' | 'High' | 'Unknown'`.
+
+| value range | IE string |
+|---|---|
+| < 60 | Low |
+| 60 – 139 | Normal |
+| ≥ 140 | High |
+
+The "Unknown" label appears for ~4 of 220 players who are 2029 acquisitions
+with `experience ≤ 1` — the org hasn't fully scouted their personality yet.
+Those players still have a hidden true value in the dump, so the bucket
+formula returns Low/Normal/High and the matcher records 4 mismatches per
+trait (216/4/0). That's a known limitation, not a formula flaw.
+
+The IE `Type` column ("Captain", "Selfish", "Humble", "Sparkplug", etc.)
+is a derived **personality archetype**, not a sixth trait — it's some
+combination of the 5 trait values plus scouting_accuracy. Left F-tier;
+formula TBD if we ever care about archetypes.
+
+## hit_xy spray decode (partial — exact boundary TBD)
+
+`players_at_bat_batting_stats.hit_xy` is a 16×16 packed coordinate:
+`x = floor(hit_xy / 16)`, `y = hit_xy % 16` with x going across the
+field and y from home plate to outfield wall. The "naive" spray bins
+(LF=[0,4], CF=[5,10], RF=[11,15]) consistently under-count Pull% by
+~5–10pp vs IE — for example, RHB Eric Coles shows IE Pull=44.1% but
+naive=36.4%. The exact OOTP boundary appears to be different (possibly
+shifted, possibly weighted by `hit_loc`). Left as E-tier with the naive
+formula; spray-direction is right but magnitudes need calibration.
+
+For switch hitters (`players.bats=3`), effective batter side is opposite
+the pitcher's throwing hand: vs RHP they bat L (pull = RF), vs LHP they
+bat R (pull = LF). Pitcher handedness is recoverable via
+`opponent_player_id` → `players.throws`.
+
+## League-level pre-computed sabermetrics (big future unlock)
+
+`league_history_batting_stats` and `league_history_pitching_stats` already
+ship with per-league/year/level pre-computed:
+
+- batting: `wOBA`, `RC`, `RC/27`, `ISO`, `OPS`, `BABIP`, `K%`, `BB%`
+- pitching: `FIP`, `ERA`, `WHIP`, `WAR`, `RA9-WAR`, `K-BB%`, `H/9`,
+  `K/9`, `BB/9`, `HR/9`, `BABIP`, `K%`, `BB%`, `KBB ratio`
+
+Implication: the planned **league constants module** doesn't have to
+*compute* anything — it can just read these pre-computed league lines
+from the dump and use them directly to derive ERA+, OPS+, wRC+, etc.
+This collapses most of the C-tier outstanding (RC, RC/27, wOBA, FIP,
+ERA+, OPS+) into a simple lookup pattern.
+
+## HOF induction
+
+`players.inducted` (int, 0 = not inducted, otherwise = induction year)
+and `players.hall_of_fame` (0/1 flag) are direct columns. No need to
+reconstruct from `players_awards` cross-references.
+
+## All-Star 2029 gap
+
+`league_history_all_star.csv` data goes 1933 → 2028 with no 2029 entries.
+Years 2020 and 2030 are also missing. The 2029 absence is consistent
+with the helpful-files cross-reference (their save also stops at the
+last completed season). Likely the file is only written at year end /
+during postseason rollup, so a Nov dump captured before that step has
+no current-year entry. Not a formula issue; treat it as "data not
+available until next dump."

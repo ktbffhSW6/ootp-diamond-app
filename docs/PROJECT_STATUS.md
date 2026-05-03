@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-02 (in-game year 2029)
+**Last updated**: 2026-05-03 (in-game year 2029) — popularity/personality/SctAcc decoded, hit_xy spray decoded (partial)
 
 ---
 
@@ -34,19 +34,56 @@ building the ingest pipeline.
 
 ## Most-recent change
 
-Decoded the four pending integer codebooks. `award_id` (all 13 verified), `leader.category` (47/60 verified — remaining 13 are derived sabermetric stats), `streak_id` (21 profiled), `body_part` (12 profiled). All added to `src/diamond/constants.py` as IntEnums. `audit_output/codes_decoder_report.md` has full details.
+Cross-referenced reconciliation notes from a separate OOTP audit project (`docs/helpful_files/`) and closed several gaps in one pass:
+
+- **Popularity codebook** decoded: 7 buckets, 0=Unknown..6=Extremely Popular. `popularity_info` now 6/6 A-tier (was 3/5).
+- **Personality buckets** decoded: 0–200 personality values bucket as <60=Low, 60–139=Normal, ≥140=High. `personality___morale` now 6/6 A-tier (was 1/6); 4 fresh-acquisition rookies show `Unknown` in IE which we can't recover from a hard bucket — that's a small known mismatch.
+- **Scout accuracy codebook**: 1=V.Low, 2=Low, 3=Avg, 4=High, 5=V.High. Added as a 6th column to `popularity_info`.
+- **HOF year** confirmed direct via `players.inducted`. No `players_awards` cross-ref needed.
+- **All-Star 2029 gap** explained: `league_history_all_star` only writes at year-end / postseason rollup, so a Nov dump captured before that step has no current-year row. Not a formula issue.
+- **hit_xy spray decode** landed (partial): `x = floor(hit_xy/16)` with switch hitters using opposite of pitcher.throws. Naive [0,4]/[5,10]/[11,15] bins under-count Pull% by ~5–10pp consistently — exact OOTP boundary still TBD.
+- **Big future unlock surfaced**: `league_history_*_stats` already ships per-league/year/level wOBA/RC/FIP/ERA/WHIP/WAR/etc. pre-computed. The "league constants module" is mostly a lookup, not a recompute.
+
+Codebooks added to `src/diamond/constants.py` as `Popularity`, `ScoutingAccuracy`, and `personality_bucket()` helper. See [docs/DATA_NOTES.md](docs/DATA_NOTES.md) for verification details.
 
 ## Reconciliation status (most recent run)
 
-Files audited: 5 of 21 (`batting_stats_1`, `batting_stats_2`, `pitching_stats_1`, `fielding_stats`, `batting_ratings`).
+**All 21 `import_export` files now audited.** Below: the per-file scorecard with
+columns reconciled / total cols. Tier counts: A=direct, B=trivial calc,
+C=needs league constants or formula TBD, D=modeled (xstats), E=at-bat aggregation,
+F=cannot replicate (per D5 or string-format), G=needs scale conversion.
 
-| File | Match | Notes |
+| File | Reconciled | Outstanding |
 |---|---|---|
-| `batting_stats_1` | 23/24 | only `OPS+` outstanding (needs league constants) |
-| `batting_stats_2` | 15/18 | RC, RC/27, wOBA need league constants |
-| `pitching_stats_1` | 23/25 | ERA+, FIP need league constants |
-| `fielding_stats` | 12/12 | **perfect** |
-| `batting_ratings` | 17/18 | all 16 batting skill ratings 100% on 20-80 scale; only DEF formula outstanding |
+| `batting_stats_1` | 23/24 | OPS+ (C: needs lg constants) |
+| `batting_stats_2` | 15/18 | RC, RC/27, wOBA (C) |
+| `pitching_stats_1` | 23/25 | ERA+, FIP (C) |
+| `fielding_stats` | **12/12** | — |
+| `batting_ratings` | **18/18** | — |
+| `batting_potential` | **11/11** | — |
+| `pitching_ratings` | 10/12 | VELO, G/F (G: int→string mapping) |
+| `pitching_potential` | 8/10 | VELO, G/F (G) |
+| `fielding_ratings` | **9/9** | — |
+| `individual_pitch_ratings` | 14/15 | VELO (G) |
+| `individual_pitch_potential` | 14/15 | VELO (G) |
+| `position_ratings` | **10/10** | — |
+| `pitching_stats_2` | 22/26 | RA, RSG, SIERA, pLi (C) |
+| `batting_superstats_1` | partial 22/25 (E-tier) | EV-bucket cutoffs need investigation; xBA/xSLG/xwOBA (D); Pull%/Cent%/Oppo% need hit_xy decode |
+| `pitching_superstats_1` | partial 13/17 (E-tier) | same EV/bucket issues; xBA/xSLG/xwOBA/xERA (D) |
+| `batting_superstats_2` | 0/18 | **all F-tier per D5** (per-pitch zone/type data not in dump) |
+| `pitching_superstats_2` | 0/17 | **all F-tier per D5** |
+| `default` | 3/6 | SLR/YL string-formatted; MLY TBD |
+| `popularity_info` | **6/6** | — (Nat./Loc. Pop. + SctAcc decoded 2026-05-03) |
+| `personality___morale` | **6/6** | — (LEA/LOY/FIN/WE/INT bucketed 2026-05-03; 4 rookie mismatches expected) |
+| `financial_info` | 2/12 | SLR/YL/CV string-formatted; ECV/ETY/MLY/SECY/OPT/OY/ON40 (C: extension/option data) |
+
+Headline numbers: across the 21 files, of ~360 total IE columns:
+- **~210** reconcile cleanly (A/B/E) — gained ~12 from 2026-05-03 popularity/personality/SctAcc decodes
+- ~50 are F-tier by design (D5: plate-discipline; string-formatted display fields)
+- ~20 are G-tier deferred (integer→categorical-string mappings — VELO, G/F, contract auto-renew)
+- ~30 are C-tier (need league constants — wOBA/RC/FIP/ERA+/SIERA/etc. — but these are pre-computed in `league_history_*` so the lookup is straightforward)
+- ~15 are D-tier (xstats — xBA/xSLG/xwOBA/xERA, modeled from EV/LA)
+- ~25 are partial-match E-tier (Statcast bucket cutoffs + spray boundary need OOTP-source-of-truth)
 
 Latest reports (audit_output/ — gitignored, regenerate with the CLI commands):
 - [decoder_report.md](audit_output/decoder_report.md) — `diamond decode`
@@ -60,11 +97,19 @@ Latest reports (audit_output/ — gitignored, regenerate with the CLI commands):
 User has chosen to **finish the audit phase before any schema/ingest design**.
 Audit completion order from [BACKLOG.md](BACKLOG.md):
 
-1. **NEXT**: Reconcile the remaining **16 `import_export` files** — mechanical now that the framework exists. Will surface remaining quirks (potential ratings, individual pitch types, position ratings, financial info, popularity, personality/morale).
-2. Investigate the **DEF rating formula** (last G-tier hole)
-3. Resolve small rounding edges (OPS 79%, HR/9 95%, K/9 91%, pitching WAR 84%) — confirm not derivation bugs
-4. Investigate the **All-Star 2029 gap** + verify HOF induction year via awards
-5. Decode `<entity:type#id>` tags in `trade_history.summary` for structured movement parsing
-6. Bonus: verify the 13 unmapped `LeaderCategory` codes by computing the missing sabermetric stats (RC, wOBA, FIP, SIERA, K%, SV%, QS%, CG%, SHO%, GO/AO) and re-running the matcher
+1. ~~Reconcile the remaining 16 `import_export` files~~ — **DONE**.
+2. ~~Investigate the **DEF rating formula**~~ — **DONE**. Was `fielding_rating_pos[player.position]`.
+3. ~~**Popularity / Personality / SctAcc** integer→string mappings~~ — **DONE** (this session, via helpful_files cross-ref).
+4. ~~All-Star 2029 gap, HOF induction year~~ — **DONE** (no formula needed; `players.inducted` is direct, all-star file just doesn't write until year-end).
+5. **NEXT**: Broaden the ratings-CTE audit population by dropping `league_id=203` from the 6 ratings CTEs. Each Red Sox-org player has exactly 1 row at `scouting_team_id=4` across all leagues — widens joined pop from 24 → 220 IE rows (9.2x) without duplicates.
+6. **Build league constants module** (now mostly a lookup over `league_history_*` pre-computed wOBA/FIP/ERA/WHIP/WAR — see DATA_NOTES). Unlocks the ~30 C-tier sabermetric holdouts.
+7. Resolve small rounding edges (OPS 79%, HR/9 95%, K/9 91%, pitching WAR 84%).
+8. Calibrate `hit_xy` spray boundaries — basic decode landed but Pull%/Oppo% under-/over-count by ~5–10pp; grid-search x boundaries against IE values.
+9. Remaining integer→string mappings: VELO ranges, G/F categories, contract auto-renew, personality "Type" archetype.
+10. Decode `<entity:type#id>` tags in `trade_history.summary` for structured movement parsing.
+11. Investigate OOTP's exact EV-bucket cutoffs for Soft%/Avg%/Solid% (Statcast superstats_1).
+12. Decode `pLi` (`career_pit.li` is "average leverage index" per dump dictionary — but neither sum nor avg matches IE; possibly per-stint compounding).
+13. Decode `RA` in pitching_stats_2 (small int that doesn't match raw `r` or per-9 RA).
+14. Bonus: verify the 13 unmapped `LeaderCategory` codes by computing the missing sabermetric stats.
 
 After full reconciliation: schema design + ingest pipeline (per the L0-L4 layers sketch from earlier sessions).

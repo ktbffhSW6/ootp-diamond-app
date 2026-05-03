@@ -186,6 +186,77 @@ class StreakId(IntEnum):
     APPEARANCE_STREAK          = 21   # max 39 (highest pitcher), pitchers
 
 
+class Popularity(IntEnum):
+    """`players.local_pop` and `players.national_pop` — 7-bucket popularity scale.
+    Verified empirically against IE `popularity_info` strings (220/220 match)."""
+    UNKNOWN            = 0
+    INSIGNIFICANT      = 1
+    FAIR               = 2
+    WELL_KNOWN         = 3
+    POPULAR            = 4
+    VERY_POPULAR       = 5
+    EXTREMELY_POPULAR  = 6
+
+
+POPULARITY_LABELS = {
+    0: "Unknown",
+    1: "Insignificant",
+    2: "Fair",
+    3: "Well Known",
+    4: "Popular",
+    5: "Very Popular",
+    6: "Extremely Popular",
+}
+
+
+class ScoutingAccuracy(IntEnum):
+    """`players_scouted_ratings.scouting_accuracy` — 1..5 scout-quality scale.
+    Verified empirically against IE `popularity_info.SctAcc` strings."""
+    V_LOW   = 1
+    LOW     = 2
+    AVG     = 3
+    HIGH    = 4
+    V_HIGH  = 5
+
+
+SCOUTING_ACCURACY_LABELS = {
+    1: "V.Low",
+    2: "Low",
+    3: "Avg",
+    4: "High",
+    5: "V.High",
+}
+
+
+# Personality / morale bucketing
+# ─────────────────────────────────────────────────────────────────────────────
+# `players.personality_*` (leader, loyalty, greed, work_ethic, intelligence)
+# are 0-200 internal scale. IE shows them as 'Low'/'Normal'/'High'.
+# Empirically verified buckets (216/220 match; 4 unknowns are 2029-acquired
+# rookies whose personality the org hasn't fully scouted yet — IE shows
+# 'Unknown' for those):
+#
+#   value <  60       -> 'Low'
+#   60 <= value < 140 -> 'Normal'
+#   value >= 140      -> 'High'
+
+PERSONALITY_LOW_THRESHOLD = 60
+PERSONALITY_HIGH_THRESHOLD = 140
+
+
+def personality_bucket(value: int | None) -> str | None:
+    """Return 'Low' / 'Normal' / 'High' for a 0-200 personality value.
+    Returns None if value is missing.
+    """
+    if value is None:
+        return None
+    if value < PERSONALITY_LOW_THRESHOLD:
+        return "Low"
+    if value < PERSONALITY_HIGH_THRESHOLD:
+        return "Normal"
+    return "High"
+
+
 class BodyPart(IntEnum):
     """`players_injury_history.body_part` — 12 codes profiled. Names derived
     from injury frequency + average length + day-to-day rate. Mappings are
