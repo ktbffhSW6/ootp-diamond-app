@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-05 (in-game year 2029) — Phase 2 mid-flight; items 1-4 done (`league_constants` module + warehouse design + 5-layer DDL + `diamond ingest` CLI all built; full --all smoke test in progress)
+**Last updated**: 2026-05-05 (in-game year 2029) — Phase 2 6 of 7 done (only `player_movements` left). UI/product design captured in [UI_DESIGN.md](UI_DESIGN.md) + decisions D13/D14/D15.
 
 ---
 
@@ -120,9 +120,18 @@ Per [BACKLOG.md](BACKLOG.md), in priority order:
    `<save>/diamond/diamond.duckdb` per D2. Skip-if-success logic via the
    `_diamond_ingests` admin table; flags for `--all`, `--rebuild-only`,
    `--force`, `--no-rebuild`.
-5. **Smoke test: ingest all 45 dumps end-to-end** — in progress.
-6. **Wire `reconcile.py` as a post-ingest regression check** (per Decision D8).
-7. **Build derived `player_movements` table** from snapshot diffs + `trade_history`.
+5. ~~**Smoke test: ingest all 45 dumps end-to-end**~~ — done 2026-05-05.
+   44 ingested + 1 skipped, ~3.9 GB warehouse, fully populated.
+6. ~~**Wire `reconcile.py` as a post-ingest regression check** (Decision D8)~~ —
+   done 2026-05-05. `--source warehouse` flag added; output verified
+   byte-identical to CSV-source mode (D8 contract satisfied).
+7. **Build derived `player_movements` table** from snapshot diffs + `trade_history` —
+   only Phase 2 item remaining.
+
+After Phase 2: UI implementation begins per [UI_DESIGN.md](UI_DESIGN.md). Eight
+major areas captured (cockpit / player pages / leaderboards / reviews /
+promotion-demotion / universes+chart-builder / glossary / AI overlay) with
+build sequence and decisions D13–D15 locking architecture.
 
 Open audit carry-forward items (non-blocking, can pick up opportunistically):
 multi-level OPS+/ERA+ park weighting, hit_loc-based spray, 13 unmapped

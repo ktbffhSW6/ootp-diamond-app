@@ -36,9 +36,11 @@ players) and documented as such. Safe to design schema.
 - [x] Build `diamond ingest <dump_date>` and `diamond ingest --all` CLI commands —
   done 2026-05-05. Plus `--rebuild-only`, `--force`, `--no-rebuild`. Writes to
   `<save>/diamond/diamond.duckdb` per D2; skip-if-success via `_diamond_ingests`.
-- [ ] Run a full ingest of all 45 dumps as the smoke test — in progress.
-- [ ] Build per-ingest reconciliation report comparing ingest output to source CSVs
-  (the `reconcile.py` harness becomes a regression check per D8).
+- [x] Run a full ingest of all 45 dumps as the smoke test — done 2026-05-05.
+  44 ingested + 1 skipped; ~3.9 GB warehouse; all invariants pass.
+- [x] Build per-ingest reconciliation report comparing ingest output to source CSVs
+  (the `reconcile.py` harness becomes a regression check per D8) —
+  done 2026-05-05. `--source warehouse` flag; output byte-identical to CSV mode.
 - [ ] Build derived `player_movements` table from snapshot diffs + `trade_history`.
 
 ## Audit phase — carry-forward (non-blocking)
@@ -119,11 +121,28 @@ and count-state splits).
 
 ## UI phase (later)
 
-- [ ] **Save-setup picker UI** (v2 hard requirement per Decision D3) — scans
-  earliest dump's `leagues.csv` and lets user select scope.
-- [ ] Bref/Fangraphs/Savant-style web frontend (FastAPI + Next.js).
-- [ ] Player movement timeline visualizer.
-- [ ] Custom time-frame query interface.
+Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
+
+- [ ] **Reference scope expansion** (per D13). Small — extends `_scoped_players`
+  builder with the ≥1 MLB PA union when `SaveConfig.reference_scope_enabled`.
+- [ ] **Stat dictionary + glossary** (per D15). `diamond/dictionary/` module +
+  `/glossary` page with KaTeX-rendered formulas + hover tooltips on column
+  headers. Infrastructure for everything else.
+- [ ] **Player page** — Bref-shaped layout, Savant-styled visuals, AI assistant.
+- [ ] **Promotion/demotion decision tool** — flagship "GM sidekick" feature.
+- [ ] **Custom leaderboards** — Fangraphs-style sortable filterable tables.
+- [ ] **Universes + chart builder + scatter** *(bundled)* — Vega-Lite spec
+  artifact, no-size-limit cohorts (Plotly WebGL fallback at scale), set ops,
+  cross-era support.
+- [ ] **AI overlay** (per D14) — keyring-stored keys, pluggable provider
+  adapters, OpenRouter live pricing, four use levels (Off/On-demand/Smart/
+  Always-on), per-feature overrides, daily-cap auto-degrade.
+- [ ] **Cockpit dashboard** — front-office home screen with anomaly flags.
+- [ ] **Monthly + annual reviews** — long-form AI-augmented narrative pages.
+- [ ] **Setup wizard** — first-launch onboarding (per UI_DESIGN.md "Cross-cutting
+  infrastructure"). Includes save-setup picker (D3 v2 fulfillment).
+- [ ] **Sync triggers + tracked-save management** — app-launch scan, manual
+  refresh, untrack-vs-delete-warehouse distinction.
 
 ## Future / nice-to-have
 

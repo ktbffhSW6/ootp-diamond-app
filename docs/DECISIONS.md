@@ -107,3 +107,103 @@
 - Expose both views with a "show truth" toggle — rejected. Trivially easy to leave on, defeats the purpose, and once the truth is in the UI it's hard to un-see even if hidden again.
 - Default to scouted, expose objective behind a `--cheat` flag — rejected. Same problem at lower friction.
 - Use `team_id = 0` as a fallback when the user's scouts haven't graded a player — rejected. The dump's `team_id = 4` rows already cover all 18,130 scoped players; there is no gap to fill, and "the scout doesn't have an opinion" is itself meaningful information that shouldn't be silently substituted.
+
+## D13 — Two-tier player scope (org + reference)
+
+**Date**: 2026-05-05
+**Decision**: Player scope splits into two distinct populations:
+- **Org scope** (the existing D4 rule): players who have ever appeared on a team in `SaveConfig.league_ids`. Powers cockpit, demotion/promotion tool, day-to-day org views.
+- **Reference scope** (new): any player with **≥1 career MLB PA** (`SUM(pa) ≥ 1` over level_id=1 rows in `f_player_season_batting`). Includes Hall of Famers, historical legends OOTP imports, current-era stars on other orgs. Estimated 30–50K players for a typical save vs ~10K org-scope.
+
+**Opt-in per save**: `SaveConfig.reference_scope_enabled: bool` defaults `False`. When `True`, the L1 `_scoped_players` builder UNIONs the org-scope set with the MLB-PA set. UI surfaces (cockpit, leaderboards) default to org-scope; chart builder / universes / glossary distribution histograms can opt into reference scope when meaningful (e.g., "compare Mike Trout to every batting Hall of Famer").
+
+**No cross-save analysis**: DuckDB `ATTACH` remains technically possible for power users to run cross-save queries by hand, but Diamond does not expose this as a product feature. Each save is self-contained.
+
+**Why**: Two real user needs:
+1. *Day-to-day GM cockpit* (org scope) — fast, focused, free of clutter from players the user doesn't care about. The current scope works perfectly here.
+2. *Cross-era / cross-org analytical comparisons* (reference scope) — "where does my prospect's age-22 wRC+ rank against every age-22 HoF batter?" / "is my closer's K/9 elite by historical standards?" — questions the public-stats sites answer trivially but our org-only warehouse couldn't.
+
+The ≥1 MLB PA cutoff keeps the population manageable (~30K rather than ~150K worldwide-bio) while including everyone of analytical interest. Per-save opt-in keeps the cost zero for users who don't need it.
+
+**How to apply**:
+- `_scoped_players` machinery query gains an optional second clause when `reference_scope_enabled`:
+  ```sql
+  WHERE team_id IN _scoped_teams
+     OR player_id IN (SELECT player_id FROM f_player_season_batting
+                      WHERE level_id = 1 GROUP BY player_id HAVING SUM(pa) >= 1)
+  ```
+  (Order of operations: f_player_season_batting must be built before _scoped_players when reference scope is on. The L0→L1 dependency graph adjusts.)
+- `diamond ingest --reference-scope` flag toggles per-ingest
+- Setup wizard step 4 exposes the toggle per save
+- Setting persisted in tracked-saves registry
+
+**Alternatives considered**:
+- *No reference scope, ever* — rejected once user surfaced the "Trout vs HoF" use case; the analytical value is real and the cost is small.
+- *Always-on reference scope* — rejected as overhead for users who only want org analytics.
+- *Whole-world scope (every player ever)* — rejected as too much disk/query cost for too little additional analytical value past the MLB-PA cutoff.
+
+## D14 — AI overlay architecture (keyring, pluggable providers, four-tier use levels)
+
+**Date**: 2026-05-05
+**Decision**: Diamond's AI features run through a platform-agnostic adapter layer with the following commitments:
+
+- **Keys live in the OS keyring** (Windows Credential Manager / macOS Keychain / Linux Secret Service via the `keyring` Python library). Never written to disk in plaintext. Never logged. Encrypted-file fallback only when no OS keyring is available, behind a master password.
+- **Pluggable provider adapters**: a thin `AIClient` interface with concrete adapters per provider (`AnthropicClient`, `OpenAIClient`, `GeminiClient`, `OllamaClient`). Adding a provider = drop in one ~80-line file + register in the settings UI. No vendor lock-in.
+- **Pricing data via OpenRouter** live fetch (their model catalog has ~200 models with current prices), with a hand-maintained `pricing.toml` fallback for offline operation.
+- **Per-call cost estimation** before any AI invocation. Uses provider tokenizer (tiktoken / Anthropic SDK / etc.) on the prompt + per-feature typical-output-length estimates. Visible as inline "✨ Generate (~$0.04)" badges and "🪙 $0.42 today (8% of cap)" cockpit footer.
+- **Four AI use levels** (global default with per-feature override):
+  - **Off** — all AI hidden, no API calls
+  - **On-demand** — user clicks each AI feature; cost preview before every call
+  - **Smart** *(default for new users)* — auto-runs cheap inline features (chart annotations, percentile cards, anomaly flags); prompts before expensive features (monthly review, deep dossier)
+  - **Always-on** — auto-runs everything, including expensive features
+- **Daily-cap auto-degrade**: at 80% of cap, auto-features turn off; at 100%, all AI features pause until midnight reset. User-set cap, defaults to $5.
+
+**Why**:
+- Platform-agnostic from day one because OOTP users span Anthropic / OpenAI / Google / Ollama preferences, and locking to one provider creates an avoidable friction. The adapter pattern is cheap (~80 lines per provider).
+- Keyring storage because API keys are credentials; they must be protected at rest. The `keyring` library handles this cross-platform with no additional code.
+- OpenRouter pricing because hand-maintaining a pricing TOML with ~200 models that update monthly is a maintenance burden we shouldn't take on; OpenRouter does it for us as a free public service.
+- Four use levels because the gap between "click every time" and "auto-everything" is wide and most users want a middle ground. Smart-tier explicitly classifies features into "inline auto-runs" vs "deep on-demand" so users know what to expect. The classification is per-feature, not per-call.
+- Daily cap auto-degrade because surprise AI bills are the #1 reason users distrust AI features in tools like this.
+
+**How to apply**:
+- Module layout:
+  ```
+  diamond/ai/
+    settings.py    (load/save settings.toml + keyring access)
+    pricing.py     (token costing, openrouter refresh, pricing.toml fallback)
+    usage.py       (~/.diamond/usage.duckdb writer/reader)
+    client.py      (AIClient interface)
+    adapters/anthropic.py / openai.py / gemini.py / ollama.py
+  ```
+- Settings live at `~/.diamond/settings.toml` (non-secret) + OS keyring (secrets) + `~/.diamond/usage.duckdb` (cost log).
+- A "use level" classifier helper decides at runtime whether to invoke AI for a given feature based on the current global+per-feature settings.
+
+**Alternatives considered**:
+- *Hardcoded single provider (e.g., Anthropic-only)* — rejected; locks in vendor choice and fails users with provider preferences.
+- *Plaintext keys in config file* — rejected; security-irresponsible.
+- *Three use levels (Off / Manual / Auto)* — rejected; the gap between Manual and Auto is too wide for new users to navigate. Smart-tier is the unlock.
+- *No daily cap* — rejected; surprise-bill risk is real, especially with Always-on tier.
+
+## D15 — Stat dictionary as single source of truth
+
+**Date**: 2026-05-05
+**Decision**: Every stat reference in Diamond — column headers, chart axis labels, AI prompts, glossary pages, narrative reports — reads from a single canonical Python module: `diamond/dictionary/`. One `Stat` dataclass instance per metric, ~150 entries total covering every L0/L1/L2/L3 column we surface.
+
+Each entry carries: `id`, `display_name`, `short_label`, `category`, `formula_tex` (KaTeX-renderable), `formula_plain` (text fallback), `description`, `units`, `typical_range`, `interpretation`, `caveats`, `source` (warehouse path), `formula_source` (provenance), `related` (list of related stat ids), `refs` (links to Fangraphs / BR / Savant external glossaries).
+
+**Why**: Without a single source of truth, the same stat ends up labeled three different ways across the app (Fangraphs `wOBA`, our internal `WOBA`, the column header `Weighted On-Base Avg`), formulas drift between code comments and display tooltips, and AI prompts hallucinate definitions because they can't ground in the app's actual implementation. The dictionary makes definitions data, not literature, and makes them queryable, versionable, and AI-injectable.
+
+**How to apply**:
+- `diamond/dictionary/__init__.py` defines `Stat` dataclass and exports `STATS: dict[str, Stat]`.
+- All UI surfaces (table column components, chart axis labels, glossary page) read `STATS[stat_id]` instead of hand-writing labels and formulas.
+- AI prompt builders inject relevant stat definitions into the AI context window.
+- Existing formulas in `reconcile.py` `ColSpec.notes`, `advanced/*.py` docstrings, `DATA_NOTES.md`, and `constants.py` get **consolidated** (not duplicated) into the dictionary; downstream code references dictionary IDs.
+- The `/glossary` route renders one URL per stat (`/glossary/wOBA`); hover tooltips on column headers lazy-fetch the same data.
+- Math rendering: KaTeX (lightweight, ~50KB, plays well with React).
+
+**Alternatives considered**:
+- *Per-module ad-hoc stat metadata (status quo)* — rejected; produces drift, inconsistent labels, AI grounding gaps.
+- *Markdown glossary file as source of truth* — rejected; not queryable from runtime UI without a parser, harder to type-check, no programmatic access for AI prompts.
+- *External SaaS like Fangraphs glossary as the source of truth* — rejected; their formulas may differ from ours (e.g., park-halving conventions), and we'd take a runtime dependency on someone else's site.
+
+**Maintenance**: dictionary entries are append-only by default. Adding a new stat = add an entry. Changing a formula = update the entry AND the code that computes it (cross-reference enforced by `Stat.source` field pointing to the implementation).
