@@ -481,6 +481,42 @@ def smoke_l3(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
         "f_trade_participant"
     )
 
+    # f_draft_class: every row maps to a real player and to a real draft team
+    n_orphan_player = con.execute("""
+        SELECT COUNT(*) FROM f_draft_class fdc
+        WHERE NOT EXISTS (
+            SELECT 1 FROM players_current pc WHERE pc.player_id = fdc.player_id
+        )
+    """).fetchone()[0]
+    if n_orphan_player:
+        console.print(
+            f"[red]FAIL:[/red] {n_orphan_player} f_draft_class rows lack a "
+            f"matching players_current entry"
+        )
+        return False
+    console.print(
+        "[green]✓[/green] f_draft_class rows all resolve to players_current"
+    )
+
+    # f_draft_class: outcome bucket invariants
+    # 1) ever_made_mlb=true  ⇒ outcome must be one of {mlb_star, mlb_regular, mlb_callup, retired}
+    # 2) ever_made_mlb=false ⇒ outcome must be one of {in_draft_org, traded_away, released, retired}
+    n_outcome_violation = con.execute("""
+        SELECT COUNT(*) FROM f_draft_class
+        WHERE
+          (ever_made_mlb = TRUE  AND outcome NOT IN ('mlb_star','mlb_regular','mlb_callup','retired'))
+       OR (ever_made_mlb = FALSE AND outcome NOT IN ('in_draft_org','traded_away','released','retired'))
+    """).fetchone()[0]
+    if n_outcome_violation:
+        console.print(
+            f"[red]FAIL:[/red] {n_outcome_violation} f_draft_class rows have "
+            f"outcome inconsistent with ever_made_mlb"
+        )
+        return False
+    console.print(
+        "[green]✓[/green] f_draft_class outcomes consistent with ever_made_mlb"
+    )
+
     # Idempotency
     rows_2 = build_l3(con, verbose=False)
     if rows != rows_2:

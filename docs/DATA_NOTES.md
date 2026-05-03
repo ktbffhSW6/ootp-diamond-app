@@ -800,3 +800,39 @@ it IS the parent (MLB level).
 `waiver_or_other` is a catch-all for cross-org moves with no trade
 attribution. Most are waiver claims; some may be paid transfers or
 MiLB Rule 5 selections that OOTP doesn't surface as trades.
+
+## f_draft_class — player retention + the `drafted` first-MLB gotcha (2026-05-06)
+
+**Player retention probe**: of the 2,344 distinct draftees across
+classes 2026–2029, 100% are still present in `players_current` (the
+latest dump's snapshot). Released, retired, and unsigned draftees
+all stick around in `players_snapshot` rather than getting purged.
+Confirms it's safe to derive draft-class outcomes from `players_current`
+without survivorship bias.
+
+**The `drafted` first-MLB gotcha**: `_build_player_movements` synthesizes
+a `drafted` row per player with `to_team_id = draft_team_id`. Draft
+teams are always at MLB org level (`level=1`), so a naïve
+`MIN(dump_date_observed) WHERE to_level_id = 1` over `player_movements`
+would falsely flag every drafted player as "ever made MLB" on their
+draft day — even if they never actually appear on a major-league
+roster afterward.
+
+The fix (in `_build_f_draft_class`'s `first_mlb` CTE): exclude
+`drafted` movement_type. The player's genuine MLB debut shows up
+as a later `promotion`, `first_appearance`, `signed`, `trade`, or
+`waiver_or_other` row.
+
+Outcome distribution after the fix, on the live warehouse:
+
+| class | n | mlb_star+regular | mlb_callup | in_draft_org | traded_away | released | retired |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 2026 | 598 | 7 | 52 | 281 | 181 | 44 | 33 |
+| 2027 | 566 | 0 | 24 | 473 | 49 | 3 | 17 |
+| 2028 | 562 | 2 | 9 | 546 | 24 | 0 | 2 |
+| 2029 | 573 | 0 | 0 | 572 | 1 | 0 | 0 |
+
+The 2026 class is the most useful as a hit-rate calibration: 3 years
+out, ~10% reached MLB at all and ~1% are MLB regulars (≥1.0 career
+WAR). The 2029 class shows the expected pattern — barely anyone has
+moved out of their org yet.

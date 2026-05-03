@@ -5,6 +5,8 @@ Currently exposes:
   - f_trade_participant   long-format trade roster, 1 row per (trade × player)
   - player_movements      timeline of every team change, attributed to trades
                           where applicable
+  - f_draft_class         one row per drafted player, joining current status
+                          + made-MLB outcome + cumulative MLB career stats
 
 Future L3 builders that will live here:
 
@@ -17,8 +19,11 @@ Future L3 builders that will live here:
 Build pattern: L3 tables are full DROP/CREATE on every ingest (cheap; the
 warehouse fits in memory). They depend on L1 / L2 already being current.
 
-Build order matters: `f_trade_participant` must build before
-`player_movements`, because the latter LEFT JOINs to it for trade attribution.
+Build order matters:
+  - `f_trade_participant` builds before `player_movements` (the latter
+    LEFT JOINs to it for trade attribution)
+  - `f_draft_class` builds AFTER `player_movements` (it consumes the
+    `to_level_id=1` movements to derive `first_mlb_date`)
 """
 
 from __future__ import annotations
@@ -323,6 +328,185 @@ def _build_player_movements(con: duckdb.DuckDBPyConnection) -> int:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# f_draft_class
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _build_f_draft_class(con: duckdb.DuckDBPyConnection) -> int:
+    """One row per drafted player. Joins current status, made-MLB outcome,
+    and cumulative MLB career stats (combined batter + pitcher WAR).
+
+    Sources:
+      - `players_current`               draft metadata + current state
+      - `player_movements`              first promotion to level=1 (MLB)
+      - `players_career_batting_event`  career MLB PA / WAR (level_id=1)
+      - `players_career_pitching_event` career MLB IP / WAR (level_id=1)
+      - `teams` × 2                     draft-team and current-team names
+
+    Sanity-checked 2026-05-06: all 4 draft classes (2026–2029) retain
+    100% of their drafted players in `players_current`. Released and
+    retired draftees stick around in the snapshot, so this table
+    captures the entire class without survivorship loss. See
+    DATA_NOTES.md "f_draft_class — player retention" for the probe.
+
+    Schema:
+        player_id           BIGINT
+        first_name, last_name VARCHAR
+        position            BIGINT     1=P, 2=C, 3=1B, 4=2B, 5=3B, 6=SS,
+                                       7=LF, 8=CF, 9=RF, 10=DH
+        bats, throws        BIGINT     1=R, 2=L, 3=S
+        date_of_birth       DATE
+        draft_age           INTEGER    draft_year - YEAR(date_of_birth)
+        college             BIGINT     1=college, 0=HS/intl
+        draft_year          INTEGER
+        draft_round         INTEGER
+        draft_overall_pick  INTEGER
+        draft_supplemental  BIGINT     0/1
+        draft_team_id       BIGINT
+        draft_team_name     VARCHAR
+        current_team_id     BIGINT     0 = unsigned/released
+        current_team_name   VARCHAR
+        current_level_id    BIGINT     1=MLB, 2=AAA, ..., NULL if FA
+        current_org_id      BIGINT     parent-team rollup of current team
+        retired             BIGINT     0/1
+        free_agent          BIGINT     0/1
+        ever_made_mlb       BOOLEAN
+        first_mlb_date      DATE       NULL if never reached MLB
+        years_since_draft   INTEGER    based on latest dump_date
+        mlb_g, mlb_pa       BIGINT     batter career counting (level=1)
+        mlb_h, mlb_hr       BIGINT
+        mlb_war_bat         DOUBLE
+        mlb_g_pit, mlb_outs BIGINT     pitcher career counting (level=1)
+        mlb_w, mlb_l, mlb_s BIGINT
+        mlb_war_pit         DOUBLE
+        career_mlb_war      DOUBLE     mlb_war_bat + mlb_war_pit (sum)
+        outcome             VARCHAR    derived bucket — see below
+
+    The `outcome` bucket is a quick at-a-glance status:
+      - `mlb_star`        ever made MLB AND career_mlb_war >= 5.0
+      - `mlb_regular`     ever made MLB AND career_mlb_war >= 1.0
+      - `mlb_callup`      ever made MLB AND career_mlb_war < 1.0
+      - `in_draft_org`    never made MLB, still in original org
+      - `traded_away`     never made MLB, now in different org
+      - `released`        never made MLB, no team
+      - `retired`         retired flag set
+    """
+    con.execute("""
+        CREATE OR REPLACE TABLE f_draft_class AS
+        WITH first_mlb AS (
+            -- First time the player actually arrived on an MLB roster.
+            -- Excludes `drafted` movements: those synthesize to_team_id =
+            -- draft_team (always MLB-level), which would falsely flag
+            -- every drafted player as "ever made MLB" on draft day. The
+            -- player's genuine MLB debut shows up as a later promotion /
+            -- first_appearance / signed / trade / waiver_or_other row.
+            SELECT player_id, MIN(dump_date_observed) AS first_mlb_date
+            FROM player_movements
+            WHERE to_level_id = 1
+              AND movement_type != 'drafted'
+            GROUP BY player_id
+        ),
+        career_mlb_bat AS (
+            SELECT
+                player_id,
+                SUM(g)   AS mlb_g,
+                SUM(pa)  AS mlb_pa,
+                SUM(h)   AS mlb_h,
+                SUM(hr)  AS mlb_hr,
+                SUM(war) AS mlb_war_bat
+            FROM players_career_batting_event
+            WHERE level_id = 1 AND split_id = 1
+            GROUP BY player_id
+        ),
+        career_mlb_pit AS (
+            SELECT
+                player_id,
+                SUM(g)    AS mlb_g_pit,
+                SUM(outs) AS mlb_outs,
+                SUM(w)    AS mlb_w,
+                SUM(l)    AS mlb_l,
+                SUM(s)    AS mlb_s,
+                SUM(war)  AS mlb_war_pit
+            FROM players_career_pitching_event
+            WHERE level_id = 1 AND split_id = 1
+            GROUP BY player_id
+        ),
+        team_orgs AS (
+            SELECT team_id,
+                   COALESCE(NULLIF(parent_team_id, 0), team_id) AS org_id
+            FROM teams
+        ),
+        latest_dump AS (
+            SELECT MAX(dump_date) AS dd FROM players_snapshot
+        )
+        SELECT
+            pc.player_id,
+            pc.first_name,
+            pc.last_name,
+            pc.position,
+            pc.bats,
+            pc.throws,
+            pc.date_of_birth,
+            CAST(pc.draft_year - EXTRACT(YEAR FROM pc.date_of_birth) AS INTEGER) AS draft_age,
+            pc.college,
+            CAST(pc.draft_year AS INTEGER)         AS draft_year,
+            CAST(pc.draft_round AS INTEGER)        AS draft_round,
+            CAST(pc.draft_overall_pick AS INTEGER) AS draft_overall_pick,
+            pc.draft_supplemental,
+            pc.draft_team_id,
+            dt.name AS draft_team_name,
+            pc.team_id AS current_team_id,
+            ct.name AS current_team_name,
+            ct.level AS current_level_id,
+            curr_org.org_id AS current_org_id,
+            pc.retired,
+            pc.free_agent,
+            (fm.first_mlb_date IS NOT NULL) AS ever_made_mlb,
+            fm.first_mlb_date,
+            CAST(EXTRACT(YEAR FROM (SELECT dd FROM latest_dump)) - pc.draft_year AS INTEGER)
+                AS years_since_draft,
+            COALESCE(cb.mlb_g,    0) AS mlb_g,
+            COALESCE(cb.mlb_pa,   0) AS mlb_pa,
+            COALESCE(cb.mlb_h,    0) AS mlb_h,
+            COALESCE(cb.mlb_hr,   0) AS mlb_hr,
+            COALESCE(cb.mlb_war_bat, 0.0) AS mlb_war_bat,
+            COALESCE(cp.mlb_g_pit, 0) AS mlb_g_pit,
+            COALESCE(cp.mlb_outs, 0)  AS mlb_outs,
+            COALESCE(cp.mlb_w,    0)  AS mlb_w,
+            COALESCE(cp.mlb_l,    0)  AS mlb_l,
+            COALESCE(cp.mlb_s,    0)  AS mlb_s,
+            COALESCE(cp.mlb_war_pit, 0.0) AS mlb_war_pit,
+            COALESCE(cb.mlb_war_bat, 0.0) + COALESCE(cp.mlb_war_pit, 0.0) AS career_mlb_war,
+            CASE
+                WHEN pc.retired = 1                                   THEN 'retired'
+                WHEN fm.first_mlb_date IS NOT NULL
+                     AND COALESCE(cb.mlb_war_bat, 0) + COALESCE(cp.mlb_war_pit, 0) >= 5.0
+                                                                      THEN 'mlb_star'
+                WHEN fm.first_mlb_date IS NOT NULL
+                     AND COALESCE(cb.mlb_war_bat, 0) + COALESCE(cp.mlb_war_pit, 0) >= 1.0
+                                                                      THEN 'mlb_regular'
+                WHEN fm.first_mlb_date IS NOT NULL                    THEN 'mlb_callup'
+                WHEN pc.team_id = 0                                   THEN 'released'
+                WHEN curr_org.org_id = draft_org.org_id                THEN 'in_draft_org'
+                ELSE 'traded_away'
+            END AS outcome
+        FROM players_current pc
+        LEFT JOIN teams dt        ON dt.team_id      = pc.draft_team_id
+        LEFT JOIN teams ct        ON ct.team_id      = pc.team_id
+        LEFT JOIN team_orgs draft_org ON draft_org.team_id = pc.draft_team_id
+        LEFT JOIN team_orgs curr_org  ON curr_org.team_id  = pc.team_id
+        LEFT JOIN first_mlb fm    ON fm.player_id    = pc.player_id
+        LEFT JOIN career_mlb_bat cb ON cb.player_id  = pc.player_id
+        LEFT JOIN career_mlb_pit cp ON cp.player_id  = pc.player_id
+        WHERE pc.draft_year > 0 AND pc.draft_team_id > 0
+    """)
+    con.execute(
+        "ALTER TABLE f_draft_class ADD PRIMARY KEY (player_id)"
+    )
+    return con.execute("SELECT COUNT(*) FROM f_draft_class").fetchone()[0]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Public entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -337,8 +521,10 @@ def build_l3(
     Build order:
       1. f_trade_participant   (from trade_event)
       2. player_movements      (LEFT JOINs to f_trade_participant for trade_id)
+      3. f_draft_class         (consumes player_movements for first_mlb_date)
 
-    Requires L1 (players_snapshot, teams, trade_event) to be present.
+    Requires L1 (players_snapshot, players_current, teams, trade_event,
+    players_career_*_event) to be present.
 
     Returns dict of `{l3_table_name: row_count}`.
     """
@@ -358,6 +544,14 @@ def build_l3(
         console.print(
             f"  [green]✓[/green] player_movements                "
             f"[dim]{n:>10,} rows  PK=(movement_id)[/dim]"
+        )
+
+    n = _build_f_draft_class(con)
+    rows["f_draft_class"] = n
+    if verbose:
+        console.print(
+            f"  [green]✓[/green] f_draft_class                   "
+            f"[dim]{n:>10,} rows  PK=(player_id)[/dim]"
         )
 
     return rows

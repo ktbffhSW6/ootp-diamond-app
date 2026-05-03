@@ -122,13 +122,18 @@ and count-state splits).
 
 ### New reports / features
 
-- [ ] **Draft analyzer / "Where are they now?"** — `players` table preserves
-  `draft_year`, `draft_round`, `draft_overall_pick`, `draft_team_id` per drafted
-  player. Build `diamond draft <year>` CLI: list class, join to current
-  `players_roster_status` for current level/team, compute class
-  WAR-through-N-years, flag hits/busts/on-track per pick. **Pre-req sanity
-  check**: confirm dropped-and-released draftees survive in `players` long-term
-  (hit-rate calc breaks if they don't).
+- [x] **Draft analyzer / "Where are they now?"** — done 2026-05-06.
+  New L3 table `f_draft_class` (one row per drafted player, joining
+  current status + first-MLB outcome + cumulative MLB career stats).
+  CLI: `diamond draft <year> [--team <team_id>]`. Each pick is bucketed
+  into `mlb_star` / `mlb_regular` / `mlb_callup` / `in_draft_org` /
+  `traded_away` / `released` / `retired`. Pre-req sanity check passed:
+  100% of 4 draft classes (2026–2029) retain all draftees in
+  `players_current` — released and retired draftees stick around in
+  the snapshot. Watch out: the synthetic `drafted` movement assigns
+  `to_team_id = draft_team_id` (always MLB-level), so first-MLB
+  detection has to exclude it (otherwise every draftee falsely flags
+  ever_made_mlb on draft day).
 - [ ] **Streaks decoder** — `players_streak` has 21 codes profiled (11 batter,
   9 pitcher, 1 mixed) but display labels are best-guess. Cross-reference OOTP
   UI screenshots / in-game help to lock names, then expose as

@@ -20,7 +20,8 @@ warehouse and build the ingest pipeline.
 - **Project skeleton**: Python 3.14 + DuckDB + Polars + Typer; package at
   `src/diamond/`; editable install via `pip install -e .[dev]`.
 - **CLI**: `diamond decode`, `diamond decode-codes`, `diamond reconcile`,
-  `diamond coverage`, `diamond advanced`. All write reports to
+  `diamond coverage`, `diamond advanced`, `diamond ingest`,
+  `diamond draft <year>`. All audit/report commands write markdown to
   `audit_output/` (gitignored).
 - **Reconciliation harness** ([src/diamond/audit/reconcile.py](src/diamond/audit/reconcile.py))
   — per-column comparison of all 21 `import_export` Red Sox roster CSVs against
@@ -56,7 +57,8 @@ warehouse and build the ingest pipeline.
   - L1: 12 reference + 35 event + 21 state-snapshot + 6 `_current` views + 2 machinery (`_scoped_*`) + 1 admin (`_diamond_ingests`)
   - L2: 8 facts (`f_player_season_batting/pitching/fielding`, `f_player_career`,
     `f_team_season`, `f_league_season`, `f_pa_event`, `f_award_event`)
-  - L3: 2 derived (`f_trade_participant`, `player_movements` w/ `trade_id`)
+  - L3: 3 derived (`f_trade_participant`, `player_movements` w/ `trade_id`,
+    `f_draft_class`)
 - **Empirical scripts retained** in `scripts/` — `xstats_eda.py` and
   `xstats_3d.py` are the evidence behind the structural-limit D-tier verdict
   on xBA/xSLG/xwOBA. Rerun rather than re-investigate.

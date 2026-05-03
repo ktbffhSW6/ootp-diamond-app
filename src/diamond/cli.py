@@ -21,6 +21,7 @@ from diamond.audit import decode as decode_mod
 from diamond.audit import decode_codes as decode_codes_mod
 from diamond.audit import reconcile as reconcile_mod
 from diamond.config import BUILDING_THE_GREEN_MONSTER
+from diamond import draft as draft_mod
 from diamond.schema import build_warehouse, open_warehouse_db, rebuild_l1_l2
 from rich.console import Console
 
@@ -170,6 +171,31 @@ def ingest(
             )
     finally:
         con.close()
+
+
+@app.command()
+def draft(
+    year: int = typer.Argument(..., help="Draft year to analyze (e.g., 2026)."),
+    team: int | None = typer.Option(
+        None,
+        help="Optional team_id to scope the report to a single org's class (e.g., 4 for Boston).",
+    ),
+    output: Path = typer.Option(
+        None,
+        help="Markdown report output path. Defaults to audit_output/draft_<year>.md.",
+    ),
+) -> None:
+    """Show a draft class — pick by pick, with current status + MLB WAR.
+
+    Reads from the L3 `f_draft_class` table (built by `diamond ingest`).
+    Each player is bucketed into one of: mlb_star / mlb_regular /
+    mlb_callup / in_draft_org / traded_away / released / retired.
+
+    Examples:
+        diamond draft 2026                # full class
+        diamond draft 2026 --team 4       # Sox 2026 class only
+    """
+    draft_mod.run(year=year, team_id=team, output_path=output)
 
 
 @app.command()
