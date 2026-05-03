@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-05 (in-game year 2029) — Phase 2 in flight; `league_constants` module landed
+**Last updated**: 2026-05-05 (in-game year 2029) — Phase 2 mid-flight; items 1-3 done (`league_constants` module + warehouse design + 5-layer DDL all built)
 
 ---
 
@@ -45,6 +45,17 @@ warehouse and build the ingest pipeline.
   `lg_constants_pit`) sourced from `league_history_*` and keyed by
   `(league_id, year, level_id)` per Decision D11. Replaces the inline CTEs
   formerly in `reconcile.py`. Verified byte-identical reconcile output post-refactor.
+- **5-layer warehouse DDL** ([src/diamond/schema/](src/diamond/schema/))
+  — full `build_l0` / `build_l1_machinery` / `build_l1_reference` /
+  `build_l1_event` / `build_l1_snapshot` / `build_l2` pipeline. Each
+  module holds its layer's specs and builders. `scripts/smoke_warehouse.py`
+  exercises the full pipeline end-to-end against the latest dump in <60s,
+  asserting layer invariants (PK enforcement, scope filters, dim flatten,
+  D12 scouted-rating filter, idempotency). Layer counts:
+  - L0: **69 raw tables** (5.76M rows from one dump)
+  - L1: 12 reference + 35 event + 21 state-snapshot + 6 `_current` views + 2 machinery (`_scoped_*`) + 1 admin (`_diamond_ingests`)
+  - L2: 8 facts (`f_player_season_batting/pitching/fielding`, `f_player_career`,
+    `f_team_season`, `f_league_season`, `f_pa_event`, `f_award_event`)
 - **Empirical scripts retained** in `scripts/` — `xstats_eda.py` and
   `xstats_3d.py` are the evidence behind the structural-limit D-tier verdict
   on xBA/xSLG/xwOBA. Rerun rather than re-investigate.
@@ -99,14 +110,16 @@ Latest reports (regenerable, gitignored): `audit_output/{decoder,codes_decoder,r
 Per [BACKLOG.md](BACKLOG.md), in priority order:
 
 1. ~~**Promote inline `league_constants` CTE to a module**~~ — done 2026-05-05.
-   `src/diamond/league_constants.py` registers `lg_constants_bat` /
-   `lg_constants_pit` views; reconcile.py now consumes them. Reconcile output
-   verified byte-identical pre/post-refactor.
-2. **Design the 5-layer warehouse schema** (L0 raw → L1 conformed → L2 facts →
-   L3 derived → L4 SQL views). Per Decision D2 each save gets its own
-   `<save>/diamond/diamond.duckdb`.
-3. **Write CREATE TABLE DDL** for L0 + L1 + L2.
-4. **Build `diamond ingest <dump_date>` and `diamond ingest --all` CLI**.
+2. ~~**Design the 5-layer warehouse schema**~~ — done 2026-05-05.
+   See [SCHEMA.md](SCHEMA.md). All 10 open questions resolved with rationale.
+3. ~~**Write CREATE TABLE DDL** for L0 + L1 + L2~~ — done 2026-05-05.
+   `src/diamond/schema/` package holds all DDL across 5 phases.
+   `scripts/smoke_warehouse.py` validates the full pipeline.
+4. **Build `diamond ingest <dump_date>` and `diamond ingest --all` CLI** — next.
+   The schema package's builder functions are the building blocks; this item
+   wires them into a Typer command with checksum-based idempotency tracking
+   in `_diamond_ingests` (per OPEN-7 resolution) and proper file-DB
+   open/close on `<save>/diamond/diamond.duckdb` per Decision D2.
 5. **Smoke test: ingest all 44 dumps end-to-end**.
 6. **Wire `reconcile.py` as a post-ingest regression check** (per Decision D8).
 7. **Build derived `player_movements` table** from snapshot diffs + `trade_history`.

@@ -23,10 +23,13 @@ players) and documented as such. Safe to design schema.
   byte-identical pre/post-refactor. Follow-up: consolidate with
   `advanced/league_constants.py` (which adds wOBA-scale calibration) once
   the warehouse exists.
-- [ ] **Design 5-layer warehouse schema** — L0 raw landing → L1 conformed →
-  L2 facts → L3 derived → L4 SQL views. Per Decision D2 each save gets its
-  own DuckDB at `<save>/diamond/diamond.duckdb`.
-- [ ] **Write CREATE TABLE DDL** for L0 + L1 + L2.
+- [x] **Design 5-layer warehouse schema** — done 2026-05-05. See `docs/SCHEMA.md`;
+  all 10 open questions resolved.
+- [x] **Write CREATE TABLE DDL** for L0 + L1 + L2 — done 2026-05-05. `src/diamond/schema/`
+  package holds the DDL across 5 phases (l0.py / l1_machinery.py / l1_reference.py /
+  l1_event.py / l1_snapshot.py / l2.py + build.py orchestrator). `scripts/smoke_warehouse.py`
+  builds end-to-end against the latest dump (<60s) and asserts all layer invariants.
+  Layer counts: 69 L0 + 74 L1 entities + 8 L2 facts + 3 admin/machinery tables.
 
 ### Pipeline
 
