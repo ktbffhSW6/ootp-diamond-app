@@ -15,6 +15,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+from diamond.audit import coverage as coverage_mod
 from diamond.audit import decode as decode_mod
 from diamond.audit import reconcile as reconcile_mod
 
@@ -49,6 +50,18 @@ def reconcile(
 ) -> None:
     """Reconcile import_export files against derivations from monthly dump CSVs."""
     reconcile_mod.run(dump=dump, output_path=output)
+
+
+@app.command()
+def coverage(
+    dump: str | None = typer.Option(None, help="Dump folder name; defaults to latest"),
+    output: Path = typer.Option(
+        Path("audit_output/coverage_report.md"),
+        help="Markdown report output path",
+    ),
+) -> None:
+    """Profile dump CSVs that support feature views (standings, leaders, awards, etc.)."""
+    coverage_mod.run(dump=dump, output_path=output)
 
 
 if __name__ == "__main__":
