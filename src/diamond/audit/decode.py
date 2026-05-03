@@ -336,16 +336,20 @@ def _md_table(rows: list[dict]) -> str:
 def run(
     save: SaveConfig = BUILDING_THE_GREEN_MONSTER,
     dump: str | None = None,
-    year: int = 2029,
+    year: int | None = None,
     output_path: Path | None = None,
 ) -> Path:
     dump = dump or save.latest_dump_name()
     output_path = output_path or Path("audit_output") / "decoder_report.md"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    console.rule(f"[bold cyan]Decoder audit — {save.save_name} / {dump} / year={year}")
-
     con = _connect(save, dump)
+    if year is None:
+        year = con.execute(
+            "SELECT MAX(year) FROM career_bat WHERE split_id = 1"
+        ).fetchone()[0]
+
+    console.rule(f"[bold cyan]Decoder audit — {save.save_name} / {dump} / year={year}")
 
     console.print("\n[bold]1. game_type codebook[/bold]")
     game_types = decode_game_type(con)
@@ -391,7 +395,7 @@ def run(
         _md_table(splits),
         "## 3. `players_at_bat_batting_stats.result`",
         "",
-        "Per-result-code event counts for **regular-season MLB 2029** (game_type=0, league_id=203).",
+        f"Per-result-code event counts for **regular-season MLB {year}** (game_type=0, league_id=203).",
         "Sum of all event counts equals total overall PA — every plate appearance accounted for.",
         "Exit-velocity / launch-angle averages corroborate the batted-ball outcome (GO has negative LA, FO has high LA, HR has highest EV).",
         "",

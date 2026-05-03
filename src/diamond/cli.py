@@ -35,7 +35,10 @@ def _root() -> None:
 
 @app.command()
 def decode(
-    year: int = typer.Option(2029, help="Season year to audit"),
+    year: int | None = typer.Option(
+        None,
+        help="Season year to audit. Defaults to MAX(year) from the dump's career_bat.",
+    ),
     dump: str | None = typer.Option(None, help="Dump folder name; defaults to latest"),
     output: Path = typer.Option(
         Path("audit_output/decoder_report.md"),
@@ -69,13 +72,17 @@ def reconcile(
 @app.command()
 def coverage(
     dump: str | None = typer.Option(None, help="Dump folder name; defaults to latest"),
+    year: int | None = typer.Option(
+        None,
+        help="Season year for year-scoped probes. Defaults to MAX(year) from career_bat.",
+    ),
     output: Path = typer.Option(
         Path("audit_output/coverage_report.md"),
         help="Markdown report output path",
     ),
 ) -> None:
     """Profile dump CSVs that support feature views (standings, leaders, awards, etc.)."""
-    coverage_mod.run(dump=dump, output_path=output)
+    coverage_mod.run(dump=dump, year=year, output_path=output)
 
 
 @app.command("decode-codes")
@@ -167,7 +174,10 @@ def ingest(
 
 @app.command()
 def advanced(
-    year: int = typer.Option(2029, help="Season year"),
+    year: int | None = typer.Option(
+        None,
+        help="Season year. Defaults to MAX(year) from the dump's career_bat.",
+    ),
     league_id: int = typer.Option(203, help="League id (default MLB=203)"),
     dump: str | None = typer.Option(None, help="Dump folder name; defaults to latest"),
     output: Path = typer.Option(

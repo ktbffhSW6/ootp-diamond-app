@@ -109,7 +109,7 @@ class FeatureReport:
     notes: list[str]
 
 
-def probe_standings(con) -> FeatureReport:
+def probe_standings(con, year: int) -> FeatureReport:
     """Standings — current + historical."""
     profile = _rows(con.execute("""
         SELECT
@@ -119,8 +119,8 @@ def probe_standings(con) -> FeatureReport:
             (SELECT MIN(year) FROM team_history_record)              AS first_year,
             (SELECT MAX(year) FROM team_history_record)              AS last_year
     """))
-    # 2029 MLB standings — show a clean view
-    samples = _rows(con.execute("""
+    # MLB standings for the audit year — show a clean view
+    samples = _rows(con.execute(f"""
         SELECT t.name, t.abbr, sl.name AS league, d.name AS division,
                r.g, r.w, r.l, r.pct, r.gb, r.streak
         FROM team_history_record r
@@ -128,7 +128,7 @@ def probe_standings(con) -> FeatureReport:
         JOIN sub_leagues sl ON r.league_id = sl.league_id AND r.sub_league_id = sl.sub_league_id
         JOIN divisions   d  ON r.league_id = d.league_id AND r.sub_league_id = d.sub_league_id
                            AND r.division_id = d.division_id
-        WHERE r.year = 2029 AND r.league_id = 203
+        WHERE r.year = {year} AND r.league_id = 203
         ORDER BY sl.sub_league_id, d.division_id, r.pct DESC
     """))
     notes = []
@@ -137,7 +137,7 @@ def probe_standings(con) -> FeatureReport:
     return FeatureReport("standings", ["team_record", "team_history_record"], profile, samples, notes)
 
 
-def probe_playoffs(con) -> FeatureReport:
+def probe_playoffs(con, year: int) -> FeatureReport:
     """Playoffs — bracket + fixture-level results."""
     profile = _rows(con.execute("""
         SELECT
@@ -146,7 +146,7 @@ def probe_playoffs(con) -> FeatureReport:
             (SELECT COUNT(DISTINCT league_id) FROM playoff_fixtures) AS leagues_with_postseason,
             (SELECT COUNT(DISTINCT round) FROM playoff_fixtures WHERE league_id = 203) AS mlb_rounds
     """))
-    # 2029 MLB postseason fixtures
+    # MLB postseason fixtures (latest playoff bracket present)
     samples = _rows(con.execute("""
         SELECT pf.round,
                t0.abbr AS team0, t1.abbr AS team1,
@@ -165,7 +165,7 @@ def probe_playoffs(con) -> FeatureReport:
     )
 
 
-def probe_awards(con) -> FeatureReport:
+def probe_awards(con, year: int) -> FeatureReport:
     """Awards — MVP, CY, RoY, GG, AS, etc."""
     profile = _rows(con.execute("""
         SELECT
@@ -195,7 +195,7 @@ def probe_awards(con) -> FeatureReport:
     return FeatureReport("awards", ["players_awards"], profile, samples, notes)
 
 
-def probe_league_leaders(con) -> FeatureReport:
+def probe_league_leaders(con, year: int) -> FeatureReport:
     """League leaders — top N per stat per league-year."""
     profile = _rows(con.execute("""
         SELECT
@@ -206,14 +206,14 @@ def probe_league_leaders(con) -> FeatureReport:
         FROM league_leaders WHERE league_id = 203
     """))
     # Categories
-    samples = _rows(con.execute("""
+    samples = _rows(con.execute(f"""
         SELECT category,
                COUNT(*) AS rows,
                (SELECT p.first_name || ' ' || p.last_name
                   FROM league_leaders l JOIN players p ON l.player_id = p.player_id
-                 WHERE l.category = ll.category AND l.league_id = 203 AND l.year = 2029 AND l.place = 1
-                 LIMIT 1) AS leader_2029,
-               MAX(CASE WHEN year = 2029 AND place = 1 THEN amount END) AS leader_2029_amount
+                 WHERE l.category = ll.category AND l.league_id = 203 AND l.year = {year} AND l.place = 1
+                 LIMIT 1) AS leader_curr,
+               MAX(CASE WHEN year = {year} AND place = 1 THEN amount END) AS leader_curr_amount
         FROM league_leaders ll WHERE league_id = 203
         GROUP BY category
         ORDER BY category
@@ -222,7 +222,7 @@ def probe_league_leaders(con) -> FeatureReport:
     return FeatureReport("leaders", ["players_league_leader"], profile, samples, notes)
 
 
-def probe_streaks(con) -> FeatureReport:
+def probe_streaks(con, year: int) -> FeatureReport:
     """Streaks — hitting, on-base, win, etc."""
     profile = _rows(con.execute("""
         SELECT
@@ -245,7 +245,7 @@ def probe_streaks(con) -> FeatureReport:
     return FeatureReport("streaks", ["players_streak"], profile, samples, notes)
 
 
-def probe_hall_of_fame(con) -> FeatureReport:
+def probe_hall_of_fame(con, year: int) -> FeatureReport:
     """Hall of Fame status — direct boolean on players + induction tracking."""
     profile = _rows(con.execute("""
         SELECT
@@ -265,28 +265,28 @@ def probe_hall_of_fame(con) -> FeatureReport:
     return FeatureReport("hall_of_fame", ["players", "players_awards"], profile, samples, notes)
 
 
-def probe_movements(con) -> FeatureReport:
+def probe_movements(con, year: int) -> FeatureReport:
     """Player movements — single-dump view (full timeline needs cross-month diffs)."""
-    profile = _rows(con.execute("""
+    profile = _rows(con.execute(f"""
         SELECT
             (SELECT COUNT(*) FROM trade_history) AS total_trades,
-            (SELECT COUNT(*) FROM trade_history WHERE EXTRACT(YEAR FROM date) = 2029) AS trades_2029,
+            (SELECT COUNT(*) FROM trade_history WHERE EXTRACT(YEAR FROM date) = {year}) AS trades_curr,
             (SELECT COUNT(DISTINCT player_id) FROM career_bat
-              WHERE year = 2029 AND split_id = 1) AS distinct_players_with_2029_bat,
+              WHERE year = {year} AND split_id = 1) AS distinct_players_with_curr_bat,
             (SELECT COUNT(*) FROM (
                 SELECT player_id, year FROM career_bat
-                WHERE year = 2029 AND split_id = 1
+                WHERE year = {year} AND split_id = 1
                 GROUP BY player_id, year HAVING COUNT(DISTINCT team_id) > 1
-            )) AS players_who_changed_teams_within_2029_via_career_bat
+            )) AS players_who_changed_teams_within_curr_via_career_bat
     """))
-    # Sample 2029 trades with player names
-    samples = _rows(con.execute("""
+    # Sample current-year trades with player names
+    samples = _rows(con.execute(f"""
         SELECT date, summary,
                t0.abbr AS team0, t1.abbr AS team1
         FROM trade_history th
         LEFT JOIN teams t0 ON th.team_id_0 = t0.team_id
         LEFT JOIN teams t1 ON th.team_id_1 = t1.team_id
-        WHERE EXTRACT(YEAR FROM th.date) = 2029
+        WHERE EXTRACT(YEAR FROM th.date) = {year}
         ORDER BY th.date DESC
         LIMIT 8
     """))
@@ -298,7 +298,7 @@ def probe_movements(con) -> FeatureReport:
     return FeatureReport("movements", ["trade_history", "players (snapshots)", "career_bat.stint"], profile, samples, notes)
 
 
-def probe_records(con) -> FeatureReport:
+def probe_records(con, year: int) -> FeatureReport:
     """Records — derived. Show top single-season HR and career HR (in-save) as a sanity check."""
     profile = _rows(con.execute("""
         SELECT
@@ -330,25 +330,25 @@ def probe_records(con) -> FeatureReport:
     return FeatureReport("records", ["players_career_*_stats (derived)"], profile, samples, notes)
 
 
-def probe_all_stars(con) -> FeatureReport:
+def probe_all_stars(con, year: int) -> FeatureReport:
     """All-Star teams per year."""
     profile = _rows(con.execute("""
         SELECT COUNT(*) AS rows, COUNT(DISTINCT year) AS years_covered
         FROM league_history_all_star WHERE league_id = 203
     """))
-    samples = _rows(con.execute("""
+    samples = _rows(con.execute(f"""
         SELECT a.year, a.sub_league_id, a.all_star_pos,
                p.first_name || ' ' || p.last_name AS name
         FROM league_history_all_star a
         LEFT JOIN players p ON a.all_star = p.player_id
-        WHERE a.league_id = 203 AND a.year = 2029
+        WHERE a.league_id = 203 AND a.year = {year}
         ORDER BY a.sub_league_id, a.all_star_pos LIMIT 20
     """))
     notes = ["league_history_all_star uses one row per (year × position × team) — long format"]
     return FeatureReport("all_stars", ["league_history_all_star"], profile, samples, notes)
 
 
-def probe_league_history(con) -> FeatureReport:
+def probe_league_history(con, year: int) -> FeatureReport:
     """Annual best-player highlights per league-year (MVPs, GG winners, etc.)."""
     profile = _rows(con.execute("""
         SELECT COUNT(*) AS rows,
@@ -368,7 +368,7 @@ def probe_league_history(con) -> FeatureReport:
     return FeatureReport("league_history", ["league_history"], profile, samples, [])
 
 
-def probe_injuries(con) -> FeatureReport:
+def probe_injuries(con, year: int) -> FeatureReport:
     """Injuries — historical log of past injuries."""
     profile = _rows(con.execute("""
         SELECT COUNT(*) AS rows, COUNT(DISTINCT player_id) AS distinct_players,
@@ -407,21 +407,32 @@ PROBES = [
 def run(
     save: SaveConfig = BUILDING_THE_GREEN_MONSTER,
     dump: str | None = None,
+    year: int | None = None,
     output_path: Path | None = None,
 ) -> Path:
     dump = dump or save.latest_dump_name()
     output_path = output_path or Path("audit_output") / "coverage_report.md"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    console.rule(f"[bold cyan]Coverage audit — {save.save_name} / {dump}")
     con = _connect(save, dump)
+    if year is None:
+        # Pick the most recent season present in the dump's career-batting log
+        # (offseason dumps return the year that just ended; mid-season dumps
+        # return the year in progress). Same convention used in reconcile.py
+        # via the audit_year() macro.
+        year = con.execute(
+            "SELECT MAX(year) FROM career_bat WHERE split_id = 1"
+        ).fetchone()[0]
+
+    console.rule(f"[bold cyan]Coverage audit — {save.save_name} / {dump} / year={year}")
 
     md = [
         "# OOTP Feature Coverage Audit",
         "",
         f"- **Save**: `{save.save_name}`",
         f"- **Dump**: `{dump}`",
-        f"- **Scope**: MLB (`league_id = 203`) where applicable",
+        f"- **Year scope**: {year} (auto-detected from career_bat MAX(year))",
+        f"- **League scope**: MLB (`league_id = 203`) where applicable",
         "",
         "_For each user-facing feature, this audit identifies the dump CSVs that carry it, "
         "profiles row counts and time coverage, and samples a few records to verify structure._",
@@ -430,7 +441,7 @@ def run(
 
     for probe in PROBES:
         try:
-            r = probe(con)
+            r = probe(con, year)
         except Exception as e:
             md.append(f"## {probe.__name__}\n\n**ERROR**: `{e}`\n")
             console.print(f"[red]  ! {probe.__name__}: {e}[/red]")

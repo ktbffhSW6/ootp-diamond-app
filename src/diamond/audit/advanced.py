@@ -99,7 +99,7 @@ def _top_n_table(
 def run(
     save: SaveConfig = BUILDING_THE_GREEN_MONSTER,
     dump: str | None = None,
-    year: int = 2029,
+    year: int | None = None,
     league_id: int = 203,
     output_path: Path | None = None,
 ) -> Path:
@@ -107,8 +107,16 @@ def run(
     output_path = output_path or Path("audit_output") / "advanced_stats_report.md"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    console.rule(f"[bold cyan]Advanced stats — {save.save_name} / {dump} / {year} MLB")
     con = _connect(save, dump)
+    if year is None:
+        # Pick the most recent season present in the dump's career-batting log.
+        # IE-aligned semantics: mid-season dumps return the in-progress year;
+        # offseason dumps return the year that just ended.
+        year = con.execute(
+            "SELECT MAX(year) FROM career_bat WHERE split_id = 1"
+        ).fetchone()[0]
+
+    console.rule(f"[bold cyan]Advanced stats — {save.save_name} / {dump} / {year} MLB")
 
     # 1. Build league constants
     console.print("  - computing league constants...")

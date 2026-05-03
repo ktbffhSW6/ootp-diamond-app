@@ -74,7 +74,7 @@ class FileSpec:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-# Career batting overall — sum across ALL teams a player appeared on in 2029.
+# Career batting overall — sum across ALL teams a player appeared on in the audit year.
 # IE shows org-roster snapshot with each player's FULL season stats (incl. amateur/short-season
 # stints and time on prior orgs before mid-year trades), so we don't restrict team_id here.
 BATTING_DERIVED_CTE = """
@@ -94,7 +94,7 @@ agg AS (
         MIN(CASE WHEN level_id BETWEEN 1 AND 6 THEN level_id END) AS primary_level,
         MIN(CASE WHEN level_id BETWEEN 1 AND 6 THEN league_id END) AS primary_league
     FROM career_bat
-    WHERE year = 2029 AND split_id = 1
+    WHERE year = audit_year() AND split_id = 1
     GROUP BY player_id
 ),
 -- League constants per (league_id, year, level_id) come from the
@@ -169,7 +169,7 @@ derived AS (
     FROM agg a
     LEFT JOIN lg_constants_bat lg_b
            ON lg_b.league_id = a.primary_league
-          AND lg_b.year      = 2029
+          AND lg_b.year      = audit_year()
           AND lg_b.level_id  = a.primary_level
     LEFT JOIN player_park pp ON pp.player_id = a.player_id
 )
@@ -269,7 +269,7 @@ agg AS (
         MIN(CASE WHEN level_id BETWEEN 1 AND 6 THEN level_id END) AS primary_level,
         MIN(CASE WHEN level_id BETWEEN 1 AND 6 THEN league_id END) AS primary_league
     FROM career_pit
-    WHERE year = 2029 AND split_id = 1
+    WHERE year = audit_year() AND split_id = 1
     GROUP BY player_id
 ),
 -- League pitching constants per (league_id, year, level_id) come from the
@@ -352,7 +352,7 @@ derived AS (
     FROM agg a
     LEFT JOIN lg_constants_pit lg_p
            ON lg_p.league_id = a.primary_league
-          AND lg_p.year      = 2029
+          AND lg_p.year      = audit_year()
           AND lg_p.level_id  = a.primary_level
     LEFT JOIN pitcher_park pp ON pp.player_id = a.player_id
 )
@@ -410,7 +410,7 @@ derived AS (
         SUM(cf.ipf) AS ipf,
         ROUND(1.0 * SUM(cf.po + cf.a) / NULLIF(SUM(cf.po + cf.a + cf.e), 0), 3) AS pct
     FROM career_field cf
-    WHERE cf.year = 2029 AND cf.split_id = 0
+    WHERE cf.year = audit_year() AND cf.split_id = 0
     GROUP BY cf.player_id
 )
 """
@@ -954,7 +954,7 @@ pcb_bip AS (
     SELECT player_id,
            SUM(ab) - SUM(k) + SUM(sf) + SUM(sh) AS bip_pcb
     FROM career_bat
-    WHERE year = 2029 AND split_id = 1 AND level_id BETWEEN 1 AND 6
+    WHERE year = audit_year() AND split_id = 1 AND level_id BETWEEN 1 AND 6
     GROUP BY player_id
 ),
 ab AS (
@@ -1141,7 +1141,7 @@ gp AS (
         -- count as BIP). Better fit than at-bat-counted for multi-level pitchers.
         SUM(ab) - SUM(k) + SUM(sf) + SUM(sh) AS bip_pcb
     FROM career_pit
-    WHERE year = 2029 AND split_id = 1 AND level_id BETWEEN 1 AND 6
+    WHERE year = audit_year() AND split_id = 1 AND level_id BETWEEN 1 AND 6
     GROUP BY player_id
 ),
 derived AS (
@@ -1203,7 +1203,7 @@ PITCHING_SUPERSTATS_1 = FileSpec(
 SUPERSTATS_2_BAT_CTE = """
 agg AS (
     SELECT player_id, SUM(pitches_seen) AS pi
-    FROM career_bat WHERE year = 2029 AND split_id = 1
+    FROM career_bat WHERE year = audit_year() AND split_id = 1
     GROUP BY player_id
 ),
 derived AS (
@@ -1229,7 +1229,7 @@ derived AS (
 SUPERSTATS_2_PIT_CTE = """
 agg AS (
     SELECT player_id, SUM(g) AS g, SUM(gs) AS gs, SUM(pi) AS pi
-    FROM career_pit WHERE year = 2029 AND split_id = 1
+    FROM career_pit WHERE year = audit_year() AND split_id = 1
     GROUP BY player_id
 ),
 derived AS (
@@ -1413,7 +1413,7 @@ derived AS (
         p.player_id,
         p.age,
         -- 0-200 personality values bucket as <60='Low', 60-139='Normal', >=140='High'.
-        -- IE shows 'Unknown' for ~4 newly-acquired-2029 players the org hasn't
+        -- IE shows 'Unknown' for a few newly-acquired players the org hasn't
         -- fully scouted yet (experience<=1, acquired_date in current year);
         -- the bucket logic still produces a hard label for them and they'll
         -- show up as a small mismatch.
@@ -1659,6 +1659,7 @@ def _connect_warehouse(
     # produces, but built directly off the L1 league_history_*_event tables
     # (which we've already aliased to the CSV-era names above).
     register_lg_views(con)
+    _register_audit_year(con)
     return con
 
 
@@ -1693,7 +1694,29 @@ def _connect(save: SaveConfig, dump: str) -> duckdb.DuckDBPyConnection:
     # These views replace the inline lg_b / lg_p CTEs that used to live
     # in BATTING_DERIVED_CTE / PITCHING_DERIVED_CTE.
     register_lg_views(con)
+    _register_audit_year(con)
     return con
+
+
+def _register_audit_year(con: duckdb.DuckDBPyConnection) -> None:
+    """Resolve the season year to reconcile against and expose it as a
+    macro `audit_year()` on the connection.
+
+    IE roster files always reflect the most recent (in-progress or just-
+    completed) season. We pick that year by taking ``MAX(year)`` over
+    ``career_bat`` where ``split_id = 1`` (overall) — that's the year IE
+    has stats for. Mid-2030 dumps return 2030; offseason 2029→2030 dumps
+    still return 2029 (no 2030 stats yet).
+
+    Materializing as a single-row table (not a recomputed scalar subquery)
+    means each FileSpec query references it without scanning career_bat
+    13× per run. The macro just dereferences the table.
+    """
+    con.execute("""
+        CREATE OR REPLACE TEMP TABLE _audit_year AS
+        SELECT MAX(year) AS y FROM career_bat WHERE split_id = 1
+    """)
+    con.execute("CREATE OR REPLACE MACRO audit_year() AS (SELECT y FROM _audit_year)")
 
 
 def _is_match(ie_val, derived_val, tol: float) -> bool | None:
