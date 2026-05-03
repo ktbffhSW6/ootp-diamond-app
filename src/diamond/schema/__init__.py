@@ -19,6 +19,14 @@ from diamond.schema.l1_reference import (
     L1RefSpec,
     build_l1_reference,
 )
+from diamond.schema.l1_machinery import build_l1_machinery
+from diamond.schema.l1_event import (
+    ALL_EVENT_SPECS,
+    NATURAL_PK_EVENTS,
+    SYNTHETIC_PK_EVENTS,
+    L1EventSpec,
+    build_l1_event,
+)
 from diamond.schema.build import (
     DIAMOND_INGESTS_DDL,
     build_l0,
@@ -34,9 +42,15 @@ __all__ = [
     "L0Spec",
     "L1_REFERENCE_TABLES",
     "L1RefSpec",
+    "L1EventSpec",
+    "ALL_EVENT_SPECS",
+    "NATURAL_PK_EVENTS",
+    "SYNTHETIC_PK_EVENTS",
     "DIAMOND_INGESTS_DDL",
     "build_l0",
+    "build_l1_machinery",
     "build_l1_reference",
+    "build_l1_event",
     "dump_name_to_date",
     "init_admin_tables",
     "record_ingest_done",

@@ -30,9 +30,12 @@ from rich.table import Table
 
 from diamond.config import BUILDING_THE_GREEN_MONSTER
 from diamond.schema import (
+    ALL_EVENT_SPECS,
     L0_CATALOG,
     L1_REFERENCE_TABLES,
     build_l0,
+    build_l1_event,
+    build_l1_machinery,
     build_l1_reference,
 )
 
@@ -151,6 +154,119 @@ def smoke_l1_reference(con: duckdb.DuckDBPyConnection, console: Console) -> bool
     return True
 
 
+def smoke_l1_machinery(con: duckdb.DuckDBPyConnection, save, console: Console) -> bool:
+    """Phase C prereq: _scoped_teams and _scoped_players."""
+    console.rule("Phase C prereq — L1 machinery (scope sets)")
+    rows = build_l1_machinery(con, save, verbose=True)
+
+    # Scoped teams should equal the count of teams whose league_id is in scope
+    expected_teams = con.execute(
+        f"SELECT COUNT(DISTINCT team_id) FROM l0_teams "
+        f"WHERE league_id IN ({', '.join(str(i) for i in save.league_ids)})"
+    ).fetchone()[0]
+    if rows["_scoped_teams"] != expected_teams:
+        console.print(
+            f"[red]FAIL:[/red] _scoped_teams = {rows['_scoped_teams']} "
+            f"≠ expected {expected_teams}"
+        )
+        return False
+    console.print(
+        f"[green]✓[/green] _scoped_teams matches expected count from l0_teams"
+    )
+    return True
+
+
+def smoke_l1_event(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
+    """Phase C invariants. Returns True on pass."""
+    console.rule("Phase C — L1 event tables")
+    rows = build_l1_event(con, verbose=True)
+
+    expected_total = len(ALL_EVENT_SPECS) + 2  # + at_bats_event + streak_event
+    if len(rows) != expected_total:
+        console.print(
+            f"[red]FAIL:[/red] built {len(rows)} event tables, "
+            f"expected {expected_total}"
+        )
+        return False
+    console.print(
+        f"\n[green]✓[/green] all {expected_total} event tables built"
+    )
+
+    # Every event table should have at least one row (sanity — none should be empty)
+    empty = [(name, n) for name, n in rows.items() if n == 0]
+    if empty:
+        console.print(f"[yellow]Warning:[/yellow] empty L1 event tables: {empty}")
+
+    # Spot-check D3/D4 scope filter on at_bats_event:
+    # every player_id in at_bats_event must be in _scoped_players.
+    leak = con.execute("""
+        SELECT COUNT(*) FROM at_bats_event
+        WHERE player_id NOT IN (SELECT player_id FROM _scoped_players)
+    """).fetchone()[0]
+    if leak > 0:
+        console.print(
+            f"[red]FAIL:[/red] at_bats_event has {leak} rows with "
+            f"player_id NOT in _scoped_players"
+        )
+        return False
+    console.print("[green]✓[/green] at_bats_event obeys _scoped_players filter")
+
+    # Spot-check pa_in_game_seq sanity on at_bats_event
+    bad_seq = con.execute("""
+        SELECT COUNT(*) FROM (
+            SELECT game_id, player_id, MIN(pa_in_game_seq) AS lo,
+                   MAX(pa_in_game_seq) AS hi, COUNT(*) AS n
+            FROM at_bats_event
+            GROUP BY game_id, player_id
+        ) WHERE lo != 1 OR hi != n
+    """).fetchone()[0]
+    if bad_seq > 0:
+        console.print(
+            f"[red]FAIL:[/red] at_bats_event has {bad_seq} (game, batter) "
+            f"groups where pa_in_game_seq is not 1..N"
+        )
+        return False
+    console.print(
+        "[green]✓[/green] at_bats_event.pa_in_game_seq is 1..N within every (game, batter)"
+    )
+
+    # PK enforcement spot-check on streak_event (the COALESCE PK)
+    pk_rejected = False
+    sample = con.execute(
+        "SELECT player_id, league_id, streak_id, started, ended_or_max "
+        "FROM streak_event LIMIT 1"
+    ).fetchone()
+    if sample is not None:
+        try:
+            con.execute(
+                "INSERT INTO streak_event (player_id, league_id, streak_id, "
+                "started, ended_or_max, value, has_ended, ended) "
+                "VALUES (?, ?, ?, ?, ?, 99, 1, ?)",
+                [sample[0], sample[1], sample[2], sample[3], sample[4], sample[3]],
+            )
+        except duckdb.ConstraintException:
+            pk_rejected = True
+        if not pk_rejected:
+            console.print(
+                "[red]FAIL:[/red] streak_event PK did not reject duplicate"
+            )
+            return False
+        console.print(
+            "[green]✓[/green] streak_event PK with COALESCE column rejects duplicates"
+        )
+
+    # Idempotency
+    rows_2 = build_l1_event(con, verbose=False)
+    if rows != rows_2:
+        console.print(
+            f"[red]FAIL:[/red] event rebuild changed row counts"
+        )
+        return False
+    console.print("[green]✓[/green] event-table rebuild is idempotent")
+
+    return True
+
+
 def main() -> int:
     console = Console()
     save = BUILDING_THE_GREEN_MONSTER
@@ -160,6 +276,10 @@ def main() -> int:
     if not smoke_l0(con, save, dump, console):
         return 1
     if not smoke_l1_reference(con, console):
+        return 1
+    if not smoke_l1_machinery(con, save, console):
+        return 1
+    if not smoke_l1_event(con, console):
         return 1
 
     console.rule("[bold green]All smoke tests passed[/bold green]")
