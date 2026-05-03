@@ -21,5 +21,11 @@ env/
 .DS_Store
 Thumbs.db
 
+# Secrets / env
+.env
+.env.local
+*.env
+secrets.json
+
 # Diamond ephemera
 audit_output/

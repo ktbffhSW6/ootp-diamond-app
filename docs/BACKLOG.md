@@ -62,13 +62,17 @@
 
 ## Analysis layer
 
-- [ ] Build the **modern advanced stats library** (see DATA_NOTES.md "Tier 1-5"):
-  - Tier 1: Hard Hit %, Sweet Spot %, Barrel %, Squared-up % (custom EV/LA cutoffs)
-  - Tier 2: RE24, situational splits, leverage tiers, performance vs specific pitchers (the killer-app tier)
-  - Tier 3: wRC, wRC+, wRAA, custom WAR (needs league constants)
-  - Tier 4: Range Factor, Catcher Framing+, OF Assist Rate
-  - Tier 5: 2-strike BA, even-count vs behind-in-count splits (limited but useful)
-- [ ] Build expected-stats model (xBA, xSLG, xwOBA) calibrated from at-bat data
+- [x] **Modern advanced stats library** — DONE, all 5 tiers shipped in `src/diamond/advanced/`:
+  - [x] Tier 1: HardHit% buckets, SweetSpot%, Barrel%, Squared%, EV by GB/LD/FB, Pull/Cent/Oppo, pitcher contact-quality allowed
+  - [x] Tier 2: empirical RE matrix, RE24 exposure, RISP/2-out/loaded splits, pinch/late-close, by-inning, leverage tiers, vs-pitcher H2H
+  - [x] Tier 3: wOBA, wRAA, wRC, wRC+, OPS+, ERA+, FIP, Power-Speed, Speed Score, isoP/isoD
+  - [x] Tier 4: RF/9, RF/G, Catcher Framing+, OF Assist Rate
+  - [x] Tier 5: 2-strike performance, count-state splits, 4-pitch BB%, 3-pitch K%
+- [ ] **Park-factor integration** for OPS+/ERA+ — currently park-neutral. `parks.csv` has avg, avg_l, avg_r, hr, hr_l, hr_r per park.
+- [ ] **Custom WAR** — combines wRAA + dWAR vs replacement-level baseline. Need to define replacement-level (typically -2.0 wRAA per 600 PA).
+- [ ] **Refine RE24** — current implementation reports "expected runs exposed" per player; full RE24 needs (RE_after - RE_before + runs_scored) which requires inferring post-AB base state from the result code.
+- [ ] **Expected-stats model** (xBA, xSLG, xwOBA) — train regression model on (EV, LA, hit_loc) → outcome probability calibrated from our 1.2M at-bat events.
+- [ ] **Spray-chart visualization** — use hit_xy + hit_loc to draw on-field scatter plots per player.
 
 ## UI phase (later)
 

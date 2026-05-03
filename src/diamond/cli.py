@@ -15,6 +15,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+from diamond.audit import advanced as advanced_mod
 from diamond.audit import coverage as coverage_mod
 from diamond.audit import decode as decode_mod
 from diamond.audit import reconcile as reconcile_mod
@@ -62,6 +63,20 @@ def coverage(
 ) -> None:
     """Profile dump CSVs that support feature views (standings, leaders, awards, etc.)."""
     coverage_mod.run(dump=dump, output_path=output)
+
+
+@app.command()
+def advanced(
+    year: int = typer.Option(2029, help="Season year"),
+    league_id: int = typer.Option(203, help="League id (default MLB=203)"),
+    dump: str | None = typer.Option(None, help="Dump folder name; defaults to latest"),
+    output: Path = typer.Option(
+        Path("audit_output/advanced_stats_report.md"),
+        help="Markdown report output path",
+    ),
+) -> None:
+    """Compute modern advanced stats (Tiers 1-5) from at-bat + dump data."""
+    advanced_mod.run(year=year, league_id=league_id, dump=dump, output_path=output)
 
 
 if __name__ == "__main__":

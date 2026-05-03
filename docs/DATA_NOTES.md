@@ -129,3 +129,53 @@ Verified by exact aggregate match: sum of all event counts for regular-season ML
 - **494 trades** total, **112 in 2029**.
 - **159 years of standings history** (1871-2029) — save loaded with full real-world MLB history.
 - **291 Hall of Fame players**, all retired, all with induction year.
+
+## At-bat event encoding (additional fields)
+
+- **`bats`**: 1=R (76% of players), 2=L (24%), 3=S (6%)
+- **`throws`**: 1=R, 2=L (same convention as bats)
+- **`hit_loc`**: integer field-grid code. 1-49 = infield zones, 38-99 = outfield zones, 98-105 = over-the-fence (HR zones, 6 distinct codes by depth/direction). Ground outs concentrate in 1-43, fly outs in 44-99.
+- **`hit_xy`**: 0-255 lateral position. Low = LF-side, high = RF-side. Used for Pull/Cent/Oppo derivation. ZERO values represent "no spatial coordinate" (~50 BIP per result code).
+- **`exit_velo`**: mph. 0 = no batted ball (K, BB, HBP).
+- **`launch_angle`**: degrees (positive = up). Edge cases at -65 etc. exist but are rare.
+- **`Close`**: 1 if the game-state was "close" (typically within 4 runs after the 7th).
+- **`pinch`**: 1 if pinch-hit appearance.
+- **`base1` / `base2` / `base3`**: 0/1 booleans for runner on each base, PRE-AB. Combine as `base1 + 2*base2 + 4*base3` for compact base_state (0-7).
+- **`outs`**: pre-AB outs count.
+
+## League constants (computed for 2029 MLB)
+
+| Constant | Value | Notes |
+|---|---|---|
+| lg AVG | .244 | matches modern real MLB norm |
+| lg OBP | .315 | |
+| lg SLG | .398 | |
+| lg OPS | .713 | |
+| lg BABIP | .292 | |
+| lg ERA | 4.00 | matches real MLB exactly |
+| Runs/PA | .114 | for wRC normalization |
+| wOBA scale | .999 | calibrated so league-avg wOBA = lg_obp |
+| wBB | 0.690 | linear weights — base FG values × scale |
+| wHBP | 0.720 | |
+| w1B | 0.889 | |
+| w2B | 1.269 | |
+| w3B | 1.619 | |
+| wHR | 2.099 | |
+| FIP constant | 3.04 | computed: lgERA - (13·HR + 3·(BB+HBP) - 2·K)/IP |
+
+## Empirical Run Expectancy matrix (2029 MLB, 1.2M events)
+
+Mean runs from this state to end of half-inning, per (base_state, outs):
+
+| State | 0 outs | 1 out | 2 outs |
+|---|---|---|---|
+| Empty | 0.59 | 0.32 | 0.13 |
+| 1B | 0.71 | 0.37 | 0.16 |
+| 2B | 0.72 | 0.41 | 0.18 |
+| 1B+2B | 1.01 | 0.53 | 0.23 |
+| 3B | 0.86 | 0.47 | 0.18 |
+| 1B+3B | 1.21 | 0.56 | 0.25 |
+| 2B+3B | 1.33 | 0.67 | 0.26 |
+| Loaded | 1.96 | 0.98 | 0.41 |
+
+Slightly compressed vs real-MLB matrix (e.g., real bases-empty-0-out is ~0.48), suggesting OOTP's run environment is marginally higher-leverage than real MLB.
