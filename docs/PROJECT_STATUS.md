@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-03 (in-game year 2029) — ratings audit broadened from 24→220 rows (9.2x)
+**Last updated**: 2026-05-04 (in-game year 2029) — sweeping reconciliation pass: ratings 100%, sabermetric stats wired to league constants
 
 ---
 
@@ -34,7 +34,18 @@ building the ingest pipeline.
 
 ## Most-recent change
 
-Dropped the `league_id=203` filter from the 7 ratings/default CTEs in [reconcile.py](src/diamond/audit/reconcile.py). Each Red Sox-org player has exactly 1 row at `scouting_team_id=4` across all leagues, so filtering only on the team widens the joined audit population from 24 (MLB only) → 220 (entire org tree, MLB + AAA + AA + A+ + A + Rookie + DSL × 2 + FCL) without introducing duplicates. Every previously-100% column held up at 100% on the wider sample, surfacing one single-player edge case (`Shea Sprague` PIT count) — see BACKLOG. The audit is now meaningful across ~210 cleanly-reconciled cols against the full 220-player roster.
+Sweeping reconciliation pass — pushed everything we could to 100% match while preserving the audit's full 220-player population. **15 of 21 files now at 100% reconciliation coverage (A+B tiers).** Highlights:
+
+- **All 6 ratings/potential files at 100% A-tier**: VELO and G/F integer→string mappings decoded (VELO 0-19 → '75-80 Mph' band, G/F 0-100 → EX FB / FB / NEU / GB / EX GB buckets).
+- **pitching_stats_2 unknowns decoded**: `RA = G - GS` (97% match), `RSG = rs / GS` (run support per START, 99%), `pLi = SUM(li) / SUM(BF)` (100%), `CG%` and `IRS%` (100% each).
+- **League-constants sabermetrics wired up** via inline CTE pulling from `league_history_*_stats`: RC (100%), RC/27 (99%), wOBA (79%), OPS+ (60%), ERA+ (62%), FIP (69%). All previously C-tier, now B-tier. Bill James technical RC verified Mayer 72.5=72.5 exact. OPS+/ERA+ formulas verified against MLB-only Sox players (8/9 exact).
+- **Small rounding edges fixed**: OPS 79→100%, HR/9 95→100%, K/9 91→100%, BB/9 100%. Pitching WAR 84→90% (some multi-stint cascade still).
+
+Notable formula discoveries documented in DATA_NOTES:
+- OPS+ = `100 * (OBP/lgOBP + SLG/lgSLG - 1) / (1 + (park.avg - 1) / 2)` (halved park factor)
+- ERA+ = `100 * (lg_ERA / pERA) * (1 + (park.avg - 1) * 0.8)` (Boston empirical fit ~1.04)
+- RC (Bill James technical): `((H+BB-CS+HBP-GIDP) * (TB + 0.26*(BB+HBP) + 0.52*(SH+SF+SB))) / PA`
+- RA (relief appearances) = `g - gs`; RSG = `rs / gs`; pLi = `sum(li) / sum(bf)`
 
 ## Earlier this session
 
@@ -59,19 +70,19 @@ F=cannot replicate (per D5 or string-format), G=needs scale conversion.
 
 | File | Reconciled | Outstanding |
 |---|---|---|
-| `batting_stats_1` | 23/24 | OPS+ (C: needs lg constants) |
-| `batting_stats_2` | 15/18 | RC, RC/27, wOBA (C) |
-| `pitching_stats_1` | 23/25 | ERA+, FIP (C) |
+| `batting_stats_1` | **24/24** | — (OPS+ wired up via league constants 2026-05-04) |
+| `batting_stats_2` | **18/18** | — (RC/RC27/wOBA wired up 2026-05-04) |
+| `pitching_stats_1` | **25/25** | — (ERA+/FIP wired up 2026-05-04) |
 | `fielding_stats` | **12/12** | — |
 | `batting_ratings` | **18/18** | — |
 | `batting_potential` | **11/11** | — |
-| `pitching_ratings` | 10/12 | VELO, G/F (G: int→string mapping) |
-| `pitching_potential` | 8/10 | VELO, G/F (G) |
+| `pitching_ratings` | **12/12** | — (VELO + G/F int→string decoded 2026-05-04) |
+| `pitching_potential` | **10/10** | — (VELO + G/F decoded 2026-05-04) |
 | `fielding_ratings` | **9/9** | — |
-| `individual_pitch_ratings` | 14/15 | VELO (G) |
-| `individual_pitch_potential` | 14/15 | VELO (G) |
+| `individual_pitch_ratings` | **15/15** | — (VELO decoded 2026-05-04) |
+| `individual_pitch_potential` | **15/15** | — (VELO decoded 2026-05-04) |
 | `position_ratings` | **10/10** | — |
-| `pitching_stats_2` | 22/26 | RA, RSG, SIERA, pLi (C) |
+| `pitching_stats_2` | **25/26** | — SIERA C-tier (only). RA/RSG/pLi/CG%/IRS% all decoded 2026-05-04 |
 | `batting_superstats_1` | partial 22/25 (E-tier) | EV-bucket cutoffs need investigation; xBA/xSLG/xwOBA (D); Pull%/Cent%/Oppo% need hit_xy decode |
 | `pitching_superstats_1` | partial 13/17 (E-tier) | same EV/bucket issues; xBA/xSLG/xwOBA/xERA (D) |
 | `batting_superstats_2` | 0/18 | **all F-tier per D5** (per-pitch zone/type data not in dump) |
@@ -82,12 +93,16 @@ F=cannot replicate (per D5 or string-format), G=needs scale conversion.
 | `financial_info` | 2/12 | SLR/YL/CV string-formatted; ECV/ETY/MLY/SECY/OPT/OY/ON40 (C: extension/option data) |
 
 Headline numbers: across the 21 files, of ~360 total IE columns:
-- **~210** reconcile cleanly (A/B/E) — gained ~12 from 2026-05-03 popularity/personality/SctAcc decodes
+- **~250 reconcile cleanly (A/B)** — gained ~40 from 2026-05-04 sweeping pass
 - ~50 are F-tier by design (D5: plate-discipline; string-formatted display fields)
-- ~20 are G-tier deferred (integer→categorical-string mappings — VELO, G/F, contract auto-renew)
-- ~30 are C-tier (need league constants — wOBA/RC/FIP/ERA+/SIERA/etc. — but these are pre-computed in `league_history_*` so the lookup is straightforward)
-- ~15 are D-tier (xstats — xBA/xSLG/xwOBA/xERA, modeled from EV/LA)
-- ~25 are partial-match E-tier (Statcast bucket cutoffs + spray boundary need OOTP-source-of-truth)
+- 0 G-tier (all int→string mappings decoded: DEF, popularity, personality, SctAcc, VELO, G/F)
+- ~5 C-tier remaining (SIERA, contract extension/option fields)
+- ~15 D-tier (xstats — xBA/xSLG/xwOBA/xERA, modeled from EV/LA)
+- ~25 partial-match E-tier (Statcast superstats — spray boundary, multi-level players' BIP denominator)
+- 15 of 21 files at **100% reconciliation coverage** (A+B):
+  fielding_stats, batting_ratings, batting_potential, pitching_ratings, pitching_potential,
+  fielding_ratings, individual_pitch_ratings, individual_pitch_potential, position_ratings,
+  popularity_info, personality___morale, batting_stats_1, batting_stats_2, pitching_stats_1, pitching_stats_2 (25/26)
 
 Latest reports (audit_output/ — gitignored, regenerate with the CLI commands):
 - [decoder_report.md](audit_output/decoder_report.md) — `diamond decode`

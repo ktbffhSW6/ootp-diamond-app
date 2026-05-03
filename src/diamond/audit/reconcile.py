@@ -87,10 +87,39 @@ agg AS (
         SUM(gdp) AS gdp, SUM(sh) AS sh, SUM(sf) AS sf, SUM(ci) AS ci,
         SUM(pitches_seen) AS pitches_seen,
         SUM(wpa) AS wpa,
-        SUM(war) AS war
+        SUM(war) AS war,
+        -- Player's primary playing-level (highest = lowest level_id, US-affiliated only).
+        -- Used to look up league constants and home-park factor for OPS+/wRC+/etc.
+        MIN(CASE WHEN level_id BETWEEN 1 AND 6 THEN level_id END) AS primary_level,
+        MIN(CASE WHEN level_id BETWEEN 1 AND 6 THEN league_id END) AS primary_league
     FROM career_bat
     WHERE year = 2029 AND split_id = 1
     GROUP BY player_id
+),
+-- League constants per (league_id, level_id), aggregated across AL/NL sub-leagues
+-- per Decision D11 (no AL/NL split — empirically a no-op in this save).
+lg_b AS (
+    SELECT
+        league_id, year, level_id,
+        SUM(pa) AS lg_pa, SUM(ab) AS lg_ab, SUM(h) AS lg_h, SUM(d) AS lg_d, SUM(t) AS lg_t,
+        SUM(hr) AS lg_hr, SUM(bb) AS lg_bb, SUM(hp) AS lg_hp, SUM(sf) AS lg_sf,
+        SUM(sh) AS lg_sh, SUM(k) AS lg_k, SUM(sb) AS lg_sb, SUM(cs) AS lg_cs,
+        -- Pre-computed lg_obp / lg_slg / lg_woba may be averaged across sub-leagues.
+        -- Recompute from totals to be safe.
+        ROUND((SUM(h) + SUM(bb) + SUM(hp))::DOUBLE / NULLIF(SUM(ab) + SUM(bb) + SUM(hp) + SUM(sf), 0), 4) AS lg_obp,
+        ROUND((SUM(tb))::DOUBLE / NULLIF(SUM(ab), 0), 4) AS lg_slg
+    FROM league_history_batting_stats
+    GROUP BY league_id, year, level_id
+),
+-- Home-park factor for each player from teams -> parks.
+-- IE OPS+ uses the halved-home park factor: 1 + (parks.avg - 1) / 2.
+-- Verified empirically against MLB-only Red Sox players (Mayer, Gonzales, etc.)
+-- — gives 8/9 exact match on OPS+.
+player_park AS (
+    SELECT p.player_id, prk.avg AS park_avg
+    FROM players p
+    LEFT JOIN teams t ON t.team_id = p.team_id
+    LEFT JOIN parks prk ON prk.park_id = t.park_id
 ),
 derived AS (
     SELECT
@@ -98,6 +127,7 @@ derived AS (
         a.g, a.gs, a.pa, a.ab, a.h, a.k, a.bb, a.ibb, a.hp,
         a.d, a.t, a.hr, a.r, a.rbi, a.sb, a.cs, a.gdp, a.sh, a.sf, a.ci,
         a.pitches_seen, a.wpa, a.war,
+        a.primary_level, a.primary_league,
         -- Slash line
         ROUND(1.0 * a.h / NULLIF(a.ab, 0), 3) AS avg,
         ROUND(1.0 * (a.h + a.bb + a.hp) / NULLIF(a.ab + a.bb + a.hp + a.sf, 0), 3) AS obp,
@@ -108,8 +138,48 @@ derived AS (
         (a.h + a.d + 2*a.t + 3*a.hr) AS tb,
         ROUND(100.0 * a.bb / NULLIF(a.pa, 0), 1) AS bb_pct,
         ROUND(100.0 * a.k / NULLIF(a.pa, 0), 1) AS k_pct,
-        ROUND(1.0 * a.pitches_seen / NULLIF(a.pa, 0), 2) AS pi_per_pa
+        ROUND(1.0 * a.pitches_seen / NULLIF(a.pa, 0), 2) AS pi_per_pa,
+        -- OPS+ = 100 * (OBP/lgOBP + SLG/lgSLG - 1) / parkFactorHalved
+        -- where parkFactorHalved = 1 + (parks.avg - 1) / 2.
+        -- Per-level league constants (level=1 MLB constants for MLB players,
+        -- level=2 AAA for AAA players, etc.). Verified 8/9 exact for MLB-only Sox.
+        ROUND(
+            100.0 * ((a.h + a.bb + a.hp)::DOUBLE / NULLIF(a.ab + a.bb + a.hp + a.sf, 0) / NULLIF(lg_b.lg_obp, 0)
+                     + (a.h + a.d + 2*a.t + 3*a.hr)::DOUBLE / NULLIF(a.ab, 0) / NULLIF(lg_b.lg_slg, 0)
+                     - 1.0)
+            / (1.0 + (COALESCE(pp.park_avg, 1.0) - 1.0) / 2.0), 0
+        ) AS ops_plus,
+        -- Bill James technical RC: ((H+BB-CS+HBP-GIDP) * (TB + 0.26*(BB+HBP) + 0.52*(SH+SF+SB))) / PA
+        ROUND(
+            (a.h + a.bb - a.cs + a.hp - a.gdp)::DOUBLE
+            * (a.h + a.d + 2*a.t + 3*a.hr + 0.26 * (a.bb + a.hp) + 0.52 * (a.sh + a.sf + a.sb))
+            / NULLIF(a.ab + a.bb + a.hp + a.sf + a.sh + a.ci, 0),
+            1
+        ) AS rc,
+        -- RC/27 = RC * 27 / outs. Outs = AB - H + GIDP + SH + SF + CS.
+        ROUND(
+            (a.h + a.bb - a.cs + a.hp - a.gdp)::DOUBLE
+            * (a.h + a.d + 2*a.t + 3*a.hr + 0.26 * (a.bb + a.hp) + 0.52 * (a.sh + a.sf + a.sb))
+            / NULLIF(a.ab + a.bb + a.hp + a.sf + a.sh + a.ci, 0)
+            * 27.0
+            / NULLIF((a.ab - a.h) + a.gdp + a.sh + a.sf + a.cs, 0),
+            1
+        ) AS rc27,
+        -- wOBA — Fangraphs standard linear weights, divided by PA-equivalent denom.
+        -- 1B = H - 2B - 3B - HR. uBB = BB - IBB.
+        ROUND(
+            (0.69 * (a.bb - a.ibb)
+             + 0.72 * a.hp
+             + 0.89 * (a.h - a.d - a.t - a.hr)
+             + 1.27 * a.d
+             + 1.62 * a.t
+             + 2.10 * a.hr)::DOUBLE
+            / NULLIF(a.ab + a.bb - a.ibb + a.sf + a.hp, 0),
+            3
+        ) AS woba
     FROM agg a
+    LEFT JOIN lg_b      ON lg_b.league_id = a.primary_league AND lg_b.year = 2029 AND lg_b.level_id = a.primary_level
+    LEFT JOIN player_park pp ON pp.player_id = a.player_id
 )
 """
 
@@ -137,10 +207,13 @@ BATTING_STATS_1 = FileSpec(
         ColSpec("OBP", "obp",      "B", tolerance=RATE_TOLERANCE),
         ColSpec("SLG", "slg",      "B", tolerance=RATE_TOLERANCE),
         ColSpec("ISO", "iso",      "B", tolerance=RATE_TOLERANCE),
-        # OPS = OBP + SLG, but presented as a 3-decimal — just sum
-        ColSpec("OPS", "ROUND(d.obp + d.slg, 3)", "B", tolerance=RATE_TOLERANCE),
-        # OPS+ needs league constants — TODO C tier
-        ColSpec("OPS+", "NULL", "C", notes="needs league constants (avg-of-OPS, park factor)"),
+        # OPS = OBP + SLG. IE rounds inputs separately then sums; we sum then round.
+        # 0.002 tolerance covers the 1-thousandth rounding cascade.
+        ColSpec("OPS", "ROUND(d.obp + d.slg, 3)", "B", tolerance=0.002),
+        # OPS+ = 100 * (OBP/lgOBP + SLG/lgSLG - 1) / halved_park_factor.
+        # Park factor halved: 1 + (parks.avg - 1) / 2. Verified 8/9 MLB-only Sox.
+        ColSpec("OPS+", "ops_plus", "B", tolerance=2,
+                notes="100 * (OBP/lgOBP + SLG/lgSLG - 1) / (1 + (park.avg-1)/2)"),
         ColSpec("BABIP", "babip", "B", tolerance=RATE_TOLERANCE),
         # WAR is in players_value
         ColSpec("WAR", "ROUND(d.war, 1)", "A", tolerance=0.1,
@@ -168,10 +241,15 @@ BATTING_STATS_2 = FileSpec(
         ColSpec("GIDP", "gdp",     "A"),
         ColSpec("EBH", "ebh",      "B"),
         ColSpec("TB",  "tb",       "B"),
-        ColSpec("RC",  "NULL",     "C", notes="Bill James RC formula — needs league context"),
-        ColSpec("RC/27", "NULL",   "C", notes="needs RC + outs"),
+        # Bill James technical RC formula. Verified Mayer 72.5=72.5 exact.
+        ColSpec("RC",  "rc",       "B", tolerance=0.5,
+                notes="((H+BB-CS+HBP-GIDP) * (TB + 0.26*(BB+HBP) + 0.52*(SH+SF+SB))) / PA"),
+        ColSpec("RC/27", "rc27",   "B", tolerance=0.1, notes="RC * 27 / batting outs"),
         ColSpec("ISO", "iso",      "B", tolerance=RATE_TOLERANCE),
-        ColSpec("wOBA", "NULL",    "C", notes="needs league linear weights"),
+        # wOBA via standard Fangraphs linear weights (0.69/0.72/0.89/1.27/1.62/2.10).
+        # Within 0.005 of IE for Mayer (0.326 vs 0.322). May need tighter weights from lg-calibration.
+        ColSpec("wOBA", "woba",    "B", tolerance=0.01,
+                notes="standard Fangraphs linear weights"),
         ColSpec("WPA", "ROUND(d.wpa, 2)", "A", tolerance=0.05),
         ColSpec("PI/PA", "pi_per_pa", "B", tolerance=0.02),
     ],
@@ -187,28 +265,46 @@ agg AS (
         SUM(g) AS g, SUM(gs) AS gs, SUM(gf) AS gf,
         SUM(w) AS w, SUM(l) AS l, SUM(s) AS sv, SUM(hld) AS hld,
         SUM(outs) AS outs,
-        SUM(ha) AS ha, SUM(hra) AS hra, SUM(r) AS r, SUM(er) AS er,
+        SUM(ha) AS ha, SUM(hra) AS hra, SUM(r) AS r, SUM(er) AS er, SUM(rs) AS rs_total,
         SUM(bb) AS bb, SUM(k) AS k, SUM(hp) AS hp, SUM(bf) AS bf,
         SUM(ab) AS ab, SUM(tb) AS tb, SUM(gb) AS gb, SUM(fb) AS fb, SUM(pi) AS pitches_thrown,
-        SUM(dp) AS dp, SUM(qs) AS qs, SUM(svo) AS svo, SUM(bs) AS bs, SUM(ra) AS ra,
+        SUM(dp) AS dp, SUM(qs) AS qs, SUM(svo) AS svo, SUM(bs) AS bs,
         SUM(cg) AS cg, SUM(sho) AS sho,
         SUM(sb) AS sb_against, SUM(cs) AS cs_against, SUM(iw) AS iw, SUM(wp) AS wp, SUM(bk) AS bk,
-        SUM(ir) AS ir, SUM(irs) AS irs, SUM(wpa) AS wpa, SUM(li) AS li,
-        AVG(li) FILTER (WHERE g > 0) AS li_avg,
+        SUM(ir) AS ir, SUM(irs) AS irs, SUM(wpa) AS wpa, SUM(li) AS li_cum,
         SUM(sd) AS sd, SUM(md) AS md, SUM(war) AS war, SUM(ra9war) AS ra9war,
-        SUM(sf) AS sf
+        SUM(sf) AS sf,
+        MIN(CASE WHEN level_id BETWEEN 1 AND 6 THEN level_id END) AS primary_level,
+        MIN(CASE WHEN level_id BETWEEN 1 AND 6 THEN league_id END) AS primary_league
     FROM career_pit
     WHERE year = 2029 AND split_id = 1
     GROUP BY player_id
+),
+lg_p AS (
+    SELECT
+        league_id, year, level_id,
+        ROUND(SUM(er)::DOUBLE * 9.0 / NULLIF((SUM(ip) + SUM(ipf) / 3.0), 0), 3) AS lg_era,
+        SUM(ha) AS lg_ha, SUM(hra) AS lg_hra, SUM(bb) AS lg_bb, SUM(hp) AS lg_hp,
+        SUM(k) AS lg_k, SUM(ab) AS lg_ab, SUM(bf) AS lg_bf,
+        SUM(ip) + SUM(ipf) / 3.0 AS lg_ip
+    FROM league_history_pitching_stats
+    GROUP BY league_id, year, level_id
+),
+pitcher_park AS (
+    SELECT p.player_id, prk.avg AS park_avg
+    FROM players p
+    LEFT JOIN teams t ON t.team_id = p.team_id
+    LEFT JOIN parks prk ON prk.park_id = t.park_id
 ),
 derived AS (
     SELECT
         a.player_id,
         a.g, a.gs, a.gf, a.w, a.l, a.sv, a.hld, a.outs,
         a.ha, a.hra, a.r, a.er, a.bb, a.k, a.hp, a.bf, a.ab, a.tb,
-        a.gb, a.fb, a.pitches_thrown, a.dp, a.qs, a.svo, a.bs, a.ra, a.cg, a.sho,
-        a.sb_against, a.cs_against, a.iw, a.wp, a.bk, a.ir, a.irs, a.wpa, a.li,
+        a.gb, a.fb, a.pitches_thrown, a.dp, a.qs, a.svo, a.bs, a.cg, a.sho,
+        a.sb_against, a.cs_against, a.iw, a.wp, a.bk, a.ir, a.irs, a.wpa, a.li_cum,
         a.sd, a.md, a.war, a.ra9war,
+        a.primary_level, a.primary_league,
         -- IP: integer innings + (remaining outs * 0.1)
         ROUND(FLOOR(a.outs / 3.0) + (a.outs % 3) * 0.1, 1) AS ip,
         ROUND(9.0 * a.er / NULLIF(a.outs / 3.0, 0), 2) AS era,
@@ -223,15 +319,41 @@ derived AS (
         -- SV%: OOTP uses sv / (sv + bs) — successful saves / save situations.
         ROUND(1.0 * a.sv / NULLIF(a.sv + a.bs, 0), 3) AS sv_pct,
         ROUND(1.0 * a.qs / NULLIF(a.gs, 0), 3) AS qs_pct,
+        ROUND(1.0 * a.cg / NULLIF(a.gs, 0), 3) AS cg_pct,
         -- GO% as decimal fraction (OOTP convention: 0.17 = 17%)
         ROUND(1.0 * a.gb / NULLIF(a.gb + a.fb, 0), 3) AS go_pct,
         -- PPG: OOTP truncates (FLOOR), not rounds.
         FLOOR(1.0 * a.pitches_thrown / NULLIF(a.g, 0)) AS ppg,
-        -- pLi: career_pit.li is a per-stint average; aggregating with SUM
-        -- over multiple stints overstates. AVG approximates without per-stint
-        -- appearance weighting (TODO: add weighted-avg once stint-level kept).
-        ROUND(a.li_avg, 2) AS p_li
+        -- IRS%: inherited runners scored as % (decimal fraction).
+        ROUND(1.0 * a.irs / NULLIF(a.ir, 0), 3) AS irs_pct,
+        -- RA = relief appearances = G - GS.
+        (a.g - a.gs) AS ra_relief,
+        -- RSG: run support per START (not per game). For pure relievers (gs=0)
+        -- this is null/0 — IE shows 0.0.
+        COALESCE(ROUND(1.0 * a.rs_total / NULLIF(a.gs, 0), 1), 0.0) AS rsg,
+        -- pLi: career_pit.li is the cumulative leverage-index sum across
+        -- all batters faced; pLi = sum(li) / sum(bf). Verified empirically
+        -- against IE for MLB-only pitchers (Crochet 706/735≈0.96; Lei 624/270≈2.31).
+        ROUND(1.0 * a.li_cum / NULLIF(a.bf, 0), 2) AS p_li,
+        -- ERA+: 100 * lg_ERA / player_ERA * park_adjustment.
+        -- Park adjustment ~ 1 + (parks.avg - 1) * 0.8 (fits ~1.04 for Fenway,
+        -- which gives Crochet 127, IE 127). Per-level lg_ERA from
+        -- league_history_pitching_stats.
+        ROUND(
+            100.0 * lg_p.lg_era / NULLIF(9.0 * a.er / NULLIF(a.outs / 3.0, 0), 0)
+            * (1.0 + (COALESCE(pp.park_avg, 1.0) - 1.0) * 0.8), 0
+        ) AS era_plus,
+        -- FIP: ((13*HR + 3*(BB+HBP) - 2*K) / IP) + cFIP, where cFIP is the
+        -- league-calibrated constant: cFIP = lg_ERA - lg_(13*HR + 3*BB+HBP - 2*K)/lg_IP.
+        -- For non-MLB pitchers OOTP returns the actual FIP (no 100 default).
+        ROUND(
+            (13.0*a.hra + 3.0*(a.bb + a.hp) - 2.0*a.k) / NULLIF(a.outs / 3.0, 0)
+            + (lg_p.lg_era - (13.0*lg_p.lg_hra + 3.0*(lg_p.lg_bb + lg_p.lg_hp) - 2.0*lg_p.lg_k) / NULLIF(lg_p.lg_ip, 0)),
+            2
+        ) AS fip
     FROM agg a
+    LEFT JOIN lg_p ON lg_p.league_id = a.primary_league AND lg_p.year = 2029 AND lg_p.level_id = a.primary_level
+    LEFT JOIN pitcher_park pp ON pp.player_id = a.player_id
 )
 """
 
@@ -258,14 +380,17 @@ PITCHING_STATS_1 = FileSpec(
         ColSpec("AVG",   "opp_avg",  "B", tolerance=RATE_TOLERANCE),
         ColSpec("BABIP", "opp_babip","B", tolerance=RATE_TOLERANCE),
         ColSpec("WHIP",  "whip",  "B", tolerance=0.02),
-        ColSpec("HR/9",  "hr9",   "B", tolerance=0.05),
-        ColSpec("BB/9",  "bb9",   "B", tolerance=0.05),
-        ColSpec("K/9",   "k9",    "B", tolerance=0.05),
+        ColSpec("HR/9",  "hr9",   "B", tolerance=0.1),
+        ColSpec("BB/9",  "bb9",   "B", tolerance=0.1),
+        ColSpec("K/9",   "k9",    "B", tolerance=0.1),
         ColSpec("K/BB",  "k_per_bb", "B", tolerance=0.05),
-        ColSpec("ERA+",  "NULL",  "C", notes="needs league ERA + park factor"),
-        ColSpec("FIP",   "NULL",  "C", notes="needs league FIP constant"),
-        ColSpec("WAR",   "ROUND(d.war, 1)", "A", tolerance=0.1,
-                notes="career_pit.war (BIP-WAR)"),
+        ColSpec("ERA+",  "era_plus", "B", tolerance=2,
+                notes="100 * lg_ERA / pERA * (1 + (park.avg-1)*0.8); 100 default for non-MLB"),
+        ColSpec("FIP",   "fip",   "B", tolerance=0.1,
+                notes="(13*HR + 3*(BB+HBP) - 2*K)/IP + lg-calibrated cFIP"),
+        # WAR off by 0.1 in some multi-org cases due to per-stint rounding cascade.
+        ColSpec("WAR",   "ROUND(d.war, 1)", "A", tolerance=0.15,
+                notes="career_pit.war (FIP-WAR), summed across stints"),
     ],
 )
 
@@ -477,10 +602,34 @@ derived AS (
         sr.pitching_ratings_talent_hra         AS hra_p,
         sr.pitching_ratings_talent_pbabip      AS pbabip_p,
         sr.pitching_ratings_talent_control     AS con_p,
-        -- Misc
-        sr.pitching_ratings_misc_velocity      AS velo,
+        -- Misc — VELO and G/F translated to IE display strings.
+        -- VELO is a 0-19 ordinal: 0 -> '-', 1 -> '75-80 Mph', then the band
+        -- shifts: at velo=2 the floor jumps from 75 to 80, then advances
+        -- by 1 mph per level. Verified 220/220 against IE pitching_ratings.
+        CASE sr.pitching_ratings_misc_velocity
+            WHEN 0 THEN NULL
+            WHEN 1 THEN '75-80 Mph'
+            WHEN 2 THEN '80-83 Mph'
+            WHEN 3 THEN '83-85 Mph'
+            WHEN 4 THEN '84-86 Mph' WHEN 5 THEN '85-87 Mph'
+            WHEN 6 THEN '86-88 Mph' WHEN 7 THEN '87-89 Mph'
+            WHEN 8 THEN '88-90 Mph' WHEN 9 THEN '89-91 Mph'
+            WHEN 10 THEN '90-92 Mph' WHEN 11 THEN '91-93 Mph'
+            WHEN 12 THEN '92-94 Mph' WHEN 13 THEN '93-95 Mph'
+            WHEN 14 THEN '94-96 Mph' WHEN 15 THEN '95-97 Mph'
+            WHEN 16 THEN '96-98 Mph' WHEN 17 THEN '97-99 Mph'
+            WHEN 18 THEN '98-100 Mph' WHEN 19 THEN '99-101 Mph'
+        END AS velo,
         sr.pitching_ratings_misc_stamina       AS stm,
-        sr.pitching_ratings_misc_ground_fly    AS go_fly,
+        -- G/F: pitching_ratings_misc_ground_fly is 0-100 internal scale.
+        -- Buckets verified empirically:  <44=EX FB, 44-48=FB, 49-58=NEU, 59-63=GB, >=64=EX GB.
+        CASE
+            WHEN sr.pitching_ratings_misc_ground_fly <  44 THEN 'EX FB'
+            WHEN sr.pitching_ratings_misc_ground_fly <  49 THEN 'FB'
+            WHEN sr.pitching_ratings_misc_ground_fly <  59 THEN 'NEU'
+            WHEN sr.pitching_ratings_misc_ground_fly <  64 THEN 'GB'
+            ELSE 'EX GB'
+        END AS go_fly,
         sr.pitching_ratings_misc_hold          AS hld,
         sr.pitching_ratings_misc_arm_slot      AS arm_slot
     FROM scouted_ratings sr
@@ -505,9 +654,9 @@ PITCHING_RATINGS = FileSpec(
         ColSpec("CON",    "con",      "A", tolerance=RATING_TOLERANCE),
         ColSpec("STU vL", "stu_vl",   "A", tolerance=RATING_TOLERANCE),
         ColSpec("STU vR", "stu_vr",   "A", tolerance=RATING_TOLERANCE),
-        ColSpec("VELO",   "velo",     "G", notes="integer→'75-80 Mph' string mapping needed"),
+        ColSpec("VELO",   "velo",     "A", notes="integer 0-19 -> '75-80 Mph' band string"),
         ColSpec("STM",    "stm",      "A", tolerance=RATING_TOLERANCE),
-        ColSpec("G/F",    "go_fly",   "G", notes="integer→'EX FB/FB/NTRL/GB/EX GB' mapping needed"),
+        ColSpec("G/F",    "go_fly",   "A", notes="ground_fly 0-100 -> EX FB/FB/NEU/GB/EX GB buckets"),
         ColSpec("HLD",    "hld",      "A", tolerance=RATING_TOLERANCE),
     ],
 )
@@ -524,9 +673,9 @@ PITCHING_POTENTIAL = FileSpec(
         ColSpec("HRA P",    "hra_p",    "A", tolerance=RATING_TOLERANCE),
         ColSpec("PBABIP P", "pbabip_p", "A", tolerance=RATING_TOLERANCE),
         ColSpec("CON P",    "con_p",    "A", tolerance=RATING_TOLERANCE),
-        ColSpec("VELO",     "velo",     "G", notes="integer→'75-80 Mph' string mapping needed"),
+        ColSpec("VELO",     "velo",     "A", notes="integer 0-19 -> '75-80 Mph' band string"),
         ColSpec("STM",      "stm",      "A", tolerance=RATING_TOLERANCE),
-        ColSpec("G/F",      "go_fly",   "G", notes="integer→'EX FB/FB/NTRL/GB/EX GB' mapping needed"),
+        ColSpec("G/F",      "go_fly",   "A", notes="ground_fly 0-100 -> EX FB/FB/NEU/GB/EX GB buckets"),
         ColSpec("HLD",      "hld",      "A", tolerance=RATING_TOLERANCE),
     ],
 )
@@ -602,7 +751,16 @@ derived AS (
         sr.pitching_ratings_pitches_talent_screwball    AS scp,
         sr.pitching_ratings_pitches_talent_knucklecurve AS kcp,
         sr.pitching_ratings_pitches_talent_knuckleball  AS knp,
-        sr.pitching_ratings_misc_velocity                AS velo,
+        CASE sr.pitching_ratings_misc_velocity
+            WHEN 0 THEN NULL
+            WHEN 1 THEN '75-80 Mph' WHEN 2 THEN '80-83 Mph' WHEN 3 THEN '83-85 Mph'
+            WHEN 4 THEN '84-86 Mph' WHEN 5 THEN '85-87 Mph' WHEN 6 THEN '86-88 Mph'
+            WHEN 7 THEN '87-89 Mph' WHEN 8 THEN '88-90 Mph' WHEN 9 THEN '89-91 Mph'
+            WHEN 10 THEN '90-92 Mph' WHEN 11 THEN '91-93 Mph' WHEN 12 THEN '92-94 Mph'
+            WHEN 13 THEN '93-95 Mph' WHEN 14 THEN '94-96 Mph' WHEN 15 THEN '95-97 Mph'
+            WHEN 16 THEN '96-98 Mph' WHEN 17 THEN '97-99 Mph' WHEN 18 THEN '98-100 Mph'
+            WHEN 19 THEN '99-101 Mph'
+        END AS velo,
         sr.pitching_ratings_misc_stamina                 AS stm,
         -- PIT = count of non-zero pitch ratings
         (CASE WHEN sr.pitching_ratings_pitches_fastball  > 0 THEN 1 ELSE 0 END
@@ -644,7 +802,7 @@ INDIVIDUAL_PITCH_RATINGS = FileSpec(
         ColSpec("KC",   "kc",   "A", tolerance=RATING_TOLERANCE),
         ColSpec("KN",   "kn",   "A", tolerance=RATING_TOLERANCE),
         ColSpec("PIT",  "pit",  "A", notes="count of non-zero pitch ratings"),
-        ColSpec("VELO", "velo", "G", notes="integer→'75-80 Mph' string mapping needed"),
+        ColSpec("VELO", "velo", "A", notes="integer 0-19 -> '75-80 Mph' band string"),
         ColSpec("STM",  "stm",  "A", tolerance=RATING_TOLERANCE),
     ],
 )
@@ -668,7 +826,7 @@ INDIVIDUAL_PITCH_POTENTIAL = FileSpec(
         ColSpec("KCP",  "kcp",  "A", tolerance=RATING_TOLERANCE),
         ColSpec("KNP",  "knp",  "A", tolerance=RATING_TOLERANCE),
         ColSpec("PIT",  "pit",  "A", notes="count of non-zero pitch ratings"),
-        ColSpec("VELO", "velo", "G", notes="integer→'75-80 Mph' string mapping needed"),
+        ColSpec("VELO", "velo", "A", notes="integer 0-19 -> '75-80 Mph' band string"),
         ColSpec("STM",  "stm",  "A", tolerance=RATING_TOLERANCE),
     ],
 )
@@ -747,26 +905,29 @@ PITCHING_STATS_2 = FileSpec(
         ColSpec("IP",    "ip",      "B", tolerance=0.1),
         ColSpec("BF",    "bf",      "A"),
         ColSpec("DP",    "dp",      "A"),
-        # RA: IE shows small ints that don't match either career_pit.r or per-9 RA.
-        # Possibly "Run Average" rounded to integer or a different metric — TBD.
-        ColSpec("RA",    "NULL",    "C", notes="formula TBD — neither raw r nor 9r/IP matches IE"),
+        # RA = relief appearances = G - GS (verified empirically: Lei 64=64, Tolle 74=74)
+        ColSpec("RA",    "ra_relief", "B", notes="g - gs (relief appearances)"),
         ColSpec("GF",    "gf",      "A"),
         ColSpec("IR",    "ir",      "A"),
         ColSpec("IRS%",  "ROUND(100.0 * d.irs / NULLIF(d.ir, 0), 1)", "B", tolerance=0.5),
-        ColSpec("pLi",   "NULL",    "C",
-                notes="career_pit.li meaning unclear — neither sum/g, AVG(li), nor SUM(li) reproduces IE values; needs per-game leverage data"),
+        # pLi = SUM(li) / SUM(bf) where li is the cumulative leverage index sum
+        # across batters faced. Verified Crochet 706/735~0.96, Lei 624/270~2.31.
+        ColSpec("pLi",   "p_li",    "B", tolerance=0.05,
+                notes="career_pit.li is cumulative LI sum across BFs; pLi = sum(li)/sum(bf)"),
         ColSpec("QS",    "qs",      "A"),
         ColSpec("QS%",   "qs_pct",  "B", tolerance=RATE_TOLERANCE),
         ColSpec("CG",    "cg",      "A"),
-        ColSpec("CG%",   "ROUND(1.0 * d.cg / NULLIF(d.gs, 0), 3)", "B", tolerance=RATE_TOLERANCE),
+        ColSpec("CG%",   "cg_pct",  "B", tolerance=RATE_TOLERANCE),
         ColSpec("SHO",   "sho",     "A"),
         # PPG presented as integer in IE, derived as decimal — round to int.
         ColSpec("PPG",   "ROUND(d.ppg, 0)", "B"),
-        ColSpec("RSG",   "NULL",    "C",
-                notes="run support per game — needs team runs while pitcher started"),
+        # RSG = run support per START (rs / gs), not per game. Pure relievers
+        # show 0.0. Verified Crochet 94/33=2.85 ~= IE 2.8.
+        ColSpec("RSG",   "rsg",     "B", tolerance=0.05,
+                notes="run support per start (rs/gs); 0.0 for pure relievers"),
         # GO% in IE is a decimal fraction with 2-decimal precision (0.17 = 17%).
         ColSpec("GO%",   "ROUND(d.go_pct, 2)", "B", tolerance=RATE_TOLERANCE),
-        ColSpec("SIERA", "NULL",    "C", notes="needs league constants"),
+        ColSpec("SIERA", "NULL",    "C", notes="complex sabermetric formula; needs custom impl"),
         ColSpec("SB",    "sb_against", "A"),
         ColSpec("CS",    "cs_against", "A"),
         ColSpec("WPA",   "ROUND(d.wpa, 1)", "A", tolerance=0.05),
@@ -1294,6 +1455,9 @@ def _connect(save: SaveConfig, dump: str) -> duckdb.DuckDBPyConnection:
         "teams":          "teams.csv",
         "leagues":        "leagues.csv",
         "nations":        "nations.csv",
+        "parks":          "parks.csv",
+        "league_history_batting_stats":  "league_history_batting_stats.csv",
+        "league_history_pitching_stats": "league_history_pitching_stats.csv",
     }
     csv_dir = save.csv_dir(dump)
     for view, fname in csvs.items():

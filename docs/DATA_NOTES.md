@@ -509,3 +509,100 @@ across the full 220-player roster because:
    their IE numbers from the at-bat log alone.
 3. The Pull/Cent/Oppo% x-bin boundaries on `hit_xy` are still off by
    ~5-10pp consistently — exact OOTP boundary still TBD.
+
+## Pitching counter decodes (2026-05-04)
+
+Three previously-mysterious columns in `pitching_stats_2` decoded by
+inspecting how counts move with starter vs reliever roles:
+
+| IE col | Formula | Verification |
+|---|---|---|
+| **RA** (relief appearances) | `g - gs` | Lei 64=64; Tolle 74=74; Crochet 33-33=0; 97% match |
+| **RSG** (run support per start) | `rs / gs` (0 for pure relievers) | Crochet 94/33=2.85≈IE 2.8; Valera 18/8=2.25≈IE 2.2; 99% |
+| **pLi** (avg leverage index) | `SUM(li) / SUM(bf)` | Crochet 706.1/735≈0.96; Lei 624/270≈2.31; 100% |
+
+Critical: `career_pit.li` is the **cumulative** sum of leverage index
+across all batters faced, NOT an average. The dump's column dictionary
+calling it "average leverage index" was misleading.
+
+## VELO and G/F int→string decodes (2026-05-04)
+
+OOTP's IE shows pitcher velocity as a band string like "89-91 Mph". The
+underlying `pitching_ratings_misc_velocity` is a 0-19 ordinal:
+
+| int | string |
+|---|---|
+| 0 | (no value, "-") |
+| 1 | 75-80 Mph |
+| 2 | 80-83 Mph |
+| 3 | 83-85 Mph |
+| 4-19 | 84-86 / 85-87 / ... 99-101 Mph (advances by 1 mph per level) |
+
+G/F (`pitching_ratings_misc_ground_fly`, 0-100) buckets:
+
+| range | label |
+|---|---|
+| 0-43 | EX FB |
+| 44-48 | FB |
+| 49-58 | NEU |
+| 59-63 | GB |
+| 64+ | EX GB |
+
+Both verified 100% match across 220-player Sox roster.
+
+## Sabermetric stat formulas (2026-05-04)
+
+Empirically verified against MLB-only Red Sox players using
+`league_history_*_stats` for league context:
+
+### OPS+
+```
+OPS+ = ROUND(100 * (OBP/lgOBP + SLG/lgSLG - 1) / (1 + (park.avg - 1) / 2))
+```
+Halved park factor — each player plays half home / half road.
+8 of 9 MLB-only Sox match exact (e.g., Mayer naive 107.6, Fenway halved 1.025, → 105 = IE).
+
+### ERA+
+```
+ERA+ = ROUND(100 * (lg_ERA / pERA) * (1 + (park.avg - 1) * 0.8))
+```
+Empirical park multiplier ~1.04 for Fenway (avg=1.05). Note: this is
+NOT the halved park factor used for OPS+.
+Verified Crochet IE 127 = 121.9 * 1.04; Suarez 149 = 142.9 * 1.04.
+
+### RC (Bill James technical)
+```
+RC = ((H + BB - CS + HBP - GIDP) *
+      (TB + 0.26*(BB + HBP) + 0.52*(SH + SF + SB))) / PA
+```
+100% match on tested players. Mayer: 72.5 = 72.5 exact.
+
+### RC/27
+```
+RC/27 = RC * 27 / (AB - H + GIDP + SH + SF + CS)
+```
+99% match.
+
+### wOBA
+```
+wOBA = (0.69*uBB + 0.72*HBP + 0.89*1B + 1.27*2B + 1.62*3B + 2.10*HR)
+       / (AB + uBB + SF + HBP)
+```
+where uBB = BB - IBB. Standard Fangraphs linear weights.
+79% match within 0.01 tolerance — slight variance from non-Fangraphs
+weights or league-calibrated wOBA-scale.
+
+### FIP
+```
+FIP = (13*HR + 3*(BB + HBP) - 2*K) / IP + cFIP
+cFIP = lg_ERA - lg_(13*HR + 3*(BB + HBP) - 2*K) / lg_IP
+```
+69% match within 0.1 tolerance. lg_ERA and lg counting stats from
+`league_history_pitching_stats` per (league_id, year, level_id).
+
+### Cross-level player caveat
+
+For players who split a season across levels (AAA call-up, etc.),
+IE shows the **combined total slash line** but applies a level-weighted
+park factor we don't fully model. These players will mismatch this
+formula by ~5-15 OPS+ points. Logged as a known limitation.
