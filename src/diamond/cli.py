@@ -18,6 +18,7 @@ if sys.platform == "win32":
 from diamond.audit import advanced as advanced_mod
 from diamond.audit import coverage as coverage_mod
 from diamond.audit import decode as decode_mod
+from diamond.audit import decode_codes as decode_codes_mod
 from diamond.audit import reconcile as reconcile_mod
 
 app = typer.Typer(help="OOTP 27 monthly-dump warehouse and analysis app", no_args_is_help=True)
@@ -63,6 +64,18 @@ def coverage(
 ) -> None:
     """Profile dump CSVs that support feature views (standings, leaders, awards, etc.)."""
     coverage_mod.run(dump=dump, output_path=output)
+
+
+@app.command("decode-codes")
+def decode_codes(
+    dump: str | None = typer.Option(None, help="Dump folder name; defaults to latest"),
+    output: Path = typer.Option(
+        Path("audit_output/codes_decoder_report.md"),
+        help="Markdown report output path",
+    ),
+) -> None:
+    """Decode the four pending codebooks (award_id, leader.category, streak_id, body_part)."""
+    decode_codes_mod.run(dump=dump, output_path=output)
 
 
 @app.command()

@@ -10,11 +10,12 @@
 
 ### High priority
 
-- [ ] **Decode pending integer codebooks** — same empirical approach as the result/split decoder
-  - [ ] `players_awards.award_id` (13 values: MVP, CY, RoY, MoY, GG, SS, AS, HOF, etc.)
-  - [ ] `players_league_leader.category` (60 values: HR, AVG, K, ERA, etc.)
-  - [ ] `players_streak.streak_id` (21 values: hit, OB, HR, K, GP, etc.)
-  - [ ] `players_injury_history.body_part` (integer)
+- [x] **Decode pending integer codebooks** — DONE (via `diamond decode-codes`, output in `audit_output/codes_decoder_report.md`)
+  - [x] `players_awards.award_id` — all 13 verified by cross-ref with league_history
+  - [x] `players_league_leader.category` — 47/60 verified; 13 unmapped are derived/sabermetric stats (likely RC/wOBA/FIP/SIERA/K%/SV% etc.)
+  - [x] `players_streak.streak_id` — 21 codes profiled; names best-guess pending OOTP docs
+  - [x] `players_injury_history.body_part` — 12 codes profiled; names best-guess
+- [ ] **Verify the 13 unmapped `leader.category` codes** by computing the missing derived stats (RC, wOBA, FIP, SIERA, K%, SV%, QS%, CG%, SHO%, GO/AO) and re-running the matcher
 - [ ] **Build league constants module** — `league_constants` table, computed from `league_history_*` totals + park factors from `parks.csv`. Per league-year:
   - linear weights (wOBA, wRAA, wRC, wRC+)
   - FIP constant (cFIP)

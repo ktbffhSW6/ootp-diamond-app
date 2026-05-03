@@ -35,7 +35,7 @@ building the ingest pipeline.
 
 ## Most-recent change
 
-Shipped the modern advanced stats library — all 5 tiers, derived from 1.2M at-bat events. League constants and Run Expectancy matrix derived empirically from this save's data. Headline players reconcile to expected real-MLB profiles (e.g., Aaron Judge, Cal Raleigh leading Barrel%).
+Decoded the four pending integer codebooks. `award_id` (all 13 verified), `leader.category` (47/60 verified — remaining 13 are derived sabermetric stats), `streak_id` (21 profiled), `body_part` (12 profiled). All added to `src/diamond/constants.py` as IntEnums. `audit_output/codes_decoder_report.md` has full details.
 
 ## Reconciliation status (most recent run)
 

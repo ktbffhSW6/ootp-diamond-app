@@ -85,12 +85,57 @@ Verified: `vs_LHP + vs_RHP = OVERALL` exactly. POSTSEASON is additive (separate 
 
 Verified by exact aggregate match: sum of all event counts for regular-season MLB 2029 = 183,906 = total overall PA. Code 3 unobserved in regular-season MLB (may appear in other game types, possibly fielders' choice or ROE).
 
-## Pending codebooks (not yet decoded)
+## Decoded codebooks (second pass)
 
-- `players_awards.award_id` — 13 distinct values; likely MVP, CY, RoY, Manager of Year, Gold Glove (×9 positions?), Silver Slugger, All-Star, HOF, etc.
-- `players_league_leader.category` — 60 distinct values; map of stat code → stat name
-- `players_streak.streak_id` — 21 distinct values; types likely include hitting streak, on-base streak, games-played streak, K-streak (pitcher), no-hit-allowed, etc.
-- `players_injury_history.body_part` — integer code
+All four discovered codebooks. See `src/diamond/constants.py` for the IntEnum definitions.
+
+### `players_awards.award_id` — all 13 codes verified
+
+Cross-referenced against `league_history.best_hitter_id / best_pitcher_id / best_rookie_id` (217/234 MVP winners match best_hitter, 134/151 CY match best_pitcher, 164/182 RoY match best_rookie — match is per-league-per-year, top voter only).
+
+| Code | Award | Notes |
+|---|---|---|
+| 0 | PLAYER_OF_THE_WEEK | ~26 winners/league/year (one per week) |
+| 1 | PITCHER_OF_THE_MONTH | 6/league/year, all pitchers, d=1 |
+| 2 | HITTER_OF_THE_MONTH | 6/league/year, all hitters, d=1 |
+| 3 | ROOKIE_OF_THE_MONTH | 6/league/year, mixed |
+| 4 | CY_YOUNG | top-3 voted, d=11 m=11 |
+| 5 | MVP | top-3 voted, d=12 m=11 |
+| 6 | ROOKIE_OF_THE_YEAR | top-3 voted, d=9 m=11 |
+| 7 | GOLD_GLOVE | one per position (`position` field 1-9 = P-RF) |
+| 9 | ALL_STAR | ASG roster (~30/league/year, d=14 m=7) |
+| 11 | SILVER_SLUGGER | one per position (`position` 2-10, 10=DH) |
+| 13 | RELIEVER_OF_THE_YEAR | top-3 voted |
+| 14 | WS_CHAMPION_ROSTER | only winning league's `sub_league_id` populated |
+| 15 | POSTSEASON_SERIES_MVP | WC/DS/CS/WS MVP per series |
+
+Codes 8, 10, 12 unused — gaps in the sequence (OOTP reserves for future award types).
+
+### `players_league_leader.category` — 47 of 60 verified
+
+Verified by exact aggregate match (place=1 leader's `amount` matches the named stat for that player-year). Batting categories 0-26, pitching 27-59. Codes left unmapped (21, 22, 26, 31, 41, 44, 46, 49, 51, 53, 55, 57) are derived/sabermetric stats we don't compute as raw fields (RC, wOBA, FIP, SIERA, K%, SV%, QS%, etc.) — TBD.
+
+Notable: rate stats (IP, ERA, WHIP, HR9, BB9, K9) match at low rate due to the OOTP IP convention rounding (172.1 displayed = 172.333 real).
+
+See `LeaderCategory` in `constants.py` for the full enum.
+
+### `players_streak.streak_id` — 21 codes profiled
+
+Clear split:
+- **11 batter streaks**: HITTING (max 34), GAMES_PLAYED (max 41), ON_BASE (max 37), MULTI_HIT, 3+ HIT, HR, EXTRA_BASE_HIT, RBI, RUN, plus 2 rare types
+- **9 pitcher streaks**: SCORELESS_INNINGS (max 33), NO_HR_ALLOWED (max 31), APPEARANCE (max 39), WIN, QS, K, LOSS, SAVES, NO_WALK_ALLOWED
+- **1 mixed (id 11)**: 99% pitchers, max 11
+
+Names are best-guess pending OOTP documentation. Mapping ranks by max-value within each group.
+
+### `players_injury_history.body_part` — 12 codes profiled
+
+Best-guess mapping based on frequency + avg length + day-to-day rate:
+- ARM (id 6, 7971 inj, 86% DTD) — most common, mostly minor
+- LEG (id 3, 7853, avg 11 days)
+- GENERIC (id 0, 7466, only 25% DTD — possibly the "non-specific" bucket where OOTP defaults)
+- SHOULDER (id 5), BACK (id 7), ELBOW (id 10), OBLIQUE (id 9, avg 35 days), UCL/Tommy John (id 8, avg **60 days**, severe)
+- ANKLE (id 1), HEAD (id 2, 88% DTD), HAND/THUMB (id 11), PERSONAL (id 4, 251 inj, 92% DTD — likely personal/family leave)
 
 ## League / team structure
 
