@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# venv
+.venv/
+venv/
+env/
+
+# IDE / agent state
+.idea/
+.vscode/
+.claude/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Diamond ephemera
+audit_output/
