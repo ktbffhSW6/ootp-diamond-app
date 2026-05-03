@@ -76,3 +76,19 @@
 **Decision**: Finish the full audit phase (all 21 import_export files reconciled, all integer codebooks decoded, all data quirks documented) BEFORE designing the warehouse schema or building the ingest pipeline. No schema/DDL work begins until reconciliation is comprehensive.
 **Why**: User explicit instruction — "Let's make sure that the data scope is crystal clear and we have everything reconciled before we start building anything including schema." Schema decisions baked in before reconciliation can lock in the wrong assumptions; the cost of a redesign once tables exist (and contain data from 44 monthly dumps) is much higher than finishing the audit.
 **How to apply**: Resist the temptation to start schema work even when "we have enough proof now that derivations work." Direct any schema design ideas to BACKLOG instead. Continue audit work in priority order: reconcile remaining 16 import_export files → DEF formula → rounding edges → AS gap → trade summary parsing.
+
+## D11 — League constants: per-league per-level, no AL/NL split, separate per international league
+
+**Date**: 2026-05-04
+**Decision**: League constants for sabermetric stats (wRC+, wRAA, FIP, OPS+, ERA+, etc.) are keyed on `(league_id, year, level_id)`. Within US MLB, AL and NL are aggregated into a single MLB row (no split). International leagues at the same nominal level (NPB, KBO, KFL at MLB-equivalent level) live in their own constants universes and are never aggregated with US MLB. Cross-level aggregation for a single player is never done — a player who splits a season between MLB and AAA shows two stat lines (one per level), each with sabermetrics computed against that level's constants. Only pure counting stats (career HR, total IP) can be summed across levels for rollups.
+**Why**: Mimics modern public-stats convention (Fangraphs, Baseball Reference for the modern era): one MLB-wide league baseline, level-specific context for non-MLB players, and per-league-line stats for cross-level players. Empirically verified the AL/NL choice is a no-op in this save (universal DH since 2022 → AL OBP=.3155 vs NL OBP=.3151, OPS+ comes out identical to the integer either way), so we take the simpler/cleaner unified-MLB convention. Treating international leagues as separate universes prevents nonsensical comparisons (a Hanshin Tigers player's wRC+ being compared to Aaron Judge's).
+**How to apply**:
+- The `league_constants` table is keyed `(league_id, year, level_id)`. For OOTP MLB (`league_id=203`), aggregate across the per-sub_league rows (the dump stores AL and NL as separate rows with `team_id=12` and `team_id=25` respectively in `league_history_*_stats`).
+- For NPB / KBO / KFL etc., each `league_id` keeps its own constants — no cross-league aggregation.
+- Sabermetric derivations join `players_career_*_stats` to `league_constants` on `(level_id, year)` per row (and league_id for international), so a player's MLB rows use MLB constants and his AAA rows use AAA constants automatically.
+- Career rollups across levels are restricted to pure counts (HR, IP, games). Rate-context stats (wRC+, ERA+, etc.) are reported per-level only.
+- MLB-equivalent translations (e.g., AAA→MLB conversion factors à la KATOH/Davenport) are explicitly **out of scope** for the constants module — they're a separate analysis-layer transformation that consumers can apply if desired.
+**Alternatives considered**:
+- AL/NL split per BBR convention — rejected because empirically no-op in this save and adds complexity without precision gain.
+- Aggregate international leagues with US-MLB at the same level_id — rejected because the run environments are unrelated; would distort everyone.
+- Compute one season-aggregate sabermetric across a player's mixed-level rows — rejected because the underlying scales differ between levels (AAA wOBA scale ≠ MLB wOBA scale), making the aggregate statistically meaningless.
