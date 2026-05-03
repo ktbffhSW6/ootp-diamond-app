@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-05 (in-game year 2029) — Phase 2 mid-flight; items 1-3 done (`league_constants` module + warehouse design + 5-layer DDL all built)
+**Last updated**: 2026-05-05 (in-game year 2029) — Phase 2 mid-flight; items 1-4 done (`league_constants` module + warehouse design + 5-layer DDL + `diamond ingest` CLI all built; full --all smoke test in progress)
 
 ---
 
@@ -115,12 +115,12 @@ Per [BACKLOG.md](BACKLOG.md), in priority order:
 3. ~~**Write CREATE TABLE DDL** for L0 + L1 + L2~~ — done 2026-05-05.
    `src/diamond/schema/` package holds all DDL across 5 phases.
    `scripts/smoke_warehouse.py` validates the full pipeline.
-4. **Build `diamond ingest <dump_date>` and `diamond ingest --all` CLI** — next.
-   The schema package's builder functions are the building blocks; this item
-   wires them into a Typer command with checksum-based idempotency tracking
-   in `_diamond_ingests` (per OPEN-7 resolution) and proper file-DB
-   open/close on `<save>/diamond/diamond.duckdb` per Decision D2.
-5. **Smoke test: ingest all 44 dumps end-to-end**.
+4. ~~**Build `diamond ingest <dump_date>` and `diamond ingest --all` CLI**~~ —
+   done 2026-05-05. Wires the schema builders to a per-save file DB at
+   `<save>/diamond/diamond.duckdb` per D2. Skip-if-success logic via the
+   `_diamond_ingests` admin table; flags for `--all`, `--rebuild-only`,
+   `--force`, `--no-rebuild`.
+5. **Smoke test: ingest all 45 dumps end-to-end** — in progress.
 6. **Wire `reconcile.py` as a post-ingest regression check** (per Decision D8).
 7. **Build derived `player_movements` table** from snapshot diffs + `trade_history`.
 

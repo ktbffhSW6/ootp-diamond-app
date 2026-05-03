@@ -53,9 +53,17 @@ def reconcile(
         Path("audit_output/reconciliation_report.md"),
         help="Markdown report output path",
     ),
+    source: str = typer.Option(
+        "csv",
+        help=(
+            "'csv' reads dump CSVs directly (audit-phase mode). 'warehouse' "
+            "reads from <save>/diamond/diamond.duckdb — the post-ingest "
+            "regression check per Decision D8."
+        ),
+    ),
 ) -> None:
     """Reconcile import_export files against derivations from monthly dump CSVs."""
-    reconcile_mod.run(dump=dump, output_path=output)
+    reconcile_mod.run(dump=dump, output_path=output, source=source)
 
 
 @app.command()

@@ -1580,6 +1580,88 @@ def _csv(path: Path) -> str:
     return f"'{path.as_posix()}'"
 
 
+def _connect_warehouse(
+    save: SaveConfig, dump: str | None = None
+) -> duckdb.DuckDBPyConnection:
+    """Open the per-save warehouse DB read-only and create alias views that
+    match the names reconcile.py's FileSpec SQL expects.
+
+    This is the post-ingest regression check entry point per Decision D8 —
+    reconcile.py's per-column derivations run against the L1 warehouse
+    instead of the raw CSVs, catching any drift the ingest pipeline
+    introduces (scope filters, dedup, type coercions).
+
+    The warehouse is ATTACHed read-only so this can run alongside other
+    consumers. Aliases reproduce the CSV-era view names so the FileSpec
+    `derived_cte` SQL doesn't have to change.
+
+    `dump` is accepted for API symmetry with `_connect`, but the warehouse
+    is keyed by dump_date and we always pull from the latest snapshot for
+    state-snapshot tables (event/career tables UPSERT-on-natural-key
+    already prefer latest at L1 build time).
+    """
+    db_path = save.save_dir / "diamond" / "diamond.duckdb"
+    if not db_path.exists():
+        raise FileNotFoundError(
+            f"Warehouse DB not found at {db_path}. "
+            f"Run `diamond ingest --all` first."
+        )
+    con = duckdb.connect()
+    con.execute(f"ATTACH '{db_path.as_posix()}' AS wh (READ_ONLY)")
+
+    # Direct passthrough aliases — L1 event tables match CSV-era shape
+    # closely enough that reconcile.py's SQL Just Works on them.
+    passthrough = {
+        "career_bat":   "wh.players_career_batting_event",
+        "career_pit":   "wh.players_career_pitching_event",
+        "career_field": "wh.players_career_fielding_event",
+        "at_bats":      "wh.at_bats_event",
+        "games":        "wh.games_event",
+        "teams":        "wh.teams",
+        "leagues":      "wh.leagues",
+        "nations":      "wh.nations",
+        "parks":        "wh.parks",
+        "league_history_batting_stats":  "wh.league_history_batting_event",
+        "league_history_pitching_stats": "wh.league_history_pitching_event",
+    }
+    for alias, src in passthrough.items():
+        con.execute(f"CREATE OR REPLACE VIEW {alias} AS SELECT * FROM {src}")
+
+    # State-snapshot tables — filter to the latest dump_date per replace-latest
+    # semantics. Each snapshot's natural key is (entity_id, dump_date), so
+    # WHERE dump_date = MAX(...) gives the current view of each entity.
+    snapshot_latest = {
+        "players":             "wh.players_snapshot",
+        "player_value":        "wh.player_value_snapshot",
+        "contracts":           "wh.contract_snapshot",
+        "contract_extension":  "wh.contract_extension_snapshot",
+        "roster_status":       "wh.roster_status_snapshot",
+    }
+    for alias, src in snapshot_latest.items():
+        con.execute(
+            f"CREATE OR REPLACE VIEW {alias} AS "
+            f"SELECT * EXCLUDE (dump_date) FROM {src} "
+            f"WHERE dump_date = (SELECT MAX(dump_date) FROM {src})"
+        )
+
+    # `scouted_ratings` is special: D12 already filtered scouting_team_id=audit_team_id
+    # and dropped the column at L1. Reconcile.py's existing CTEs reference
+    # `scouting_team_id = 4` as a WHERE — we re-add the column as a constant
+    # so those filters still match (and stay no-ops).
+    con.execute(f"""
+        CREATE OR REPLACE VIEW scouted_ratings AS
+        SELECT * EXCLUDE (dump_date), {save.audit_team_id} AS scouting_team_id
+        FROM wh.players_ratings_snapshot
+        WHERE dump_date = (SELECT MAX(dump_date) FROM wh.players_ratings_snapshot)
+    """)
+
+    # lg_constants_bat / lg_constants_pit — same shape as register_lg_views
+    # produces, but built directly off the L1 league_history_*_event tables
+    # (which we've already aliased to the CSV-era names above).
+    register_lg_views(con)
+    return con
+
+
 def _connect(save: SaveConfig, dump: str) -> duckdb.DuckDBPyConnection:
     con = duckdb.connect()
     csvs = {
@@ -1857,12 +1939,31 @@ def run(
     save: SaveConfig = BUILDING_THE_GREEN_MONSTER,
     dump: str | None = None,
     output_path: Path | None = None,
+    source: str = "csv",
 ) -> Path:
+    """Run per-column reconciliation.
+
+    Args:
+        source: 'csv' (default) reads the dump's CSVs directly via
+                duckdb.read_csv_auto — the original audit-phase mode.
+                'warehouse' reads from <save>/diamond/diamond.duckdb,
+                which is the post-ingest regression check per Decision D8.
+                The warehouse mode catches any drift introduced by the
+                ingest pipeline (scope filters, dedup, type coercions).
+    """
     dump = dump or save.latest_dump_name()
     output_path = output_path or Path("audit_output") / "reconciliation_report.md"
-    console.rule(f"[bold cyan]Reconciliation audit — {save.save_name} / {dump}")
+    src_label = "warehouse" if source == "warehouse" else f"{dump}/csv"
+    console.rule(
+        f"[bold cyan]Reconciliation audit — {save.save_name} / {src_label}"
+    )
 
-    con = _connect(save, dump)
+    if source == "warehouse":
+        con = _connect_warehouse(save, dump)
+    elif source == "csv":
+        con = _connect(save, dump)
+    else:
+        raise ValueError(f"Unknown source: {source!r} (use 'csv' or 'warehouse')")
     results = []
     for spec in ALL_FILES:
         console.print(f"  - {spec.short_name}")

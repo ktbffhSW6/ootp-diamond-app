@@ -33,8 +33,10 @@ players) and documented as such. Safe to design schema.
 
 ### Pipeline
 
-- [ ] Build `diamond ingest <dump_date>` and `diamond ingest --all` CLI commands.
-- [ ] Run a full ingest of all 44 dumps as the smoke test.
+- [x] Build `diamond ingest <dump_date>` and `diamond ingest --all` CLI commands —
+  done 2026-05-05. Plus `--rebuild-only`, `--force`, `--no-rebuild`. Writes to
+  `<save>/diamond/diamond.duckdb` per D2; skip-if-success via `_diamond_ingests`.
+- [ ] Run a full ingest of all 45 dumps as the smoke test — in progress.
 - [ ] Build per-ingest reconciliation report comparing ingest output to source CSVs
   (the `reconcile.py` harness becomes a regression check per D8).
 - [ ] Build derived `player_movements` table from snapshot diffs + `trade_history`.
