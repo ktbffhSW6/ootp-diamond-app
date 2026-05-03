@@ -61,9 +61,13 @@ to proceed. Pick up opportunistically.
   match. Grid-search confirmed hit_xy x-binning doesn't fit; OOTP likely uses
   per-event spray logic involving hit_loc + hit_xy + something else. Open-ended
   research item; current naive bins stay as best approximation.
-- [ ] **Verify 13 unmapped `leader.category` codes** by computing the missing
-  derived stats (RC, wOBA, FIP, SIERA, K%, SV%, QS%, CG%, SHO%, GO/AO) and
-  re-running the matcher.
+- [x] **Verify 13 unmapped `leader.category` codes** — done 2026-05-05.
+  Resolved 11 of 13: 21=RC (Bill James technical w/ IBB-corrected B-factor),
+  22=RC/27, 24=wOBA (calibrated), 26=OPS+/wRC+ (close match, ambiguous formula),
+  31=Win%, 41=Opp_BABIP, 46=HA/9, 51=GF (Games Finished), 53=QS%, 55=CG%,
+  57=GB%. Coverage now 58/60 (97%). Codes 44 (pitching rate ~8-10) and
+  49 (pitching rate ~47-70) remain unidentified — see DATA_NOTES.md for the
+  candidates ruled out. Updated `LeaderCategory` IntEnum in constants.py.
 - [x] **Investigate `Shea Sprague` PIT mismatch** — confirmed 2026-05-05 as
   structurally inaccessible. Exhaustive investigation ruled out rating
   thresholds, position/role, age/experience, rating-talent gaps,

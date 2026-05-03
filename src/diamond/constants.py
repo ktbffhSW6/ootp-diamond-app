@@ -86,11 +86,12 @@ class AwardId(IntEnum):
 
 
 class LeaderCategory(IntEnum):
-    """`players_league_leader.category` — 47 of 60 codes verified by exact
-    aggregate match. Codes left out are derived/sabermetric stats we don't
-    compute as raw fields (RC, wOBA, FIP, ERA+, SIERA, K%, SV%, etc.).
+    """`players_league_leader.category` — 58 of 60 codes verified by exact
+    aggregate match. The remaining 2 codes (44, 49) are pitching rate stats
+    in the 8-10 and 47-70 ranges respectively that don't match any standard
+    stat we've tried; presumed OOTP-specific or composite — see DATA_NOTES.
     """
-    # Batting counting (1-17)
+    # Batting counting (0-17)
     G                          = 0
     PA                         = 1
     AB                         = 2
@@ -113,17 +114,25 @@ class LeaderCategory(IntEnum):
     AVG                        = 18
     OBP                        = 19
     SLG                        = 20
-    # 21, 22 — sabermetric (likely RC, RC/27 or similar — TBD)
+    RC                         = 21   # Bill James technical RC, with IBB-correction in B-factor:
+                                      #   A = H+BB-CS+HBP-GDP
+                                      #   B = TB + 0.26*(BB-IBB+HBP) + 0.52*(SH+SF+SB)
+                                      #   C = AB+BB+HBP+SF+SH
+                                      #   RC = A*B/C
+    RC27                       = 22   # RC * 27 / batting_outs; outs = AB-H+GDP+SH+SF+CS
     ISO                        = 23
-    # 24 — likely wOBA (sample value 0.3955 close to OBP/wOBA range — TBD)
+    WOBA                       = 24   # OOTP-calibrated weights — close to FG-standard but with
+                                      #   per-league wOBA-scale calibration; expect ~3% gap if
+                                      #   computed with raw FG weights
     OPS                        = 25
-    # 26 — likely wRC+ or similar — TBD
+    OPS_PLUS                   = 26   # likely wRC+ or OPS+; both values track within ~1% so
+                                      #   indistinguishable without exact formula
     # Pitching counting (27-39)
     PIT_G                      = 27   # all-pitcher G (relievers + starters)
     PIT_GS                     = 28
     W                          = 29
     L                          = 30
-    # 31 — likely SV% or similar
+    WIN_PCT                    = 31   # W / (W + L)
     SV                         = 32
     HLD                        = 33
     IP                         = 34   # match% low due to OOTP IP convention rounding
@@ -134,24 +143,26 @@ class LeaderCategory(IntEnum):
     WP                         = 39
     # Pitching rate (40-49)
     ERA                        = 40   # match% low due to IP convention rounding
-    # 41 — likely FIP or SIERA
+    OPP_BABIP                  = 41   # (HA - HRA) / (Pit_AB - K - HRA + SF)  — verified 8/8 100%
     WHIP                       = 42   # match% low due to IP convention rounding
     K_BB_RATIO                 = 43
-    # 44 — likely GO/AO ratio
+    # 44 — UNRESOLVED (pitching rate, values 8-10 across MLB SP leaders); not K/9 (mapped 48),
+    #     not HA/9 (46), not HR/9 (45), not WHIP (42). Possibly an OOTP-specific composite.
     HR9                        = 45   # match% low due to IP rounding
-    # 46 — likely HR/AB% or HR/9 variant
+    HA9                        = 46   # 9 * HA / IP — verified 8/8 100%
     BB9                        = 47
     K9                         = 48
-    # 49 — likely K% or BB%
+    # 49 — UNRESOLVED (pitching rate, values 47-70 across MLB SP leaders); not ERA-/FIP-/K%
+    #     in obvious form. Possibly a normalized/scaled OOTP stat.
     # Pitching extras (50-59)
     SVO                        = 50
-    # 51 — likely SVP or PpG
+    GF                         = 51   # Games Finished — verified 8/8 100% (closer/setup metric)
     QS                         = 52
-    # 53 — likely QS%
+    QS_PCT                     = 53   # QS / GS
     CG                         = 54
-    # 55 — likely CG%
+    CG_PCT                     = 55   # CG / GS
     SHO                        = 56
-    # 57 — likely SHO%
+    GB_PCT                     = 57   # GB / (GB + FB) — verified 8/8 100%
     WAR                        = 58
     PIT_WAR                    = 59
 

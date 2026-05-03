@@ -161,6 +161,17 @@ Best-guess mapping based on frequency + avg length + day-to-day rate:
 - **`players_career_*` stints**: when a player plays for multiple teams in one season (trade, recall), they get multiple rows with incrementing `stint`. Sum across stints for season totals.
 - **Trade summaries** in `trade_history.csv` use `<entity:type#id>` tags (e.g., `<Houston Astros:team#12>`, `<Bryan King:player#20728>`) — parseable into structured player/team references.
 - **`players_streak.csv` boundary dups** — `(player_id, league_id, streak_id, started)` has 476 dups in 316K rows (~0.15%), almost all on `streak_id=21`. Pattern is consistent: an ENDED streak (`value=6, has_ended=1, ended=2028-5-22`) co-exists with a NEW ACTIVE streak (`value=3, has_ended=0, ended=NULL`) where the active streak's `started` equals the ended streak's `ended`. So the unique key requires `ended` (or a `COALESCE(ended, '9999-12-31')` sentinel) included. Discovered while resolving SCHEMA OPEN-5 (2026-05-05).
+- **`leader.category` codes 44 and 49 remain unresolved (2026-05-05)** — out of
+  the original 13 unmapped codes, 11 were resolved by computing the missing
+  derived stats (now in `LeaderCategory`); 2 stayed mysterious despite
+  thorough probing. Code 44 has values 8-10 across 8 MLB SP leaders
+  (Skubal=9.24, Peralta=9.91, Yamamoto=9.44, etc.) and is NOT K/9, HA/9,
+  HR/9, BB/9, WHIP, K-BB/9, IP/G, BF/IP, or any obvious composite.
+  Code 49 has values 47-70 across 8 MLB SP leaders (Crochet=66.13,
+  Snell=68.58, Skubal=47.66 in 2027 / 67.19 in 2029) and is NOT ERA-,
+  FIP-, K% (K/BF), or any standard normalized stat. Both are likely
+  OOTP-specific composites or scaled internal stats. Skipped without
+  ranking the matches because we don't want to introduce a guess.
 - **Sprague PIT mismatch — confirmed structurally inaccessible (2026-05-05)**: `individual_pitch_ratings` reconcile shows PIT=2 for Shea Sprague (pid 52253) vs our derived count-of-non-zero-pitch-ratings = 3 (FB=45, CH=40, SL=35). After exhaustive investigation, this is the ONLY mismatch in 220 Sox-org pitchers. Tested and ruled out: rating threshold (≥30/35/40 — many other pitchers have rated=30-35 pitches that DO count); position / role / handedness (same as comparable pitchers); age / experience / career usage; rating-talent gap (Sprague's gap is identical to his FB and CH); rating evolution (SL stable at 35 for 3+ years); `players_pitching.csv` columns (file is empty per OPEN-1); `players.csv` pitch-related cols (only fatigue/strategy, no arsenal flag); other 3-pitch pitchers with identical rating profiles (e.g. Pereira FB=40/CH=35/SL=40) get IE_PIT=3 correctly. Conclusion: OOTP carries an internal "developed pitch" state that is not exposed in any CSV column. The count-non-zero rule is correct for 219/220 = 99.5% of pitchers and stays as our derivation. This is a known 1/220 structural limitation, not a derivation bug.
 
 ## Stat replicability (against `import_export` 20-80 ratings + counting/derived stats)
