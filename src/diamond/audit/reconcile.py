@@ -785,6 +785,11 @@ PITCHING_STATS_2 = FileSpec(
 # Statcast values populated mainly for MLB at-bats (non-MLB at-bats lack EV/LA).
 BATTING_SUPERSTATS_CTE = """
 ab AS (
+    -- Filter to regular-season at-bats (game_type=0) only — IE Statcast cols
+    -- mirror PCB split_id=1 (regular-season-only); including spring training
+    -- (g.game_type=2) and postseason (g.game_type=3) inflates BIP/EV/HHi
+    -- by 5-15% for MLB regulars.
+    --
     -- Join in batter's bats and pitcher's throws so we can decode spray
     -- direction. Switch hitters (bats=3) bat opposite to pitcher's throwing
     -- hand: vs RHP -> bats L, vs LHP -> bats R. hit_xy is a packed 16x16
@@ -805,6 +810,7 @@ ab AS (
             ELSE 'RF'
         END AS spray_zone
     FROM at_bats a
+    JOIN games g ON g.game_id = a.game_id AND g.game_type = 0
     LEFT JOIN players bat ON bat.player_id = a.player_id
     LEFT JOIN players pit ON pit.player_id = a.opponent_player_id
 ),
@@ -829,15 +835,20 @@ agg AS (
                              OR (eff_bats='L' AND spray_zone='LF'))) AS oppo,
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0
                            AND spray_zone IS NOT NULL AND eff_bats IS NOT NULL) AS spray_bip,
-        -- EV buckets — placeholder cutoffs (Soft<85, Avg 85-100, Solid >=100). TBD.
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo < 85) AS soft,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo BETWEEN 85 AND 100) AS avg_ev,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 100) AS solid,
+        -- EV buckets — calibrated against MLB-only Sox players: Soft<75 / Avg 75-95 / Solid>=95.
+        -- (Original Statcast convention is 80/95; OOTP runs a hair lower on the soft cutoff.)
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo > 0 AND exit_velo < 75) AS soft,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 75 AND exit_velo < 95) AS avg_ev,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 95) AS solid,
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 95) AS hhi,
+        -- Barrel — calibrated empirically. OOTP uses a simple flat threshold,
+        -- not Statcast's expanding cone: EV>=100 AND LA in [10..42]. Grid-search
+        -- over the 9 MLB-only Sox starters chose this as the lowest-error fit
+        -- (4/9 exact, 6/9 within ±1).
         COUNT(*) FILTER (
             WHERE result IN (4,5,6,7,8,9) AND sac = 0
-              AND exit_velo >= 98
-              AND launch_angle BETWEEN GREATEST(8, 26-(exit_velo-98)) AND LEAST(50, 30+(exit_velo-98))
+              AND exit_velo >= 100
+              AND launch_angle BETWEEN 10 AND 42
         ) AS bar,
         AVG(exit_velo)    FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0) AS avg_ev_v,
         MAX(exit_velo)    FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0) AS max_ev_v,
@@ -919,12 +930,15 @@ BATTING_SUPERSTATS_1 = FileSpec(
 
 
 # Pitcher Statcast — same metrics but joined via opponent_player_id.
+# Filtered to regular-season at-bats only (game_type=0); EV buckets calibrated
+# to Soft<75 / Med 75-95 / Solid>=95 to match OOTP's IE convention.
 PITCHING_SUPERSTATS_CTE = """
 ab AS (
     SELECT
-        opponent_player_id AS player_id,
-        result, exit_velo, launch_angle, hit_loc, sac
-    FROM at_bats
+        a.opponent_player_id AS player_id,
+        a.result, a.exit_velo, a.launch_angle, a.hit_loc, a.sac
+    FROM at_bats a
+    JOIN games g ON g.game_id = a.game_id AND g.game_type = 0
 ),
 agg AS (
     SELECT
@@ -935,9 +949,10 @@ agg AS (
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle BETWEEN 10 AND 25) AS ld_la,
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle BETWEEN 25 AND 50) AS fb_la,
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle > 50) AS pu_la,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo < 85) AS soft,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo BETWEEN 85 AND 100) AS med_ev,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 100) AS solid,
+        -- EV buckets calibrated 2026-05-04 (75/95 cutoffs match IE far better than 85/100).
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo > 0 AND exit_velo < 75) AS soft,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 75 AND exit_velo < 95) AS med_ev,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 95) AS solid,
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle > 50) AS pu_count,
         AVG(exit_velo) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0) AS avg_ev_v
     FROM ab

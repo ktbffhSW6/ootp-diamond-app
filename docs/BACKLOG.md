@@ -44,8 +44,10 @@
   - G/F (1..N → "EX FB", "FB", "NTRL", "GB", "EX GB") — pitching_ratings/potential
   - Contract auto-renewal flag and dollar formatting (financial_info)
   - Personality "Type" archetype (Captain/Selfish/Humble/Sparkplug/etc.) — derived from 5 traits + scouting_accuracy
-- [ ] **Investigate OOTP's EV-bucket cutoffs** for Soft%/Avg%/Solid% in batting_superstats_1.
-  Current placeholder: <85 / 85-100 / >=100 mph. Per-row diff against IE shows systematic offset.
+- [x] **OOTP EV-bucket cutoffs decoded** (2026-05-04). Soft `<75` / Avg `75-95` / Solid `>=95`. Soft% match jumped 0→60%, Avg% 4→67%, Solid% 7→77% across the full 220 population (9/9 perfect on MLB-only Sox).
+- [x] **OOTP barrel formula decoded** (2026-05-04). Simple flat threshold `EV>=100 AND LA 10..42`, not Statcast's expanding cone. 4/9 exact, 6/9 within ±1 on MLB-only Sox.
+- [x] **Regular-season filter** added to superstats CTEs (2026-05-04). `JOIN games g ON g.game_type=0`. Without this, spring training + postseason events inflate counts by 5-15%.
+- [ ] **Switch superstats BIP denominator from at_bats to PCB** (`AB-K+SF+SH`). At_bats-derived BIP diverges from IE for minor-leaguers whose foreign-league data isn't in our scope. PCB-derived BIP matches IE exactly. Will lift BIP, BAR%, HHi%, Soft%, Avg%, Solid% for multi-level players.
 - [ ] **Decode `pLi`** — career_pit.li doesn't behave as a sum/avg in any obvious way.
 - [ ] **Decode `RA`** in pitching_stats_2 — small int, doesn't match raw `r` or per-9 RA.
 - [ ] **Calibrate `hit_xy` spray boundaries** — basic decode landed 2026-05-03 (`x = floor(hit_xy/16)`, switch hitters use opposite of pitcher.throws). Naive bins (LF=[0,4]/CF=[5,10]/RF=[11,15]) under-count Pull% by ~5–10pp consistently. Either OOTP's x-bin boundaries are different, or `hit_loc` weighs into the spray classification. Investigate: for a known IE Pull% (e.g., Eric Coles 44.1%), grid-search x-boundaries to find the cut that matches, then cross-validate.

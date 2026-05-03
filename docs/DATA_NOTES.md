@@ -438,3 +438,74 @@ last completed season). Likely the file is only written at year end /
 during postseason rollup, so a Nov dump captured before that step has
 no current-year entry. Not a formula issue; treat it as "data not
 available until next dump."
+
+## Statcast superstat calibration (2026-05-04)
+
+Empirical findings from grid-searching against IE values for the 9
+MLB-only single-level Red Sox players (Mayer, Gonzales, Encarnacion,
+Abreu, Anthony, Rafaela, Langeliers, Campbell, Narvaez):
+
+### Regular-season filter
+
+`players_at_bat_batting_stats` includes spring training (`game_type=2`)
+and postseason (`game_type=3`) events. PCB `split_id=1` is regular-season
+only. To match IE, restrict at_bats to `JOIN games g ON g.game_type=0`.
+Without this filter, BIP/EV/HHi inflate by 5-15% for MLB regulars.
+
+### EV bucket cutoffs (Soft / Avg / Solid)
+
+OOTP uses **75 / 95** — *not* the standard Statcast 80/95 split.
+
+| bucket | rule |
+|---|---|
+| Soft% | `0 < exit_velo < 75` |
+| Avg% (Med% on pitching) | `75 ≤ exit_velo < 95` |
+| Solid% | `exit_velo ≥ 95` |
+
+Verified: with these cutoffs, 9/9 Soft% match within 2pp on MLB-only
+Sox players (vs 0/9 with the old 85/100 placeholder).
+
+### Barrel formula
+
+OOTP does NOT use the Statcast expanding-cone definition. The empirical
+best fit is a flat threshold:
+
+```
+exit_velo ≥ 100  AND  launch_angle BETWEEN 10 AND 42
+```
+
+Grid-search on 9 MLB-only Sox players: 4/9 exact, 6/9 within ±1, total
+absolute error 11. The Statcast cone produced total error 32 on the
+same set. (Across the wider 220-player population, the simple formula
+is roughly equivalent to the cone — within 3pp of match% — because
+both formulas match equally poorly for non-MLB players whose at_bat
+data is incomplete.)
+
+### HHi (HardHit)
+
+`exit_velo ≥ 95` — matches IE within 1-2 events for MLB regulars.
+Standard Statcast definition; OOTP uses the same cutoff.
+
+### BIP — use PCB, not at_bats
+
+`AB - K + SF + SH` from `players_career_batting_stats` (level-aware,
+filtered to the right level for the player's primary playing context)
+matches IE BIP exactly for MLB-only players. The at-bat-counted BIP
+will diverge for minor-leaguers whose foreign-league at-bats aren't in
+`players_at_bat_batting_stats`. Future improvement: switch the
+superstats CTE's BIP denominator from at_bats COUNT to PCB-derived.
+
+### What still has structural ceilings
+
+Even with the calibrations above, the Statcast columns can't hit 100%
+across the full 220-player roster because:
+
+1. IE shows stats from the player's *primary* level (typically the
+   highest US-affiliated level reached this season). Multi-level
+   players (called up mid-season) need level-segmented derivations.
+2. `players_at_bat_batting_stats` only covers in-scope leagues
+   (MLB + affiliated minors + KBO + indy). Players who appeared in
+   foreign leagues have incomplete at-bat data. We can't reproduce
+   their IE numbers from the at-bat log alone.
+3. The Pull/Cent/Oppo% x-bin boundaries on `hit_xy` are still off by
+   ~5-10pp consistently — exact OOTP boundary still TBD.
