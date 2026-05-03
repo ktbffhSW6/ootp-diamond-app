@@ -32,6 +32,7 @@ from diamond.schema.l1_snapshot import (
     L1SnapshotSpec,
     build_l1_snapshot,
 )
+from diamond.schema.l2 import build_l2
 from diamond.schema.build import (
     DIAMOND_INGESTS_DDL,
     build_l0,
@@ -54,6 +55,7 @@ __all__ = [
     "L1SnapshotSpec",
     "GENERIC_SNAPSHOTS",
     "build_l1_snapshot",
+    "build_l2",
     "DIAMOND_INGESTS_DDL",
     "build_l0",
     "build_l1_machinery",

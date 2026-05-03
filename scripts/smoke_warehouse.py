@@ -39,6 +39,7 @@ from diamond.schema import (
     build_l1_machinery,
     build_l1_reference,
     build_l1_snapshot,
+    build_l2,
 )
 
 
@@ -349,6 +350,75 @@ def smoke_l1_snapshot(con: duckdb.DuckDBPyConnection, save, console: Console) ->
     return True
 
 
+def smoke_l2(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
+    """Phase E invariants. Returns True on pass."""
+    console.rule("Phase E — L2 facts")
+    rows = build_l2(con, verbose=True)
+
+    if len(rows) != 8:
+        console.print(f"[red]FAIL:[/red] built {len(rows)} L2 facts, expected 8")
+        return False
+    console.print(f"\n[green]✓[/green] all 8 L2 fact tables built")
+
+    # f_player_season_batting must collapse the L1 OOTP-source dups —
+    # row count should be ≤ L1 row count.
+    l1_n = con.execute("SELECT COUNT(*) FROM players_career_batting_event").fetchone()[0]
+    l2_n = rows["f_player_season_batting"]
+    if l2_n > l1_n:
+        console.print(
+            f"[red]FAIL:[/red] f_player_season_batting={l2_n} > "
+            f"L1 source={l1_n}"
+        )
+        return False
+    if l2_n == l1_n:
+        console.print(
+            f"[yellow]Note:[/yellow] f_player_season_batting == L1 row count "
+            f"({l2_n}) — no dup collapse occurred"
+        )
+    else:
+        console.print(
+            f"[green]✓[/green] f_player_season_batting collapsed L1 dups: "
+            f"{l1_n:,} → {l2_n:,} ({l1_n - l2_n} rows removed)"
+        )
+
+    # f_pa_event must have year/league_id/level_id populated for every row
+    # (the dim flatten contract)
+    null_dim = con.execute("""
+        SELECT COUNT(*) FROM f_pa_event
+        WHERE year IS NULL OR league_id IS NULL OR level_id IS NULL
+    """).fetchone()[0]
+    if null_dim > 0:
+        console.print(
+            f"[red]FAIL:[/red] f_pa_event has {null_dim} rows with NULL dims"
+        )
+        return False
+    console.print(
+        f"[green]✓[/green] f_pa_event dim flatten complete (year, league_id, level_id all populated)"
+    )
+
+    # Sanity: f_player_career row count should match scoped player count
+    n_career = rows["f_player_career"]
+    n_scoped = con.execute("SELECT COUNT(*) FROM _scoped_players").fetchone()[0]
+    if n_career > n_scoped:
+        console.print(
+            f"[red]FAIL:[/red] f_player_career={n_career} > _scoped_players={n_scoped}"
+        )
+        return False
+    console.print(
+        f"[green]✓[/green] f_player_career has {n_career:,} rows "
+        f"(of {n_scoped:,} scoped players — others have no career stats yet)"
+    )
+
+    # Idempotency
+    rows_2 = build_l2(con, verbose=False)
+    if rows != rows_2:
+        console.print("[red]FAIL:[/red] L2 rebuild changed row counts")
+        return False
+    console.print("[green]✓[/green] L2 rebuild is idempotent")
+
+    return True
+
+
 def main() -> int:
     console = Console()
     save = BUILDING_THE_GREEN_MONSTER
@@ -364,6 +434,8 @@ def main() -> int:
     if not smoke_l1_event(con, console):
         return 1
     if not smoke_l1_snapshot(con, save, console):
+        return 1
+    if not smoke_l2(con, console):
         return 1
 
     console.rule("[bold green]All smoke tests passed[/bold green]")
