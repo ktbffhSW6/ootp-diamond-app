@@ -14,6 +14,11 @@ scouted-ratings-only rule that's enforced at the L0→L1 boundary.
 """
 
 from diamond.schema.l0 import L0_CATALOG, L0_SKIP, L0Spec
+from diamond.schema.l1_reference import (
+    L1_REFERENCE_TABLES,
+    L1RefSpec,
+    build_l1_reference,
+)
 from diamond.schema.build import (
     DIAMOND_INGESTS_DDL,
     build_l0,
@@ -27,8 +32,11 @@ __all__ = [
     "L0_CATALOG",
     "L0_SKIP",
     "L0Spec",
+    "L1_REFERENCE_TABLES",
+    "L1RefSpec",
     "DIAMOND_INGESTS_DDL",
     "build_l0",
+    "build_l1_reference",
     "dump_name_to_date",
     "init_admin_tables",
     "record_ingest_done",
