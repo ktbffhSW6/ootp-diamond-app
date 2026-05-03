@@ -69,3 +69,10 @@
 **Decision**: Project context lives in `docs/PROJECT_STATUS.md`, `docs/DECISIONS.md`, `docs/DATA_NOTES.md`, `docs/BACKLOG.md`. These are committed to the repo and updated as work progresses.
 **Why**: TodoWrite is session-scoped and not visible to the user. Long-running engineering project across many sessions needs a persistent, version-controlled record of state, decisions, and discoveries.
 **How to apply**: Read PROJECT_STATUS at session start. Append to DECISIONS / DATA_NOTES as new ones emerge. Keep BACKLOG current.
+
+## D10 — Audit-first: complete reconciliation before any schema/ingest design
+
+**Date**: 2026-05-02
+**Decision**: Finish the full audit phase (all 21 import_export files reconciled, all integer codebooks decoded, all data quirks documented) BEFORE designing the warehouse schema or building the ingest pipeline. No schema/DDL work begins until reconciliation is comprehensive.
+**Why**: User explicit instruction — "Let's make sure that the data scope is crystal clear and we have everything reconciled before we start building anything including schema." Schema decisions baked in before reconciliation can lock in the wrong assumptions; the cost of a redesign once tables exist (and contain data from 44 monthly dumps) is much higher than finishing the audit.
+**How to apply**: Resist the temptation to start schema work even when "we have enough proof now that derivations work." Direct any schema design ideas to BACKLOG instead. Continue audit work in priority order: reconcile remaining 16 import_export files → DEF formula → rounding edges → AS gap → trade summary parsing.

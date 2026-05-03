@@ -17,13 +17,12 @@ building the ingest pipeline.
 ## What works today
 
 - **Project skeleton**: Python 3.14 + DuckDB + Polars + Typer, package at `src/diamond/`, editable install via `pip install -e .[dev]`
-- **CLI commands**: `diamond decode`, `diamond reconcile`, `diamond coverage`, `diamond advanced`
-- **Codebook decoder** ([src/diamond/audit/decode.py](src/diamond/audit/decode.py)) — empirically discovers OOTP integer-code meanings. Verified codebooks live in [src/diamond/constants.py](src/diamond/constants.py):
-  - `GameType` (REGULAR_SEASON, SPRING, POSTSEASON, etc.)
-  - `SplitId` (OVERALL, VS_LHP, VS_RHP, POSTSEASON)
-  - `AtBatResult` (STRIKEOUT, WALK, GROUND_OUT, FLY_OUT, 1B, 2B, 3B, HR, HBP, CI) — verified by exact aggregate match (events sum to total PA)
+- **CLI commands**: `diamond decode`, `diamond decode-codes`, `diamond reconcile`, `diamond coverage`, `diamond advanced`
+- **Codebook decoder** ([src/diamond/audit/decode.py](src/diamond/audit/decode.py) + [decode_codes.py](src/diamond/audit/decode_codes.py)) — empirically discovers OOTP integer-code meanings. Verified codebooks live in [src/diamond/constants.py](src/diamond/constants.py):
+  - **First pass** (at-bat domain): `GameType`, `SplitId`, `AtBatResult` — all verified by exact aggregate match
+  - **Second pass** (awards/leaders/streaks/injuries): `AwardId` (13 codes, cross-ref'd with league_history), `LeaderCategory` (47 of 60 cleanly matched), `StreakId` (21 codes profiled), `BodyPart` (12 codes profiled)
 - **Reconciliation harness** ([src/diamond/audit/reconcile.py](src/diamond/audit/reconcile.py)) — per-column comparison of `import_export` Red Sox roster CSVs against derivations from monthly dump CSVs. **90 of 97 columns reconcile (93%)** across 5 of 21 files.
-- **Coverage audit** ([src/diamond/audit/coverage.py](src/diamond/audit/coverage.py)) — profiles dump CSVs supporting 11 user-facing features.
+- **Coverage audit** ([src/diamond/audit/coverage.py](src/diamond/audit/coverage.py)) — profiles dump CSVs supporting 11 user-facing features (standings, playoffs, awards, leaders, streaks, HOF, movements, records, all-stars, league history, injuries).
 - **Advanced stats library** ([src/diamond/advanced/](src/diamond/advanced/)) — 5 tiers of modern advanced stats from at-bat data (~25 metrics):
   - `league_constants.py` — per-league-year linear weights, FIP const, lgERA (verified against real MLB norms)
   - `enriched.py` — reusable at-bat view with bip/risp/late-close/spray flags
@@ -49,15 +48,23 @@ Files audited: 5 of 21 (`batting_stats_1`, `batting_stats_2`, `pitching_stats_1`
 | `fielding_stats` | 12/12 | **perfect** |
 | `batting_ratings` | 17/18 | all 16 batting skill ratings 100% on 20-80 scale; only DEF formula outstanding |
 
-Latest reports: [audit_output/reconciliation_report.md](audit_output/reconciliation_report.md), [audit_output/coverage_report.md](audit_output/coverage_report.md), [audit_output/decoder_report.md](audit_output/decoder_report.md).
+Latest reports (audit_output/ — gitignored, regenerate with the CLI commands):
+- [decoder_report.md](audit_output/decoder_report.md) — `diamond decode`
+- [codes_decoder_report.md](audit_output/codes_decoder_report.md) — `diamond decode-codes`
+- [reconciliation_report.md](audit_output/reconciliation_report.md) — `diamond reconcile`
+- [coverage_report.md](audit_output/coverage_report.md) — `diamond coverage`
+- [advanced_stats_report.md](audit_output/advanced_stats_report.md) — `diamond advanced`
 
-## What's most likely next
+## What's next (per user direction)
 
-Pick one of:
-1. **Decode the three pending codebooks** (`award_id`, `category`, `streak_id`) — same empirical approach as before; quick.
-2. **Finish reconciliation of remaining 16 `import_export` files** — mechanical now.
-3. **Add park factor integration** to OPS+/ERA+ (currently park-neutral). Park data already in `parks.csv` (avg, hr, etc.).
-4. **Custom WAR** — combines wRAA + dWAR vs replacement-level baseline. Needs replacement-level definition.
-5. **Move to schema & ingest phase** — design the L0-L4 warehouse layers and build the monthly-dump ingest pipeline. We have enough proof now that derivations work.
+User has chosen to **finish the audit phase before any schema/ingest design**.
+Audit completion order from [BACKLOG.md](BACKLOG.md):
 
-See [BACKLOG.md](BACKLOG.md) for the full list.
+1. **NEXT**: Reconcile the remaining **16 `import_export` files** — mechanical now that the framework exists. Will surface remaining quirks (potential ratings, individual pitch types, position ratings, financial info, popularity, personality/morale).
+2. Investigate the **DEF rating formula** (last G-tier hole)
+3. Resolve small rounding edges (OPS 79%, HR/9 95%, K/9 91%, pitching WAR 84%) — confirm not derivation bugs
+4. Investigate the **All-Star 2029 gap** + verify HOF induction year via awards
+5. Decode `<entity:type#id>` tags in `trade_history.summary` for structured movement parsing
+6. Bonus: verify the 13 unmapped `LeaderCategory` codes by computing the missing sabermetric stats (RC, wOBA, FIP, SIERA, K%, SV%, QS%, CG%, SHO%, GO/AO) and re-running the matcher
+
+After full reconciliation: schema design + ingest pipeline (per the L0-L4 layers sketch from earlier sessions).
