@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-05 (in-game year 2029) — **Phase 2 closed**. All 7 items complete: warehouse built, ingest pipeline live, full --all ingest verified (45 dumps, 3.9 GB), reconcile harness wired to L1, `player_movements` shipping. UI/product design captured in [UI_DESIGN.md](UI_DESIGN.md) + decisions D13/D14/D15. **Phase 3 (UI implementation) is the next phase.**
+**Last updated**: 2026-05-06 (in-game year 2029→2030) — **Phase 2 closed**. All 7 items complete: warehouse built, ingest pipeline live, full --all ingest verified (45 dumps, 5.1 GB), reconcile harness wired to L1, `player_movements` shipping with **trade attribution** (1,270 of 1,275 participants resolved via the new `f_trade_participant` table, 99.6%). UI/product design captured in [UI_DESIGN.md](UI_DESIGN.md) + decisions D13/D14/D15. Audit modules de-hardcoded the season year so reconcile/coverage/advanced auto-track the in-game calendar. **Phase 3 (UI implementation) is the next phase.**
 
 ---
 
@@ -56,6 +56,7 @@ warehouse and build the ingest pipeline.
   - L1: 12 reference + 35 event + 21 state-snapshot + 6 `_current` views + 2 machinery (`_scoped_*`) + 1 admin (`_diamond_ingests`)
   - L2: 8 facts (`f_player_season_batting/pitching/fielding`, `f_player_career`,
     `f_team_season`, `f_league_season`, `f_pa_event`, `f_award_event`)
+  - L3: 2 derived (`f_trade_participant`, `player_movements` w/ `trade_id`)
 - **Empirical scripts retained** in `scripts/` — `xstats_eda.py` and
   `xstats_3d.py` are the evidence behind the structural-limit D-tier verdict
   on xBA/xSLG/xwOBA. Rerun rather than re-investigate.
@@ -127,8 +128,13 @@ Per [BACKLOG.md](BACKLOG.md), in priority order:
    byte-identical to CSV-source mode (D8 contract satisfied).
 7. ~~**Build derived `player_movements` table**~~ — done 2026-05-05.
    `src/diamond/schema/l3.py` with snapshot-diff + draft sources.
-   95,643 movements built from 45 dumps. Trade attribution deferred until
-   `trade_history.summary` parser lands (audit carry-forward).
+   95,643 movements built from 45 dumps. Trade attribution shipped
+   2026-05-06: `f_trade_participant` (1,275 rows, 1 per trade × player)
+   plus a `trade_id` column on `player_movements`. Match logic uses
+   org-rolled-up from/to teams (parent_team_id rollup) + ±60-day window.
+   Coverage 99.6% of trade participants; 100% of trades have ≥1 matched
+   player. The `<entity:type#id>` summary parser stays carry-forward
+   (lower priority now that the structured columns covered the use case).
 
 **Phase 2 closed.** Phase 3 (UI implementation) is the next phase, per
 [UI_DESIGN.md](UI_DESIGN.md). Eleven items in build order: scope
@@ -136,6 +142,6 @@ expansion → glossary → player page → demotion/promotion → leaderboards �
 universes+charts → AI overlay → cockpit → reviews → wizard → sync.
 
 Open audit carry-forward items (non-blocking, can pick up opportunistically):
-multi-level OPS+/ERA+ park weighting, hit_loc-based spray, 13 unmapped
-LeaderCategory codes, Sprague PIT edge case, trade_history `<entity:type#id>`
-tag parsing, personality archetype "Type." All in BACKLOG.md.
+multi-level OPS+/ERA+ park weighting, hit_loc-based spray, leader category
+codes 44 + 49, trade_history `<entity:type#id>` summary parsing,
+personality archetype "Type." All in BACKLOG.md.

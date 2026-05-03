@@ -318,15 +318,26 @@ f_player_season_advanced     (player_id, year, league_id, level_id) PK
                               + RF/9 (fielding), RE24 exposure, etc.
                               [the formulas already live in src/diamond/advanced/*]
 
-player_movements             (player_id, dump_date_observed, movement_type, from_team_id,
-                              to_team_id, from_level_id, to_level_id, source) PK?
+f_trade_participant          (trade_id, player_id) PK = (trade_id, player_id)
+                              Long-format trade roster: 1 row per (trade × player).
+                              Pivots `trade_event`'s 20 player_id_X_Y columns
+                              into a long table with from_org_id / to_org_id /
+                              side. 1,275 rows for 445 trades in the current save.
+
+player_movements             (movement_id PK, player_id, dump_date_observed,
+                              movement_type, from_team_id, to_team_id,
+                              from_level_id, to_level_id, source, draft_*,
+                              trade_id)
                               Built from:
                                 (1) successive players_snapshot diffs (team_id changes,
                                     level_id transitions, retired flag turning on)
-                                (2) trade_history.summary parse (where the entity
-                                    tags <player:type#id> can be read — a parser is
-                                    on the audit carry-forward list)
-                                (3) draft picks (from players.draft_* fields)
+                                (2) draft picks (from players.draft_* fields)
+                                (3) trade attribution: LEFT JOIN to f_trade_participant
+                                    on (player_id, org-rolled-up from_team, to_team,
+                                    ±60-day window). 99.6% of trade participants resolve.
+                              Trade summary <entity:type#id> tag parsing remains
+                              a carry-forward audit item (lower priority since
+                              attribution succeeds without it).
 
 f_award_career               (player_id, award_id) + count, years_won list
 
@@ -506,6 +517,7 @@ of drift bugs.
      determined by build order in the ingest pipeline, not by prefix.
    - **No prefix** for L3 reference-shaped or movement-event tables:
      `league_constants`, `park_factors`, `player_movements`, `streak_history`.
+     **`f_` prefix** for L3 fact-grain tables: `f_trade_participant`.
      These are dimension- or event-shaped, not fact-shaped, so `f_` would
      mislead.
    - `v_*` — L4 query-time views.

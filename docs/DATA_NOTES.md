@@ -720,3 +720,49 @@ xERA was not separately probed but expected to behave identically
 
 EDA scripts retained at `scripts/xstats_eda.py` and `scripts/xstats_3d.py`
 as the empirical evidence behind this finding.
+
+## Trade attribution semantics (2026-05-06)
+
+Findings while wiring `trade_event` to `player_movements.trade_id` via
+the new `f_trade_participant` long-format roster (1,275 rows = 445 trades
+× ~2.9 players each).
+
+**Trade-event shape.** `trade_event` is one row per trade with up to 10
+player slots per side (`player_id_0_0..9`, `player_id_1_0..9`), plus 5
+draft-pick and cash/IAFA-cap slots per side. `message_id` is unique per
+trade and is the canonical `trade_id`. Empirically max non-zero player
+slots used = 5 per side (so the 10-slot allocation is generous).
+
+**Org rollup is required.** Trade rows record `team_id_0` / `team_id_1`
+at MLB-org level (e.g., 4 = Boston). But the snapshot may show the
+player on a farm team (e.g., 35 = Worcester, parent_team_id=4). The
+attribution join therefore rolls farm team_ids up to their MLB parent
+via `COALESCE(NULLIF(parent_team_id, 0), team_id)` and matches at the
+org level on both sides.
+
+**Dump-date label vs. capture time.** Dumps are labeled with the 1st of
+the month (sortable identifier per `dump_name_to_date`) but the OOTP
+export captures end-of-month state. So a trade dated June 29 typically
+shows up in the dump labeled June 1 — i.e., **before** the trade in
+calendar order. Attribution uses a ±60-day window around
+`dump_date_observed` to handle this.
+
+**Coverage.** With both-side org match + ±60-day window:
+- 1,270 of 1,275 trade participants (99.6%) attributed.
+- 100% of trades have ≥1 matched player.
+- 1,270 of 50,796 `team_change` rows (2.5%) carry a `trade_id` —
+  the rest are intra-org promotions/demotions, waiver claims, etc.
+
+**The 5 residual misses** are all "DFA-paired" or "release-immediately-
+after-trade" patterns: player appears in a trade roster, but the
+snapshot diff shows the matching team_change as `released → signed`
+instead of `team_change`. Examples: Sammy Peralta (trade_id=13520),
+Hunter Stratton (trade_id=4151), Brock Burke (trade_id=11158), Ron
+Marinaccio (trade_id=4132), Ryan King (trade_id=2247). Not worth
+chasing for v1; the trades themselves are still all surfaced via
+`f_trade_participant`.
+
+**The `<entity:type#id>` summary parser** is now lower priority — the
+structured columns covered the use case for movement attribution.
+Reserve the parser for richer narrative surfaces (3-team trade
+storytelling, draft-pick / cash flow visualization, AI summary copy).

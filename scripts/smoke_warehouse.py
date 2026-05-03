@@ -40,6 +40,7 @@ from diamond.schema import (
     build_l1_reference,
     build_l1_snapshot,
     build_l2,
+    build_l3,
 )
 
 
@@ -419,6 +420,77 @@ def smoke_l2(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
     return True
 
 
+def smoke_l3(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
+    """Phase F invariants (L3 derived).
+
+    With a single dump the full snapshot-diff of `player_movements` only
+    yields `first_appearance` rows (no LAG predecessor exists), so the
+    invariant set is light:
+
+      - f_trade_participant builds with PK enforced
+      - player_movements builds and contains the trade_id column
+      - All team_change rows with trade_id resolve to a real f_trade_participant
+        entry (referential consistency)
+      - L3 rebuild is idempotent
+    """
+    console.rule("Phase F — L3 derived")
+    rows = build_l3(con, verbose=True)
+
+    # f_trade_participant: every row should map to a real trade_event
+    n_orphans = con.execute("""
+        SELECT COUNT(*) FROM f_trade_participant tp
+        WHERE NOT EXISTS (
+            SELECT 1 FROM trade_event te WHERE te.message_id = tp.trade_id
+        )
+    """).fetchone()[0]
+    if n_orphans:
+        console.print(
+            f"[red]FAIL:[/red] {n_orphans} f_trade_participant rows lack "
+            f"a matching trade_event"
+        )
+        return False
+    console.print(
+        "[green]✓[/green] f_trade_participant rows all resolve to trade_event"
+    )
+
+    # player_movements has the trade_id column
+    # PRAGMA table_info row shape: (cid, name, type, notnull, dflt_value, pk)
+    cols = {r[1] for r in con.execute("PRAGMA table_info(player_movements)").fetchall()}
+    if "trade_id" not in cols:
+        console.print("[red]FAIL:[/red] player_movements missing trade_id column")
+        return False
+    console.print("[green]✓[/green] player_movements has trade_id column")
+
+    # Every non-null trade_id in player_movements must reference a real trade
+    n_orphan_attrib = con.execute("""
+        SELECT COUNT(*) FROM player_movements pm
+        WHERE pm.trade_id IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM f_trade_participant tp
+              WHERE tp.trade_id = pm.trade_id AND tp.player_id = pm.player_id
+          )
+    """).fetchone()[0]
+    if n_orphan_attrib:
+        console.print(
+            f"[red]FAIL:[/red] {n_orphan_attrib} player_movements rows have "
+            f"trade_id without matching f_trade_participant entry"
+        )
+        return False
+    console.print(
+        "[green]✓[/green] all player_movements.trade_id values resolve to "
+        "f_trade_participant"
+    )
+
+    # Idempotency
+    rows_2 = build_l3(con, verbose=False)
+    if rows != rows_2:
+        console.print("[red]FAIL:[/red] L3 rebuild changed row counts")
+        return False
+    console.print("[green]✓[/green] L3 rebuild is idempotent")
+
+    return True
+
+
 def main() -> int:
     console = Console()
     save = BUILDING_THE_GREEN_MONSTER
@@ -436,6 +508,8 @@ def main() -> int:
     if not smoke_l1_snapshot(con, save, console):
         return 1
     if not smoke_l2(con, console):
+        return 1
+    if not smoke_l3(con, console):
         return 1
 
     console.rule("[bold green]All smoke tests passed[/bold green]")

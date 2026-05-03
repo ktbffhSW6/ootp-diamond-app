@@ -43,8 +43,16 @@ players) and documented as such. Safe to design schema.
   done 2026-05-05. `--source warehouse` flag; output byte-identical to CSV mode.
 - [x] Build derived `player_movements` table from snapshot diffs + `trade_history` —
   done 2026-05-05. `src/diamond/schema/l3.py` first L3 table. 95,643 movements
-  across 45 dumps. Trade attribution deferred until trade_history.summary
-  parser lands (audit carry-forward).
+  across 45 dumps.
+- [x] **Trade attribution on `player_movements`** — done 2026-05-06.
+  Added `f_trade_participant` (long-format trade roster, 1,275 rows) and a
+  `trade_id` column on `player_movements` populated via org-rolled-up
+  from/to-team match + ±60-day window. Coverage: 1,270/1,275 trade
+  participants (99.6%) attributed to their trade; all 445 trades have ≥1
+  matched player; the 5 residuals are DFA-paired/release-after-trade
+  edge cases. The `<entity:type#id>` summary parser remains a separate
+  carry-forward item — structured columns covered the use case without
+  it.
 
 **Phase 2 (Schema & Ingest) closed.** Move on to UI phase.
 
@@ -75,8 +83,12 @@ to proceed. Pick up opportunistically.
   internal and not exposed in any dump column. Permanent 1/220 (99.5%
   match) limitation; count-non-zero rule stays. Full investigation logged
   in DATA_NOTES.md.
-- [ ] **Decode `<entity:type#id>` tags** in `trade_history.summary` for structured
-  movement parsing (`<Houston Astros:team#12>`, `<Bryan King:player#20728>`).
+- [ ] **Decode `<entity:type#id>` tags** in `trade_history.summary` for richer
+  structured parsing (`<Houston Astros:team#12>`, `<Bryan King:player#20728>`).
+  Lower priority now that trade attribution lands without it (99.6%
+  participant coverage from structured columns alone). Useful for
+  surfacing 3-team trade narrative, draft-pick / cash / IAFA flows, and
+  PR copy generation.
 - [ ] **Personality "Type" archetype** (Captain/Selfish/Humble/Sparkplug/etc.) —
   derived from 5 traits + scouting accuracy; out of scope for v1.
 

@@ -1,6 +1,11 @@
 """L3 derived tables — model-driven analytical surfaces built on L1 + L2.
 
-This module currently exposes only `player_movements` (Phase 2 / item 7).
+Currently exposes:
+
+  - f_trade_participant   long-format trade roster, 1 row per (trade × player)
+  - player_movements      timeline of every team change, attributed to trades
+                          where applicable
+
 Future L3 builders that will live here:
 
   - park_factors                    — halved-park-factor materialization
@@ -11,6 +16,9 @@ Future L3 builders that will live here:
 
 Build pattern: L3 tables are full DROP/CREATE on every ingest (cheap; the
 warehouse fits in memory). They depend on L1 / L2 already being current.
+
+Build order matters: `f_trade_participant` must build before
+`player_movements`, because the latter LEFT JOINs to it for trade attribution.
 """
 
 from __future__ import annotations
@@ -19,6 +27,77 @@ import duckdb
 from rich.console import Console
 
 console = Console()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# f_trade_participant
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _build_f_trade_participant(con: duckdb.DuckDBPyConnection) -> int:
+    """Long-format roster of every player who changed hands in a trade.
+
+    `trade_event` stores each trade as one wide row with up to 10 player
+    slots per side (`player_id_0_0..9`, `player_id_1_0..9`). This pivots
+    that into one row per (trade × player), making downstream joins
+    straightforward — particularly the `trade_id` attribution back into
+    `player_movements`.
+
+    Schema:
+        trade_id     BIGINT  — `trade_event.message_id` (one per trade)
+        trade_date   DATE
+        player_id    BIGINT
+        from_org_id  BIGINT  — MLB-level team the player was traded FROM
+        to_org_id    BIGINT  — MLB-level team the player was traded TO
+        side         INTEGER — 0 (was on team_id_0) or 1 (was on team_id_1)
+
+    PK = (trade_id, player_id). Each player appears on at most one side
+    of a given trade.
+
+    Cash, draft picks, and IAFA cap are intentionally excluded — this is
+    the *player*-participant surface. Add `f_trade_pick` etc. later if
+    we ever want pick-flow analysis.
+    """
+    con.execute("""
+        CREATE OR REPLACE TABLE f_trade_participant AS
+        WITH side_0 AS (
+            SELECT
+                message_id  AS trade_id,
+                date        AS trade_date,
+                team_id_0   AS from_org_id,
+                team_id_1   AS to_org_id,
+                CAST(0 AS INTEGER) AS side,
+                player_id
+            FROM trade_event,
+                 UNNEST([
+                     player_id_0_0, player_id_0_1, player_id_0_2, player_id_0_3,
+                     player_id_0_4, player_id_0_5, player_id_0_6, player_id_0_7,
+                     player_id_0_8, player_id_0_9
+                 ]) AS t(player_id)
+            WHERE player_id > 0
+        ),
+        side_1 AS (
+            SELECT
+                message_id, date,
+                team_id_1, team_id_0,
+                CAST(1 AS INTEGER),
+                player_id
+            FROM trade_event,
+                 UNNEST([
+                     player_id_1_0, player_id_1_1, player_id_1_2, player_id_1_3,
+                     player_id_1_4, player_id_1_5, player_id_1_6, player_id_1_7,
+                     player_id_1_8, player_id_1_9
+                 ]) AS t(player_id)
+            WHERE player_id > 0
+        )
+        SELECT * FROM side_0
+        UNION ALL
+        SELECT * FROM side_1
+    """)
+    con.execute(
+        "ALTER TABLE f_trade_participant ADD PRIMARY KEY (trade_id, player_id)"
+    )
+    return con.execute("SELECT COUNT(*) FROM f_trade_participant").fetchone()[0]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -41,10 +120,22 @@ def _build_player_movements(con: duckdb.DuckDBPyConnection) -> int:
          imported draftees (HoF members, historical legends) and in-save
          draft classes.
 
-    Trade attribution is intentionally deferred — the trade_history.summary
-    parser is on the audit carry-forward list. Once the parser exists,
-    `player_movements` can be left-joined to `trade_event` to attribute
-    `team_change` rows to specific trades.
+    Trade attribution: `team_change` rows are LEFT JOINed to
+    `f_trade_participant` and stamped with a `trade_id` when the player +
+    org-level from/to teams + a near-window date all line up. ~2.5% of
+    `team_change` rows resolve to a trade (the rest are intra-org promotions
+    / demotions); ~99.8% of trade participants get matched on the trade
+    side. Three structural caveats:
+
+      - Org match uses `parent_team_id` to roll AAA/AA/A/etc. teams up to
+        their MLB parent, since trades are recorded at MLB-org level but
+        the actual player snapshot may show a farm-team `team_id`.
+      - Window is ±60 days around `dump_date_observed`. Dumps are labeled
+        with the 1st of the month but capture end-of-month state, so a
+        trade on the 30th typically shows up in the dump labeled the 1st
+        of that same month.
+      - `trade_id` is `NULL` for non-trade `team_change` rows
+        (waiver claims, releases, intra-org moves).
 
     Level lookup: joins `teams` on `team_id` to read the `level` column,
     yielding `from_level_id` and `to_level_id` for downstream filtering
@@ -142,17 +233,65 @@ def _build_player_movements(con: duckdb.DuckDBPyConnection) -> int:
                 d.draft_overall_pick
             FROM draft_first_seen d
             LEFT JOIN teams tt ON tt.team_id = d.draft_team_id
+        ),
+        all_movements AS (
+            SELECT * FROM snapshot_movements
+            UNION ALL
+            SELECT * FROM draft_movements
+        ),
+        -- Roll farm-team team_ids up to their MLB-org team_id for trade matching.
+        -- A trade between Boston (4) and Cleveland (10) moves players whose
+        -- snapshot may show them on Worcester (35, parent=4) or Akron etc.
+        team_orgs AS (
+            SELECT team_id,
+                   COALESCE(NULLIF(parent_team_id, 0), team_id) AS org_id
+            FROM teams
+        ),
+        -- LEFT JOIN team_change rows to f_trade_participant; pick the
+        -- single best-matching trade (closest by date) when there's any
+        -- ambiguity. Org-rolled from-team and to-team must both line up
+        -- with the trade sides; observation must be within 60 days of
+        -- the trade date (dumps label as 1st-of-month but capture
+        -- end-of-month state, so a trade on the 30th of a month shows
+        -- up in the dump labeled the 1st of that same month).
+        attributed AS (
+            SELECT
+                m.*,
+                tp.trade_id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY m.player_id, m.dump_date_observed,
+                                 m.from_team_id, m.to_team_id
+                    ORDER BY ABS(tp.trade_date - m.dump_date_observed) NULLS LAST
+                ) AS _rn
+            FROM all_movements m
+            LEFT JOIN team_orgs fo ON fo.team_id = m.from_team_id
+            LEFT JOIN team_orgs t_ ON t_.team_id = m.to_team_id
+            LEFT JOIN f_trade_participant tp
+                   ON m.movement_type = 'team_change'
+                  AND tp.player_id    = m.player_id
+                  AND tp.from_org_id  = fo.org_id
+                  AND tp.to_org_id    = t_.org_id
+                  AND tp.trade_date BETWEEN m.dump_date_observed - INTERVAL '60' DAY
+                                        AND m.dump_date_observed + INTERVAL '60' DAY
         )
         SELECT
             ROW_NUMBER() OVER (
                 ORDER BY player_id, dump_date_observed, source
             ) AS movement_id,
-            *
-        FROM (
-            SELECT * FROM snapshot_movements
-            UNION ALL
-            SELECT * FROM draft_movements
-        ) all_movements
+            player_id,
+            dump_date_observed,
+            movement_type,
+            from_team_id,
+            to_team_id,
+            from_level_id,
+            to_level_id,
+            source,
+            draft_year,
+            draft_round,
+            draft_overall_pick,
+            trade_id
+        FROM attributed
+        WHERE _rn = 1
     """)
     con.execute(
         "ALTER TABLE player_movements ADD PRIMARY KEY (movement_id)"
@@ -170,13 +309,25 @@ def build_l3(
     *,
     verbose: bool = True,
 ) -> dict[str, int]:
-    """Build all L3 derived tables. Currently only `player_movements`.
+    """Build all L3 derived tables.
 
-    Requires L1 (players_snapshot, teams) to be present.
+    Build order:
+      1. f_trade_participant   (from trade_event)
+      2. player_movements      (LEFT JOINs to f_trade_participant for trade_id)
+
+    Requires L1 (players_snapshot, teams, trade_event) to be present.
 
     Returns dict of `{l3_table_name: row_count}`.
     """
     rows: dict[str, int] = {}
+
+    n = _build_f_trade_participant(con)
+    rows["f_trade_participant"] = n
+    if verbose:
+        console.print(
+            f"  [green]✓[/green] f_trade_participant             "
+            f"[dim]{n:>10,} rows  PK=(trade_id, player_id)[/dim]"
+        )
 
     n = _build_player_movements(con)
     rows["player_movements"] = n
