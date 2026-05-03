@@ -62,7 +62,7 @@ When adding a new `FileSpec`:
 
 - **Don't filter by `team_id`.** IE roster files show each player's *full season* totals (including stints on prior orgs and short-season stops). The standard pattern is `WHERE year = 2029 AND split_id = 1` — no team filter.
 - Fielding stats use `split_id = 0` (no platoon split for fielding).
-- Player ratings (`scouted_ratings`) need `WHERE scouting_team_id = 4 AND league_id = 203` to take the Red Sox's view of every player.
+- Player ratings (`scouted_ratings`) need `WHERE scouting_team_id = 4` to take the Red Sox's view of every player. Don't add a `league_id` filter — each player has exactly 1 row at team=4 across all leagues, and adding a league filter restricts the audit to MLB only (24 of 220 IE rows).
 - Use `overall_rating` / `talent_rating` (already 20-80) — **never** the raw `overall` / `talent` fields (0-200 internal scale). Per Decision D6.
 - IP convention: `FLOOR(outs/3) + (outs%3)*0.1` (e.g., 517 outs → 172.1, not 172.4).
 - Tier each column: A=direct dump field, B=trivial calc, C=needs league constants, D=modeled (xstats), E=at-bat aggregation, F=cannot replicate (per D5 or string-formatted display), G=needs scale conversion or integer→string mapping.

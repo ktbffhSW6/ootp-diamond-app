@@ -352,7 +352,9 @@ derived AS (
         END AS def
     FROM scouted_ratings sr
     WHERE sr.scouting_team_id = 4    -- Red Sox view
-      AND sr.league_id = 203
+    -- No league filter: each Red Sox-org player has exactly 1 row at
+    -- team=4 across all leagues, so this widens the joined population
+    -- from 24 (MLB only) to all 220 IE roster rows.
 )
 """
 
@@ -426,7 +428,9 @@ derived AS (
         END AS def
     FROM scouted_ratings sr
     WHERE sr.scouting_team_id = 4
-      AND sr.league_id = 203
+    -- No league filter: each Red Sox-org player has exactly 1 row at
+    -- team=4 across all leagues, so this widens the joined population
+    -- from 24 (MLB only) to all 220 IE roster rows.
 )
 """
 
@@ -481,7 +485,9 @@ derived AS (
         sr.pitching_ratings_misc_arm_slot      AS arm_slot
     FROM scouted_ratings sr
     WHERE sr.scouting_team_id = 4
-      AND sr.league_id = 203
+    -- No league filter: each Red Sox-org player has exactly 1 row at
+    -- team=4 across all leagues, so this widens the joined population
+    -- from 24 (MLB only) to all 220 IE roster rows.
 )
 """
 
@@ -541,7 +547,9 @@ derived AS (
         sr.fielding_ratings_outfield_arm       AS of_arm
     FROM scouted_ratings sr
     WHERE sr.scouting_team_id = 4
-      AND sr.league_id = 203
+    -- No league filter: each Red Sox-org player has exactly 1 row at
+    -- team=4 across all leagues, so this widens the joined population
+    -- from 24 (MLB only) to all 220 IE roster rows.
 )
 """
 
@@ -611,7 +619,9 @@ derived AS (
        + CASE WHEN sr.pitching_ratings_pitches_knuckleball  > 0 THEN 1 ELSE 0 END) AS pit
     FROM scouted_ratings sr
     WHERE sr.scouting_team_id = 4
-      AND sr.league_id = 203
+    -- No league filter: each Red Sox-org player has exactly 1 row at
+    -- team=4 across all leagues, so this widens the joined population
+    -- from 24 (MLB only) to all 220 IE roster rows.
 )
 """
 
@@ -690,7 +700,9 @@ derived AS (
         END AS def
     FROM scouted_ratings sr
     WHERE sr.scouting_team_id = 4
-      AND sr.league_id = 203
+    -- No league filter: each Red Sox-org player has exactly 1 row at
+    -- team=4 across all leagues, so this widens the joined population
+    -- from 24 (MLB only) to all 220 IE roster rows.
 )
 """
 
@@ -1035,7 +1047,8 @@ DEFAULT_DERIVED_CTE = """
 sr AS (
     SELECT player_id, overall_rating, talent_rating, scouting_accuracy
     FROM scouted_ratings
-    WHERE scouting_team_id = 4 AND league_id = 203
+    WHERE scouting_team_id = 4
+    -- No league filter; each Red Sox-org player has 1 row at team=4
 ),
 ct AS (
     SELECT player_id, salary0 AS slr, years AS yl, current_year AS cy

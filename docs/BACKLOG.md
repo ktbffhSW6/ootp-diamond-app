@@ -53,7 +53,8 @@
 ### Medium
 
 - [x] **DEF rating formula** — DONE (2026-05-03). Formula is `fielding_rating_pos[player.position]` (primary-position rating, not max). 220/220 exact match across batting_ratings, batting_potential, position_ratings.
-- [ ] **Broaden ratings-CTE audit population** — drop the `league_id=203` filter from the 6 ratings CTEs in `reconcile.py`. Each player has exactly 1 row at `scouting_team_id=4` across all leagues, so dropping the league filter widens the joined population from 24 → 220 IE rows (9.2x) without duplicates. This is the next ratings-audit win after the DEF fix.
+- [x] **Broaden ratings-CTE audit population** — DONE (2026-05-03). Dropped `league_id=203` from the 7 CTEs that filtered on it (6 ratings CTEs + DEFAULT_DERIVED_CTE). Audit population went from 24 → 220 IE rows (9.2x); every previously-100% rating column held up at 100%, surfacing one single-player edge case (`Shea Sprague` PIT=2 vs derived=3, 219/220 — see new follow-up).
+- [ ] Investigate `Shea Sprague` PIT mismatch (only 1/220 in `individual_pitch_ratings`): IE shows 2 but the player has 3 non-zero pitch ratings (FB=45, CH=40, SL=35). Threshold-based hypothesis (count pitches >= T) doesn't fit either — no T improves match. Likely an OOTP-internal "developed pitch" flag we can't see from the rating fields alone.
 - [ ] Investigate small rounding edge cases:
   - [ ] OPS at 79% match (OBP+SLG sum precision)
   - [ ] HR/9, K/9 at 91-95% (likely IP convention difference: true innings vs displayed `172.1`)

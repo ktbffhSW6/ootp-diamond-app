@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-03 (in-game year 2029) — popularity/personality/SctAcc decoded, hit_xy spray decoded (partial)
+**Last updated**: 2026-05-03 (in-game year 2029) — ratings audit broadened from 24→220 rows (9.2x)
 
 ---
 
@@ -33,6 +33,10 @@ building the ingest pipeline.
   - `approach.py` — Tier 5: 2-strike performance, count-state splits, 4-pitch BB%, 3-pitch K%
 
 ## Most-recent change
+
+Dropped the `league_id=203` filter from the 7 ratings/default CTEs in [reconcile.py](src/diamond/audit/reconcile.py). Each Red Sox-org player has exactly 1 row at `scouting_team_id=4` across all leagues, so filtering only on the team widens the joined audit population from 24 (MLB only) → 220 (entire org tree, MLB + AAA + AA + A+ + A + Rookie + DSL × 2 + FCL) without introducing duplicates. Every previously-100% column held up at 100% on the wider sample, surfacing one single-player edge case (`Shea Sprague` PIT count) — see BACKLOG. The audit is now meaningful across ~210 cleanly-reconciled cols against the full 220-player roster.
+
+## Earlier this session
 
 Cross-referenced reconciliation notes from a separate OOTP audit project (`docs/helpful_files/`) and closed several gaps in one pass:
 
@@ -101,8 +105,8 @@ Audit completion order from [BACKLOG.md](BACKLOG.md):
 2. ~~Investigate the **DEF rating formula**~~ — **DONE**. Was `fielding_rating_pos[player.position]`.
 3. ~~**Popularity / Personality / SctAcc** integer→string mappings~~ — **DONE** (this session, via helpful_files cross-ref).
 4. ~~All-Star 2029 gap, HOF induction year~~ — **DONE** (no formula needed; `players.inducted` is direct, all-star file just doesn't write until year-end).
-5. **NEXT**: Broaden the ratings-CTE audit population by dropping `league_id=203` from the 6 ratings CTEs. Each Red Sox-org player has exactly 1 row at `scouting_team_id=4` across all leagues — widens joined pop from 24 → 220 IE rows (9.2x) without duplicates.
-6. **Build league constants module** (now mostly a lookup over `league_history_*` pre-computed wOBA/FIP/ERA/WHIP/WAR — see DATA_NOTES). Unlocks the ~30 C-tier sabermetric holdouts.
+5. ~~Broaden the ratings-CTE audit population~~ — **DONE** (this session). league_id=203 filter dropped, joined population now full 220-player Red Sox org tree.
+6. **NEXT**: **Build league constants module** (now mostly a lookup over `league_history_*` pre-computed wOBA/FIP/ERA/WHIP/WAR — see DATA_NOTES). Unlocks the ~30 C-tier sabermetric holdouts.
 7. Resolve small rounding edges (OPS 79%, HR/9 95%, K/9 91%, pitching WAR 84%).
 8. Calibrate `hit_xy` spray boundaries — basic decode landed but Pull%/Oppo% under-/over-count by ~5–10pp; grid-search x boundaries against IE values.
 9. Remaining integer→string mappings: VELO ranges, G/F categories, contract auto-renew, personality "Type" archetype.
