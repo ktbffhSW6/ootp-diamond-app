@@ -27,6 +27,11 @@ from diamond.schema.l1_event import (
     L1EventSpec,
     build_l1_event,
 )
+from diamond.schema.l1_snapshot import (
+    GENERIC_SNAPSHOTS,
+    L1SnapshotSpec,
+    build_l1_snapshot,
+)
 from diamond.schema.build import (
     DIAMOND_INGESTS_DDL,
     build_l0,
@@ -46,6 +51,9 @@ __all__ = [
     "ALL_EVENT_SPECS",
     "NATURAL_PK_EVENTS",
     "SYNTHETIC_PK_EVENTS",
+    "L1SnapshotSpec",
+    "GENERIC_SNAPSHOTS",
+    "build_l1_snapshot",
     "DIAMOND_INGESTS_DDL",
     "build_l0",
     "build_l1_machinery",

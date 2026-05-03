@@ -31,12 +31,14 @@ from rich.table import Table
 from diamond.config import BUILDING_THE_GREEN_MONSTER
 from diamond.schema import (
     ALL_EVENT_SPECS,
+    GENERIC_SNAPSHOTS,
     L0_CATALOG,
     L1_REFERENCE_TABLES,
     build_l0,
     build_l1_event,
     build_l1_machinery,
     build_l1_reference,
+    build_l1_snapshot,
 )
 
 
@@ -267,6 +269,86 @@ def smoke_l1_event(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
     return True
 
 
+def smoke_l1_snapshot(con: duckdb.DuckDBPyConnection, save, console: Console) -> bool:
+    """Phase D invariants. Returns True on pass."""
+    console.rule("Phase D — L1 state-snapshot tables")
+    rows = build_l1_snapshot(con, save, verbose=True)
+
+    expected = len(GENERIC_SNAPSHOTS) + 2  # + players_snapshot + players_ratings_snapshot
+    if len(rows) != expected:
+        console.print(
+            f"[red]FAIL:[/red] built {len(rows)} snapshots, expected {expected}"
+        )
+        return False
+    console.print(f"\n[green]✓[/green] all {expected} snapshot tables built")
+
+    # D12: players_ratings_snapshot must NOT contain scouting_team_id=0 rows.
+    # (The col was dropped at build, but verify by checking against l0 source
+    # we'd see the scouting_team_id=0 player count is non-zero in L0 but the
+    # filter was applied.)
+    l0_team0 = con.execute("""
+        SELECT COUNT(*) FROM l0_players_scouted_ratings
+        WHERE scouting_team_id = 0
+          AND dump_date = (SELECT MAX(dump_date) FROM l0_players_scouted_ratings)
+    """).fetchone()[0]
+    l1_total = con.execute(
+        "SELECT COUNT(*) FROM players_ratings_snapshot WHERE dump_date = "
+        "(SELECT MAX(dump_date) FROM players_ratings_snapshot)"
+    ).fetchone()[0]
+    if l0_team0 == 0:
+        console.print(
+            "[yellow]Note:[/yellow] no scouting_team_id=0 rows in L0 (unexpected)"
+        )
+    else:
+        # If l1 latest count <= l0 scouting_team_id=4 count, we filtered correctly
+        l0_team4 = con.execute(f"""
+            SELECT COUNT(*) FROM l0_players_scouted_ratings
+            WHERE scouting_team_id = {save.audit_team_id}
+              AND dump_date = (SELECT MAX(dump_date) FROM l0_players_scouted_ratings)
+              AND player_id IN (SELECT player_id FROM _scoped_players)
+        """).fetchone()[0]
+        if l1_total != l0_team4:
+            console.print(
+                f"[red]FAIL:[/red] players_ratings_snapshot latest = {l1_total} "
+                f"≠ expected scouted+scoped {l0_team4}"
+            )
+            return False
+        console.print(
+            f"[green]✓[/green] D12 filter applied: only scouting_team_id={save.audit_team_id} "
+            f"rows in players_ratings_snapshot ({l1_total} latest-dump rows)"
+        )
+
+    # Spot-check: players_snapshot should have running_ratings_speed populated
+    cols = {r[0] for r in con.execute("DESCRIBE players_snapshot").fetchall()}
+    for needed in ("running_ratings_speed", "running_ratings_baserunning"):
+        if needed not in cols:
+            console.print(f"[red]FAIL:[/red] players_snapshot missing {needed}")
+            return False
+    console.print("[green]✓[/green] players_snapshot has folded-in running_ratings_* cols")
+
+    # _current views should expose just one row per player (latest dump)
+    n = con.execute("SELECT COUNT(*) FROM players_current").fetchone()[0]
+    n_distinct = con.execute(
+        "SELECT COUNT(DISTINCT player_id) FROM players_current"
+    ).fetchone()[0]
+    if n != n_distinct:
+        console.print(
+            f"[red]FAIL:[/red] players_current has {n} rows but {n_distinct} "
+            f"distinct player_ids"
+        )
+        return False
+    console.print(f"[green]✓[/green] players_current is 1-row-per-player ({n:,})")
+
+    # Idempotency
+    rows_2 = build_l1_snapshot(con, save, verbose=False)
+    if rows != rows_2:
+        console.print("[red]FAIL:[/red] snapshot rebuild changed row counts")
+        return False
+    console.print("[green]✓[/green] snapshot rebuild is idempotent")
+
+    return True
+
+
 def main() -> int:
     console = Console()
     save = BUILDING_THE_GREEN_MONSTER
@@ -280,6 +362,8 @@ def main() -> int:
     if not smoke_l1_machinery(con, save, console):
         return 1
     if not smoke_l1_event(con, console):
+        return 1
+    if not smoke_l1_snapshot(con, save, console):
         return 1
 
     console.rule("[bold green]All smoke tests passed[/bold green]")
