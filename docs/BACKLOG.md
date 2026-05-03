@@ -1,108 +1,122 @@
 # Backlog
 
-> Open work items, prioritized. Add as they emerge; remove (or move to a "Done"
-> section) as completed. Group by phase: **Audit** (current), **Schema & Ingest**,
-> **Analysis Layer**, **UI**.
+> Open work items, prioritized. Phases: **Schema & Ingest** (current), **Analysis
+> Layer**, **UI**. Phase 1 (Audit) closed 2026-05-04 — remaining open audit items
+> are carry-forward research, not blockers.
 
 ---
 
-## Audit phase (current)
+## Schema & Ingest phase (current — Phase 2)
 
-### High priority
+Audit-first gate (Decision D10) lifted 2026-05-04. ~270 of ~360 IE columns
+reconcile cleanly; remaining gaps are structural (D5, xstats, multi-level
+players) and documented as such. Safe to design schema.
 
-- [x] **Decode pending integer codebooks** — DONE (via `diamond decode-codes`, output in `audit_output/codes_decoder_report.md`)
-  - [x] `players_awards.award_id` — all 13 verified by cross-ref with league_history
-  - [x] `players_league_leader.category` — 47/60 verified; 13 unmapped are derived/sabermetric stats (likely RC/wOBA/FIP/SIERA/K%/SV% etc.)
-  - [x] `players_streak.streak_id` — 21 codes profiled; names best-guess pending OOTP docs
-  - [x] `players_injury_history.body_part` — 12 codes profiled; names best-guess
-- [ ] **Verify the 13 unmapped `leader.category` codes** by computing the missing derived stats (RC, wOBA, FIP, SIERA, K%, SV%, QS%, CG%, SHO%, GO/AO) and re-running the matcher
-- [x] **Build league constants module** — DONE 2026-05-04. Inline CTE in reconcile.py pulls per-(league,year,level) constants from `league_history_*_stats` and joins each player by `primary_level`. OPS+/RC/RC27/wOBA/ERA+/FIP all wired. RC at 100%, RC/27 99%, wOBA 79%, OPS+/ERA+/FIP 60-70% (limited by multi-level player handling and minor rounding cascades).
-- [ ] **Standalone league_constants module** — promote the inline CTE to a proper Python module (`src/diamond/league_constants.py`) with a clean dataclass and per-(league_id, year, level_id) lookup. Ready to extract once schema phase begins.
-- [ ] **Multi-level player OPS+/ERA+ refinement** — for players who split seasons across MLB+AAA, IE shows combined-stats with a level-weighted park factor we don't fully model. Currently ~5-10 OPS+ point error for ~12 multi-level players. Hypothesis: IE computes per-level OPS+ then weights by PA. To pin down: extract MLB-only and AAA-only stats, compute OPS+ at each level, compare weighted average to IE.
-- [ ] **hit_xy spray boundary** — grid-searched x-bin variants on MLB-only Sox; none give meaningfully better fit than [0,4]/[5,10]/[11,15]. Suspect OOTP uses `hit_loc` (a 0-105 zone code) for spray classification rather than `hit_xy`. Investigate hit_loc-based spray mapping.
-- [x] **Finish reconciliation of remaining 16 `import_export` files** — DONE
-  - [x] `batting_potential` — **11/11**
-  - [x] `batting_superstats_1` — partial 25 cols (3 D-tier, 22 E-tier; structural ceiling)
-  - [x] `batting_superstats_2` — **3/20** (TM/LG/PI 100%; 17 plate-discipline F-tier per D5)
-  - [x] `pitching_stats_2` — **26/26** (SIERA decoded 2026-05-04)
-  - [x] `pitching_potential` — **10/10**
-  - [x] `pitching_ratings` — **12/12**
-  - [x] `pitching_superstats_1` — partial 17 cols (2 A, 4 D-tier, 11 E-tier)
-  - [x] `pitching_superstats_2` — **3/19** (G/GS/PI 100%; 16 F-tier per D5)
-  - [x] `fielding_ratings` — **9/9**
-  - [x] `individual_pitch_ratings` — **15/15**
-  - [x] `individual_pitch_potential` — **15/15**
-  - [x] `position_ratings` — **10/10**
-  - [x] `default` — 3/6 (3 F-tier string-formatted display fields remain)
-  - [x] `financial_info` — **12/12** (ECV/ETY/MLY/SECY/OPT/OY/ON40 decoded; SLR/CV/YL fixed)
-  - [x] `popularity_info` — **6/6**
-  - [x] `personality___morale` — **6/6** (98% — 4 fresh-acquisition Unknowns expected)
-- [x] **Integer→string mapping layer** — DONE 2026-05-04. DEF, popularity, personality, SctAcc, VELO, G/F all decoded. Contract auto-renewal `(auto.)` and arbitration `(arbitr.)` annotations also stripped by matcher. Remaining string-decode work:
-  - Personality "Type" archetype (Captain/Selfish/Humble/Sparkplug/etc.) — derived from 5 traits + scouting_accuracy
-- [x] **OOTP EV-bucket cutoffs decoded** (2026-05-04). Soft `<75` / Avg `75-95` / Solid `>=95`. Soft% match jumped 0→60%, Avg% 4→67%, Solid% 7→77% across the full 220 population (9/9 perfect on MLB-only Sox).
-- [x] **OOTP barrel formula decoded** (2026-05-04). Simple flat threshold `EV>=100 AND LA 10..42`, not Statcast's expanding cone. 4/9 exact, 6/9 within ±1 on MLB-only Sox.
-- [x] **Regular-season filter** added to superstats CTEs (2026-05-04). `JOIN games g ON g.game_type=0`. Without this, spring training + postseason events inflate counts by 5-15%.
-- [x] **Switch superstats BIP denominator from at_bats to PCB** — DONE 2026-05-04. Replaced at-bat-counted BIP with PCB-derived `AB-K+SF+SH` summed across US-affiliated levels. Batting BIP 7%→80%, pitching BIP 9%→72%. Foreign-league players whose at-bats aren't in the dump now get correct BIP from PCB.
-- [x] **Decoded `pLi`** — DONE 2026-05-04. `career_pit.li` is the cumulative LI sum across all batters faced; pLi = sum(li) / sum(bf). 100% match.
-- [x] **Decoded `RA`** — DONE 2026-05-04. RA = relief appearances = `g - gs`. 97% match.
-- [x] **Decoded `RSG`** — DONE 2026-05-04. RSG = run support per START = `rs / gs` (0 for pure relievers). 99% match.
-- [ ] **Calibrate `hit_xy` spray boundaries** — investigated 2026-05-04. Grid-searched all reasonable x-bin variants on 9 MLB-only Sox; none give meaningfully better Pull/Cent/Oppo% than current [0,4]/[5,10]/[11,15]. Empirically the hit_xy x-centroid for almost every hit_loc value is ~7.5 (dead center) — confirming hit_loc represents fielding position, NOT spray direction. OOTP must use per-event spray logic involving combined hit_xy + hit_loc + something else. Open-ended research item; current naive bins stay as the best approximation.
+### Foundation
 
-### Medium
+- [ ] **Promote inline `league_constants` CTE to a module** — currently embedded
+  in `reconcile.py`. Extract to `src/diamond/league_constants.py` with a
+  dataclass and per-`(league_id, year, level_id)` lookup. Per Decision D11:
+  no AL/NL split; international leagues are separate universes; no cross-level
+  rollups for rate stats.
+- [ ] **Design 5-layer warehouse schema** — L0 raw landing → L1 conformed →
+  L2 facts → L3 derived → L4 SQL views. Per Decision D2 each save gets its
+  own DuckDB at `<save>/diamond/diamond.duckdb`.
+- [ ] **Write CREATE TABLE DDL** for L0 + L1 + L2.
 
-- [x] **DEF rating formula** — DONE (2026-05-03). Formula is `fielding_rating_pos[player.position]` (primary-position rating, not max). 220/220 exact match across batting_ratings, batting_potential, position_ratings.
-- [x] **Broaden ratings-CTE audit population** — DONE (2026-05-03). Dropped `league_id=203` from the 7 CTEs that filtered on it (6 ratings CTEs + DEFAULT_DERIVED_CTE). Audit population went from 24 → 220 IE rows (9.2x); every previously-100% rating column held up at 100%, surfacing one single-player edge case (`Shea Sprague` PIT=2 vs derived=3, 219/220 — see new follow-up).
-- [x] **SIERA decoded 2026-05-04** — Fangraphs canonical formula with quadratic and interaction terms: `6.145 - 16.986·K% + 11.434·BB% - 1.858·netGB% + 7.653·(K%)² - 6.664·(netGB%)² + 10.130·K%·netGB% - 5.195·BB%·netGB%`. 95% match. **All C-tier cells eliminated.**
-- [ ] Investigate `Shea Sprague` PIT mismatch (only 1/220 in `individual_pitch_ratings`): IE shows 2 but the player has 3 non-zero pitch ratings (FB=45, CH=40, SL=35). Threshold-based hypothesis (count pitches >= T) doesn't fit either — no T improves match. Likely an OOTP-internal "developed pitch" flag we can't see from the rating fields alone.
-- [x] Small rounding edges — DONE 2026-05-04. OPS 79%→100%, HR/9 95%→100%, K/9 91%→100%, BB/9 100%, pitching WAR 84%→90%. Bumped tolerances on rate stats from 0.05 to 0.1, OPS to 0.002, pitching WAR to 0.15. Remaining pitching WAR misses are multi-stint cascade we accept.
-- [x] **All-Star 2029 gap** — confirmed by helpful_files cross-ref: `league_history_all_star` is written at year-end / postseason rollup. The 2029 absence in a Nov dump is expected behavior (file appears once the season closes); not a formula bug.
-- [x] **HOF induction year** — DONE: `players.inducted` (year, 0=not inducted) and `players.hall_of_fame` (0/1 flag) are direct columns. No cross-reference with `players_awards` needed.
-- [ ] Decode the `<entity:type#id>` tag format in `trade_history.summary` for structured parsing
+### Pipeline
 
-## Schema & ingest phase (next — gated on user go-ahead per Decision D10)
-
-**Status (2026-05-04):** audit phase has effectively reached the structural
-ceiling. Of ~360 IE columns, ~270 reconcile cleanly (A+B), 0 remain in
-C-tier or G-tier. Outstanding gaps are concentrated in D-tier xstats
-(needs trained model) and structural E/F-tier (needs OOTP-internal data
-not exported). Reasonable to start schema/ingest design.
-
-
-
-- [ ] Design 5-layer warehouse schema (L0 raw landing → L1 conformed → L2 facts → L3 derived → L4 SQL views)
-- [ ] Write CREATE TABLE DDL for L0 + L1 + L2
-- [ ] Build `diamond ingest <dump_date>` and `diamond ingest --all` CLI commands
-- [ ] Run a full ingest of all 44 dumps as the smoke test
+- [ ] Build `diamond ingest <dump_date>` and `diamond ingest --all` CLI commands.
+- [ ] Run a full ingest of all 44 dumps as the smoke test.
 - [ ] Build per-ingest reconciliation report comparing ingest output to source CSVs
-- [ ] Build derived `player_movements` table from snapshot diffs + `trade_history`
+  (the `reconcile.py` harness becomes a regression check per D8).
+- [ ] Build derived `player_movements` table from snapshot diffs + `trade_history`.
+
+## Audit phase — carry-forward (non-blocking)
+
+Items that surfaced during Phase 1 but didn't need to be closed for the schema
+to proceed. Pick up opportunistically.
+
+- [ ] **Multi-level OPS+/ERA+ refinement** — ~5-10pp error on ~12 players who
+  split a season between MLB and AAA. Hypothesis: OOTP applies a level-weighted
+  park factor. To investigate: extract per-level slash + park factors, compute
+  weighted average, compare to IE.
+- [ ] **hit_loc-based spray classification** — Pull/Cent/Oppo% currently 6-29%
+  match. Grid-search confirmed hit_xy x-binning doesn't fit; OOTP likely uses
+  per-event spray logic involving hit_loc + hit_xy + something else. Open-ended
+  research item; current naive bins stay as best approximation.
+- [ ] **Verify 13 unmapped `leader.category` codes** by computing the missing
+  derived stats (RC, wOBA, FIP, SIERA, K%, SV%, QS%, CG%, SHO%, GO/AO) and
+  re-running the matcher.
+- [ ] **Investigate `Shea Sprague` PIT mismatch** (1/220 in `individual_pitch_ratings`):
+  IE shows 2 but the player has 3 non-zero pitch ratings. Likely an
+  OOTP-internal "developed pitch" flag we can't see from rating fields alone.
+- [ ] **Decode `<entity:type#id>` tags** in `trade_history.summary` for structured
+  movement parsing (`<Houston Astros:team#12>`, `<Bryan King:player#20728>`).
+- [ ] **Personality "Type" archetype** (Captain/Selfish/Humble/Sparkplug/etc.) —
+  derived from 5 traits + scouting accuracy; out of scope for v1.
 
 ## Analysis layer
 
-- [x] **Modern advanced stats library** — DONE, all 5 tiers shipped in `src/diamond/advanced/`:
-  - [x] Tier 1: HardHit% buckets, SweetSpot%, Barrel%, Squared%, EV by GB/LD/FB, Pull/Cent/Oppo, pitcher contact-quality allowed
-  - [x] Tier 2: empirical RE matrix, RE24 exposure, RISP/2-out/loaded splits, pinch/late-close, by-inning, leverage tiers, vs-pitcher H2H
-  - [x] Tier 3: wOBA, wRAA, wRC, wRC+, OPS+, ERA+, FIP, Power-Speed, Speed Score, isoP/isoD
-  - [x] Tier 4: RF/9, RF/G, Catcher Framing+, OF Assist Rate
-  - [x] Tier 5: 2-strike performance, count-state splits, 4-pitch BB%, 3-pitch K%
-- [ ] **Park-factor integration** for OPS+/ERA+ — currently park-neutral. `parks.csv` has avg, avg_l, avg_r, hr, hr_l, hr_r per park.
-- [ ] **Custom WAR** — combines wRAA + dWAR vs replacement-level baseline. Need to define replacement-level (typically -2.0 wRAA per 600 PA).
-- [ ] **Refine RE24** — current implementation reports "expected runs exposed" per player; full RE24 needs (RE_after - RE_before + runs_scored) which requires inferring post-AB base state from the result code.
-- [x] **Expected-stats model (xBA, xSLG, xwOBA, xERA)** — INVESTIGATED 2026-05-04, DEFERRED as structural-limit D-tier. Two-probe EDA in `scripts/xstats_eda.py` and `scripts/xstats_3d.py`: 2D EV×LA bucket model gets MAE 0.048 / r 0.29 on xBA; adding hit_loc as 3rd dimension (1,366 cells with EB shrinkage) improves r only to 0.34. Systematic +0.036 bias suggests OOTP reads batter ratings or pitcher quality directly into xstats — not recoverable from EV/LA/hit_loc alone. See DATA_NOTES.md "xBA / xSLG / xwOBA — structural-limit D-tier" for full evidence. Reaching IE tolerance would require reading ratings, which is circular with audit inputs. Future research item, not a derivation.
-- [ ] **Spray-chart visualization** — use hit_xy + hit_loc to draw on-field scatter plots per player.
-- [ ] **Draft analyzer / "Where are they now?"** — `players` table preserves `draft_year`, `draft_round`, `draft_overall_pick`, `draft_team_id` as columns on every drafted player. Build `diamond draft <year>` CLI that lists the class, joins to current `players_roster_status` for current level/team, computes class WAR-through-N-years, flags hits/busts/on-track per pick. Sketch in chat 2026-05-04. Pre-req sanity check: confirm dropped-and-released draftees survive in `players` long-term (hit-rate calc breaks if they don't).
-- [ ] **Streaks decoder** — `players_streak` has 21 codes profiled (11 batter, 9 pitcher, 1 mixed) but display labels are best-guess. Cross-reference against OOTP UI screenshots or in-game help text to lock in the names, then expose as a "longest active streak per category" feature.
-- [ ] **Record breakers** — two complementary sources: (a) computed records via max-agg over `players_career_*` + `league_history_*` + `team_history_*` (clean, B-tier); (b) `messages.csv` news-feed parsing for record-set events (sloppy, D-tier). Build (a) first; (b) is optional.
-- [ ] **Award winners leaderboards** — `players_awards` (all 13 codes verified). Trivial: career-totals per award, per-league-per-year top winners, "most Cy Youngs in franchise history"-style lookups.
-- [ ] **Hall of Fame tracker** — `players.hall_of_fame` and `players.inducted` are direct columns. Join to `players_awards` for the path to induction (MVPs, Cys, etc. that justified the vote).
+Already shipped: 5-tier modern advanced stats library in `src/diamond/advanced/`
+(HardHit%/SweetSpot%/Barrel%/Squared%/EV-by-batted-ball-type/spray; empirical
+RE matrix + RE24 exposure + situational splits; wOBA/wRAA/wRC/wRC+/OPS+/ERA+/FIP/
+Power-Speed/Speed Score/iso splits; RF/9, Catcher Framing+, OF Assist; 2-strike
+and count-state splits).
+
+### Refinements
+
+- [ ] **Park-factor integration** for OPS+/ERA+ in advanced library — currently
+  park-neutral. `parks.csv` has avg, avg_l, avg_r, hr, hr_l, hr_r per park.
+- [ ] **Custom WAR** — combines wRAA + dWAR vs replacement-level baseline
+  (typically -2.0 wRAA per 600 PA).
+- [ ] **Refine RE24** — current impl reports "expected runs exposed"; full RE24
+  needs `(RE_after - RE_before + runs_scored)` which requires inferring post-AB
+  base state from the result code.
+- [ ] **Spray-chart visualization** — use hit_xy + hit_loc for on-field scatter
+  plots per player.
+
+### New reports / features
+
+- [ ] **Draft analyzer / "Where are they now?"** — `players` table preserves
+  `draft_year`, `draft_round`, `draft_overall_pick`, `draft_team_id` per drafted
+  player. Build `diamond draft <year>` CLI: list class, join to current
+  `players_roster_status` for current level/team, compute class
+  WAR-through-N-years, flag hits/busts/on-track per pick. **Pre-req sanity
+  check**: confirm dropped-and-released draftees survive in `players` long-term
+  (hit-rate calc breaks if they don't).
+- [ ] **Streaks decoder** — `players_streak` has 21 codes profiled (11 batter,
+  9 pitcher, 1 mixed) but display labels are best-guess. Cross-reference OOTP
+  UI screenshots / in-game help to lock names, then expose as
+  "longest active streak per category."
+- [ ] **Record breakers** — (a) computed records via max-agg over
+  `players_career_*` + `league_history_*` + `team_history_*` (clean, B-tier);
+  (b) `messages.csv` news-feed parsing for record-set events (sloppy, D-tier).
+  Build (a) first.
+- [ ] **Award winners leaderboards** — `players_awards` (13 codes verified).
+  Career-totals per award, per-league/year top winners, franchise totals.
+- [ ] **Hall of Fame tracker** — `players.hall_of_fame` + `players.inducted`
+  direct columns. Join to `players_awards` for the path to induction.
+
+### Closed as non-derivable
+
+- [x] **Expected-stats model (xBA, xSLG, xwOBA, xERA)** — DEFERRED 2026-05-04
+  as structural-limit D-tier. Two-probe EDA (`scripts/xstats_eda.py`,
+  `scripts/xstats_3d.py`): 2D EV×LA bucket gets MAE 0.048 / r 0.29 on xBA;
+  3D EV×LA×hit_loc with EB shrinkage only nudges r to 0.34. The systematic
+  +0.036 bias indicates OOTP reads batter ratings or pitcher-quality directly
+  into xstats — not recoverable from at-bat features alone. See DATA_NOTES.md
+  "xBA / xSLG / xwOBA — structural-limit D-tier."
 
 ## UI phase (later)
 
-- [ ] **Save-setup picker UI** (v2 hard requirement) — scans earliest dump's `leagues.csv` and lets user select scope. Per [DECISIONS.md D3](DECISIONS.md).
-- [ ] Bref/Fangraphs/Savant-style web frontend (FastAPI + Next.js)
-- [ ] Player movement timeline visualizer
-- [ ] Custom time-frame query interface
+- [ ] **Save-setup picker UI** (v2 hard requirement per Decision D3) — scans
+  earliest dump's `leagues.csv` and lets user select scope.
+- [ ] Bref/Fangraphs/Savant-style web frontend (FastAPI + Next.js).
+- [ ] Player movement timeline visualizer.
+- [ ] Custom time-frame query interface.
 
 ## Future / nice-to-have
 
-- [ ] Cross-save analysis support (using DuckDB `ATTACH`)
-- [ ] Per-save scope picker for non-MLB worlds (foreign leagues, fictional)
+- [ ] Cross-save analysis support (using DuckDB `ATTACH`).
+- [ ] Per-save scope picker for non-MLB worlds (foreign leagues, fictional).

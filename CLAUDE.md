@@ -7,13 +7,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 The project keeps long-running engineering context in `docs/`. Always read at the start of a session:
 
 - `docs/PROJECT_STATUS.md` — current phase, what works, what was last done, what's next.
-- `docs/DECISIONS.md` — append-only log of architectural/scope decisions with rationale (D1-D10).
+- `docs/DECISIONS.md` — append-only log of architectural/scope decisions with rationale (D1-D11).
 - `docs/DATA_NOTES.md` — empirical findings about the OOTP dump shape, codebooks, and IE display conventions.
-- `docs/BACKLOG.md` — prioritized open work, grouped by phase (Audit → Schema/Ingest → Analysis → UI).
+- `docs/BACKLOG.md` — prioritized open work, grouped by phase (Schema/Ingest → Analysis → UI).
 
 These files are the source of truth for "why" — favor updating them over leaving knowledge in chat.
 
-**Hard constraint (Decision D10):** the project is in *audit phase*. No warehouse-schema or ingest-pipeline work begins until reconciliation is comprehensive. If asked to design tables or write DDL, push back and route the request to `docs/BACKLOG.md` instead.
+**Current phase: Phase 2 — Schema & Ingest.** Audit phase closed 2026-05-04 (Decision D10 gate lifted). ~270 of ~360 IE columns reconcile; remaining gaps are structural (D5, xstats, multi-level players) and documented as such in DATA_NOTES.md. Active work is now warehouse schema design + the ingest pipeline. The reconciliation harness (`reconcile.py`) stays in the codebase as a permanent post-ingest regression check (Decision D8).
 
 ## Setup & commands
 
