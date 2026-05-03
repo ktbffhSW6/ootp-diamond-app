@@ -27,6 +27,7 @@ from rich.console import Console
 from rich.table import Table
 
 from diamond.config import BUILDING_THE_GREEN_MONSTER, SaveConfig
+from diamond.league_constants import register_views as register_lg_views
 
 console = Console()
 
@@ -96,21 +97,9 @@ agg AS (
     WHERE year = 2029 AND split_id = 1
     GROUP BY player_id
 ),
--- League constants per (league_id, level_id), aggregated across AL/NL sub-leagues
--- per Decision D11 (no AL/NL split — empirically a no-op in this save).
-lg_b AS (
-    SELECT
-        league_id, year, level_id,
-        SUM(pa) AS lg_pa, SUM(ab) AS lg_ab, SUM(h) AS lg_h, SUM(d) AS lg_d, SUM(t) AS lg_t,
-        SUM(hr) AS lg_hr, SUM(bb) AS lg_bb, SUM(hp) AS lg_hp, SUM(sf) AS lg_sf,
-        SUM(sh) AS lg_sh, SUM(k) AS lg_k, SUM(sb) AS lg_sb, SUM(cs) AS lg_cs,
-        -- Pre-computed lg_obp / lg_slg / lg_woba may be averaged across sub-leagues.
-        -- Recompute from totals to be safe.
-        ROUND((SUM(h) + SUM(bb) + SUM(hp))::DOUBLE / NULLIF(SUM(ab) + SUM(bb) + SUM(hp) + SUM(sf), 0), 4) AS lg_obp,
-        ROUND((SUM(tb))::DOUBLE / NULLIF(SUM(ab), 0), 4) AS lg_slg
-    FROM league_history_batting_stats
-    GROUP BY league_id, year, level_id
-),
+-- League constants per (league_id, year, level_id) come from the
+-- `lg_constants_bat` view registered by diamond.league_constants
+-- (sourced from league_history_batting_stats; see Decision D11).
 -- Home-park factor for each player from teams -> parks.
 -- IE OPS+ uses the halved-home park factor: 1 + (parks.avg - 1) / 2.
 -- Verified empirically against MLB-only Red Sox players (Mayer, Gonzales, etc.)
@@ -178,7 +167,10 @@ derived AS (
             3
         ) AS woba
     FROM agg a
-    LEFT JOIN lg_b      ON lg_b.league_id = a.primary_league AND lg_b.year = 2029 AND lg_b.level_id = a.primary_level
+    LEFT JOIN lg_constants_bat lg_b
+           ON lg_b.league_id = a.primary_league
+          AND lg_b.year      = 2029
+          AND lg_b.level_id  = a.primary_level
     LEFT JOIN player_park pp ON pp.player_id = a.player_id
 )
 """
@@ -280,16 +272,9 @@ agg AS (
     WHERE year = 2029 AND split_id = 1
     GROUP BY player_id
 ),
-lg_p AS (
-    SELECT
-        league_id, year, level_id,
-        ROUND(SUM(er)::DOUBLE * 9.0 / NULLIF((SUM(ip) + SUM(ipf) / 3.0), 0), 3) AS lg_era,
-        SUM(ha) AS lg_ha, SUM(hra) AS lg_hra, SUM(bb) AS lg_bb, SUM(hp) AS lg_hp,
-        SUM(k) AS lg_k, SUM(ab) AS lg_ab, SUM(bf) AS lg_bf,
-        SUM(ip) + SUM(ipf) / 3.0 AS lg_ip
-    FROM league_history_pitching_stats
-    GROUP BY league_id, year, level_id
-),
+-- League pitching constants per (league_id, year, level_id) come from the
+-- `lg_constants_pit` view registered by diamond.league_constants
+-- (sourced from league_history_pitching_stats; see Decision D11).
 pitcher_park AS (
     SELECT p.player_id, prk.avg AS park_avg
     FROM players p
@@ -365,7 +350,10 @@ derived AS (
             2
         ) AS fip
     FROM agg a
-    LEFT JOIN lg_p ON lg_p.league_id = a.primary_league AND lg_p.year = 2029 AND lg_p.level_id = a.primary_level
+    LEFT JOIN lg_constants_pit lg_p
+           ON lg_p.league_id = a.primary_league
+          AND lg_p.year      = 2029
+          AND lg_p.level_id  = a.primary_level
     LEFT JOIN pitcher_park pp ON pp.player_id = a.player_id
 )
 """
@@ -1619,6 +1607,10 @@ def _connect(save: SaveConfig, dump: str) -> duckdb.DuckDBPyConnection:
             f"CREATE VIEW {view} AS SELECT * FROM read_csv_auto({_csv(csv_dir / fname)}, "
             f"sample_size=-1, ignore_errors=true)"
         )
+    # Register lg_constants_bat / lg_constants_pit on the same connection.
+    # These views replace the inline lg_b / lg_p CTEs that used to live
+    # in BATTING_DERIVED_CTE / PITCHING_DERIVED_CTE.
+    register_lg_views(con)
     return con
 
 

@@ -14,11 +14,15 @@ players) and documented as such. Safe to design schema.
 
 ### Foundation
 
-- [ ] **Promote inline `league_constants` CTE to a module** — currently embedded
-  in `reconcile.py`. Extract to `src/diamond/league_constants.py` with a
-  dataclass and per-`(league_id, year, level_id)` lookup. Per Decision D11:
-  no AL/NL split; international leagues are separate universes; no cross-level
-  rollups for rate stats.
+- [x] **Promote inline `league_constants` CTE to a module** — landed 2026-05-05.
+  `src/diamond/league_constants.py` registers `lg_constants_bat` and
+  `lg_constants_pit` views (per `(league_id, year, level_id)` per Decision D11)
+  on a DuckDB connection and exposes a `LeagueConstants` dataclass plus
+  `lookup` / `compute_all` for Python callers. `reconcile.py` consumes the
+  views via `register_views(con)` in `_connect()`. Reconcile output verified
+  byte-identical pre/post-refactor. Follow-up: consolidate with
+  `advanced/league_constants.py` (which adds wOBA-scale calibration) once
+  the warehouse exists.
 - [ ] **Design 5-layer warehouse schema** — L0 raw landing → L1 conformed →
   L2 facts → L3 derived → L4 SQL views. Per Decision D2 each save gets its
   own DuckDB at `<save>/diamond/diamond.duckdb`.

@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-04 (in-game year 2029) — Phase 1 (Audit) closed; entering Phase 2 (Schema & Ingest)
+**Last updated**: 2026-05-05 (in-game year 2029) — Phase 2 in flight; `league_constants` module landed
 
 ---
 
@@ -36,10 +36,15 @@ warehouse and build the ingest pipeline.
 - **Advanced stats library** ([src/diamond/advanced/](src/diamond/advanced/))
   — 5 tiers of modern advanced stats from at-bat data (~25 metrics). Per-tier
   modules: `contact.py`, `situational.py`, `sabermetric.py`, `defensive.py`,
-  `approach.py`. Shared at-bat view in `enriched.py`; per-league-year linear
-  weights / FIP const / lgERA in `league_constants.py` (currently advanced-lib
-  scoped; the audit derivation uses an inline CTE that needs promotion — see
-  BACKLOG).
+  `approach.py`. Shared at-bat view in `enriched.py`; advanced-lib-scoped
+  per-league-year linear weights / FIP const / lgERA in
+  `advanced/league_constants.py` (kept for now — produces wOBA-scale calibration
+  the audit derivation doesn't need; consolidation is a post-warehouse task).
+- **League-constants module** ([src/diamond/league_constants.py](src/diamond/league_constants.py))
+  — top-level module that registers two DuckDB views (`lg_constants_bat`,
+  `lg_constants_pit`) sourced from `league_history_*` and keyed by
+  `(league_id, year, level_id)` per Decision D11. Replaces the inline CTEs
+  formerly in `reconcile.py`. Verified byte-identical reconcile output post-refactor.
 - **Empirical scripts retained** in `scripts/` — `xstats_eda.py` and
   `xstats_3d.py` are the evidence behind the structural-limit D-tier verdict
   on xBA/xSLG/xwOBA. Rerun rather than re-investigate.
@@ -93,9 +98,10 @@ Latest reports (regenerable, gitignored): `audit_output/{decoder,codes_decoder,r
 
 Per [BACKLOG.md](BACKLOG.md), in priority order:
 
-1. **Promote inline `league_constants` CTE to a module** at `src/diamond/league_constants.py`
-   with a per-`(league_id, year, level_id)` lookup. Per Decision D11: no AL/NL split,
-   international leagues are separate universes, no cross-level rollups for rate stats.
+1. ~~**Promote inline `league_constants` CTE to a module**~~ — done 2026-05-05.
+   `src/diamond/league_constants.py` registers `lg_constants_bat` /
+   `lg_constants_pit` views; reconcile.py now consumes them. Reconcile output
+   verified byte-identical pre/post-refactor.
 2. **Design the 5-layer warehouse schema** (L0 raw → L1 conformed → L2 facts →
    L3 derived → L4 SQL views). Per Decision D2 each save gets its own
    `<save>/diamond/diamond.duckdb`.
