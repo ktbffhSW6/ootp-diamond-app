@@ -112,20 +112,32 @@ def _build_player_movements(con: duckdb.DuckDBPyConnection) -> int:
 
       1. **snapshot_diff**: compare consecutive (player_id, dump_date) rows
          of `players_snapshot`; emit a row each time `team_id` or `retired`
-         changes. Movement types: first_appearance | team_change | signed |
-         released | retired | unretired.
-
+         changes.
       2. **draft**: one row per player whose `draft_team_id > 0`, recorded
          at the first dump_date we saw them. Captures both pre-save
          imported draftees (HoF members, historical legends) and in-save
          draft classes.
 
-    Trade attribution: `team_change` rows are LEFT JOINed to
-    `f_trade_participant` and stamped with a `trade_id` when the player +
-    org-level from/to teams + a near-window date all line up. ~2.5% of
-    `team_change` rows resolve to a trade (the rest are intra-org promotions
-    / demotions); ~99.8% of trade participants get matched on the trade
-    side. Three structural caveats:
+    Movement types (11 total):
+      - `first_appearance`   first dump in which we observed this player
+      - `drafted`            from the draft source (one per drafted player)
+      - `signed`             from no team (0) to a team
+      - `released`           from a team to no team (0)
+      - `retired`            retired flag turned on
+      - `unretired`          retired flag turned off
+      - `trade`              team change matched to a `trade_event` (carries `trade_id`)
+      - `promotion`          team change within same MLB org, level moved CLOSER to MLB
+                             (e.g., AAA level=2 → MLB level=1)
+      - `demotion`           team change within same org, level moved FARTHER from MLB
+      - `intra_org_lateral`  team change within same org at the same level
+      - `waiver_or_other`    team change between orgs with no trade attribution
+                             (waiver claim / non-trade transfer)
+
+    Trade attribution: rows initially flagged as a generic team change are
+    LEFT JOINed to `f_trade_participant`. A match requires player_id +
+    org-rolled-up from/to teams + a ±60-day date window. ~2.5% of all team
+    changes resolve to a trade; ~99.8% of trade participants get matched.
+    Three structural caveats:
 
       - Org match uses `parent_team_id` to roll AAA/AA/A/etc. teams up to
         their MLB parent, since trades are recorded at MLB-org level but
@@ -134,12 +146,11 @@ def _build_player_movements(con: duckdb.DuckDBPyConnection) -> int:
         with the 1st of the month but capture end-of-month state, so a
         trade on the 30th typically shows up in the dump labeled the 1st
         of that same month.
-      - `trade_id` is `NULL` for non-trade `team_change` rows
-        (waiver claims, releases, intra-org moves).
+      - `trade_id` is `NULL` for non-trade rows (promotion/demotion/etc.).
 
     Level lookup: joins `teams` on `team_id` to read the `level` column,
-    yielding `from_level_id` and `to_level_id` for downstream filtering
-    (e.g., "show me all promotions to MLB").
+    yielding `from_level_id` and `to_level_id`. These also drive the
+    promotion/demotion classification (lower level_id = closer to MLB).
     """
     con.execute("""
         CREATE OR REPLACE TABLE player_movements AS
@@ -257,6 +268,8 @@ def _build_player_movements(con: duckdb.DuckDBPyConnection) -> int:
         attributed AS (
             SELECT
                 m.*,
+                fo.org_id AS from_org_id,
+                t_.org_id AS to_org_id,
                 tp.trade_id,
                 ROW_NUMBER() OVER (
                     PARTITION BY m.player_id, m.dump_date_observed,
@@ -280,7 +293,17 @@ def _build_player_movements(con: duckdb.DuckDBPyConnection) -> int:
             ) AS movement_id,
             player_id,
             dump_date_observed,
-            movement_type,
+            -- Refine the generic 'team_change' label into trade /
+            -- promotion / demotion / intra_org_lateral / waiver_or_other
+            -- using the org-rollup + level + trade_id we now have.
+            CASE
+                WHEN movement_type != 'team_change' THEN movement_type
+                WHEN trade_id IS NOT NULL                                       THEN 'trade'
+                WHEN from_org_id = to_org_id AND to_level_id < from_level_id    THEN 'promotion'
+                WHEN from_org_id = to_org_id AND to_level_id > from_level_id    THEN 'demotion'
+                WHEN from_org_id = to_org_id                                    THEN 'intra_org_lateral'
+                ELSE 'waiver_or_other'
+            END AS movement_type,
             from_team_id,
             to_team_id,
             from_level_id,

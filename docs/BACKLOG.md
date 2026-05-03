@@ -53,6 +53,14 @@ players) and documented as such. Safe to design schema.
   edge cases. The `<entity:type#id>` summary parser remains a separate
   carry-forward item — structured columns covered the use case without
   it.
+- [x] **Refine `movement_type` taxonomy** — done 2026-05-06. Replaced the
+  generic `team_change` label with 5 specific subtypes:
+  `trade` (1,270), `promotion` (20,141), `demotion` (18,325),
+  `intra_org_lateral` (6,288), `waiver_or_other` (4,772). Uses the
+  parent_team_id org rollup + level comparison the trade attribution
+  already needed. Now downstream queries can ask "all of Mayer's
+  promotions" or "Sox 2029 call-up wave" directly. See DATA_NOTES.md
+  for the full enumeration.
 
 **Phase 2 (Schema & Ingest) closed.** Move on to UI phase.
 

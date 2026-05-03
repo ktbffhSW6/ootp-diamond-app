@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-06 (in-game year 2029→2030) — **Phase 2 closed**. All 7 items complete: warehouse built, ingest pipeline live, full --all ingest verified (45 dumps, 5.1 GB), reconcile harness wired to L1, `player_movements` shipping with **trade attribution** (1,270 of 1,275 participants resolved via the new `f_trade_participant` table, 99.6%). UI/product design captured in [UI_DESIGN.md](UI_DESIGN.md) + decisions D13/D14/D15. Audit modules de-hardcoded the season year so reconcile/coverage/advanced auto-track the in-game calendar. **Phase 3 (UI implementation) is the next phase.**
+**Last updated**: 2026-05-06 (in-game year 2029→2030) — **Phase 2 closed**. All 7 items complete: warehouse built, ingest pipeline live, full --all ingest verified (45 dumps, 5.1 GB), reconcile harness wired to L1, `player_movements` shipping with **trade attribution** (1,270 of 1,275 participants resolved via the new `f_trade_participant` table, 99.6%) and a **refined movement_type taxonomy** (promotion / demotion / intra_org_lateral / waiver_or_other / trade — replacing the catch-all `team_change`). UI/product design captured in [UI_DESIGN.md](UI_DESIGN.md) + decisions D13/D14/D15. Audit modules de-hardcoded the season year so reconcile/coverage/advanced auto-track the in-game calendar. **Phase 3 (UI implementation) is the next phase.**
 
 ---
 

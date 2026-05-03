@@ -766,3 +766,37 @@ chasing for v1; the trades themselves are still all surfaced via
 structured columns covered the use case for movement attribution.
 Reserve the parser for richer narrative surfaces (3-team trade
 storytelling, draft-pick / cash flow visualization, AI summary copy).
+
+## player_movements — movement_type taxonomy (2026-05-06)
+
+After trade attribution shipped, the generic `team_change` value was
+split into 5 specific subtypes using the org rollup + level data we
+already had. The full enumeration on `player_movements.movement_type`:
+
+| value | rule | rows | share |
+|---|---|---:|---:|
+| promotion | same org, `to_level_id < from_level_id` | 20,141 | 21.1% |
+| demotion | same org, `to_level_id > from_level_id` | 18,325 | 19.2% |
+| first_appearance | first dump in which we observed the player | 15,992 | 16.7% |
+| signed | from no team (0) to a team | 12,243 | 12.8% |
+| released | from a team to no team (0) | 11,766 | 12.3% |
+| intra_org_lateral | same org, same level (or one level NULL) | 6,288 | 6.6% |
+| waiver_or_other | different org, no trade attribution | 4,772 | 5.0% |
+| retired | retired flag turned on | 2,526 | 2.6% |
+| drafted | from the draft source | 2,320 | 2.4% |
+| trade | team change matched to a `trade_event` (carries `trade_id`) | 1,270 | 1.3% |
+| unretired | retired flag turned off | small | small |
+
+OOTP level conventions: 1=MLB, 2=AAA, 3=AA, 4=A+, 5=A, 6=Rookie/FCL,
+7+=DSL/etc. **Lower level_id = closer to the majors**, so a promotion
+moves *to* a smaller level_id. Filter `to_level_id = 1` for
+"promotions to MLB specifically."
+
+Org rollup (used both here and in trade attribution):
+`COALESCE(NULLIF(parent_team_id, 0), team_id)` — if a team has a
+parent_team_id it's a farm club and rolls up; if parent_team_id = 0
+it IS the parent (MLB level).
+
+`waiver_or_other` is a catch-all for cross-org moves with no trade
+attribution. Most are waiver claims; some may be paid transfers or
+MiLB Rule 5 selections that OOTP doesn't surface as trades.
