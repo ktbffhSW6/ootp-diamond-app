@@ -644,3 +644,64 @@ For players who split a season across levels (AAA call-up, etc.),
 IE shows the **combined total slash line** but applies a level-weighted
 park factor we don't fully model. These players will mismatch this
 formula by ~5-15 OPS+ points. Logged as a known limitation.
+
+## xBA / xSLG / xwOBA — structural-limit D-tier (2026-05-04 EDA)
+
+Two probes (`scripts/xstats_eda.py`, `scripts/xstats_3d.py`) tested whether
+the at-bat log alone (EV, LA, hit_loc, hit_xy) can replicate IE's xstats.
+Conclusion: **no.** Logging here so we don't re-attempt this from scratch.
+
+### Probe 1: 2D EV × LA bucket model (5 EV × 6 LA = 30 cells)
+
+Built empirical (BA, SLG, wOBA) lookup per (EV-bucket, LA-bucket) across
+all 781K regular-season MLB BIP. Applied per-player using AB as denominator
+(K's correctly count as 0-hit attempts).
+
+| Stat   | MAE    | Pearson r | match-rate within IE display tol |
+|--------|--------|-----------|-----------------------------------|
+| xBA    | 0.048  | 0.29      | 12.9% (±0.010)                    |
+| xSLG   | 0.082  | 0.55      | 12.9% (±0.020)                    |
+| xwOBA  | 0.057  | 0.47      | 3.5% (±0.015)                     |
+
+### Probe 2: 3D EV × LA × hit_loc with Empirical-Bayes shrinkage
+
+89 distinct hit_loc values × 30 (EV,LA) cells = 1,366 populated 3D cells.
+Thin cells (n<20) shrunk toward the 2D fallback at k=20.
+
+| Stat   | MAE    | Pearson r | bias    |
+|--------|--------|-----------|---------|
+| xBA    | 0.048  | 0.34      | +0.036  |
+| xSLG   | 0.086  | 0.55      | +0.061  |
+| xwOBA  | 0.058  | 0.49      | +0.048  |
+
+Adding hit_loc moved r by 0.05 at most. Almost no signal.
+
+### What this means
+
+1. **The +0.036 bias is the smoking gun.** Every high-BIP player has derived
+   xBA ~0.025-0.045 *higher* than IE. That's 3× the spread of IE xBA values
+   themselves (sd ~0.022 among 200+ BIP players). It's a real adjustment OOTP
+   is making, not noise.
+2. **r plateaus at ~0.5 even with hit_loc.** EV+LA+hit_loc explains less than
+   half of IE's xstat variance. Something else dominates.
+3. **Most likely candidates** for the missing input — neither recoverable
+   from the at-bat log:
+   - `players_batting.contact` / `gap_power` / `power` rating (OOTP reads
+     batter rating directly into expected-outcome)
+   - Per-pitch / per-pitcher quality adjustment (a 95mph LD against a Cy
+     Young is "expected" differently than vs. AAA filler)
+
+### Verdict
+
+xBA/xSLG/xwOBA are **structural-limit D-tier** — same category as the
+F-tier plate-discipline columns from D5. We have the cleanest possible
+inputs (99.9% EV/LA coverage) and a 3D bucket model represents the
+empirical ceiling at MAE ~0.05 / r ~0.4. Reaching IE display tolerance
+(±0.010) would require reading player ratings directly, which is
+self-referential since ratings are themselves audit inputs.
+
+xERA was not separately probed but expected to behave identically
+(same input shape on `opponent_player_id`).
+
+EDA scripts retained at `scripts/xstats_eda.py` and `scripts/xstats_3d.py`
+as the empirical evidence behind this finding.

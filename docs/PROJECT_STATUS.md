@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-04 (in-game year 2029) — third pass: SIERA decoded; all C-tier cells eliminated
+**Last updated**: 2026-05-04 (in-game year 2029) — D-tier xstats EDA confirms structural ceiling; audit phase complete
 
 ---
 
@@ -146,7 +146,7 @@ Remaining open items, all logged in [BACKLOG.md](BACKLOG.md):
 
 **Non-blocking finishing touches (audit):**
 - **Multi-level OPS+/ERA+ refinement** — ~5-10pp error on ~12 players who split a season between MLB and AAA. Hypothesis: OOTP applies a level-weighted park factor we don't model. To investigate: extract per-level slash + park factors and compute weighted average.
-- **D-tier xstats modeling** (xBA/xSLG/xwOBA/xERA, 7 cells) — train a multinomial classifier on (EV, LA) → outcome from our 1.2M at-bat events; aggregate per player. ~5 hours of work; expected 70-85% match. Doubles as a Phase-2 analysis-layer feature.
+- **~~D-tier xstats modeling~~** (xBA/xSLG/xwOBA/xERA, 7 cells) — INVESTIGATED 2026-05-04, structural-limit D-tier confirmed. EDA in `scripts/xstats_eda.py` and `scripts/xstats_3d.py`: 2D EV×LA bucket gets MAE 0.048 / r 0.29 on xBA; adding hit_loc (3D, 1,366 cells with EB shrinkage) only nudges r to 0.34. Systematic +0.036 bias indicates OOTP reads ratings/pitcher-quality directly into xstats — not recoverable from at-bat features alone. See DATA_NOTES.md "xBA / xSLG / xwOBA — structural-limit D-tier" for evidence. Closed as non-derivable; future analysis-layer features can use the bucket model as a "good-enough" approximation but it will never match IE display.
 - **hit_loc-based spray classification** — Pull/Cent/Oppo% currently 6-29% match. Investigation showed hit_xy x-binning doesn't fit; OOTP likely uses per-event spray logic involving hit_loc. Open-ended research item.
 - **Personality "Type" archetype** (Captain/Selfish/etc.) — derived from 5 traits + scouting accuracy; out of scope for v1.
 - **Verify 13 unmapped LeaderCategory codes** now that SIERA / RC / wOBA / FIP are derivable; rerun matcher to label them.
