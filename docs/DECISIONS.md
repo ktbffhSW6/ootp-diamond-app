@@ -92,3 +92,18 @@
 - AL/NL split per BBR convention — rejected because empirically no-op in this save and adds complexity without precision gain.
 - Aggregate international leagues with US-MLB at the same level_id — rejected because the run environments are unrelated; would distort everyone.
 - Compute one season-aggregate sabermetric across a player's mixed-level rows — rejected because the underlying scales differ between levels (AAA wOBA scale ≠ MLB wOBA scale), making the aggregate statistically meaningless.
+
+## D12 — Scouted ratings only; never expose objective ratings
+
+**Date**: 2026-05-05
+**Decision**: Diamond surfaces only the **user's-org-scouted** view of player ratings (`players_scouted_ratings.csv` filtered to `scouting_team_id = <user's MLB team_id>`, which is `4` for the Red Sox in "Building the Green Monster"). The objective/true ratings — available in the dump as `scouting_team_id = 0` rows in the same file — are **explicitly not exposed** anywhere in the product: not in derived tables, not in views, not in CLI output, not in any future UI.
+**Why**: OOTP's scouting-accuracy mechanic is a load-bearing piece of the GM experience. The whole reason the Sox might rate a prospect's contact tool at 30 while the truth is 35 is that scouting is imperfect — and acting on that imperfect view *is the game*. A tool that quietly reveals the true rating would let the user metagame their own save: trade away players the system says are overrated, draft players the system says are underrated, etc. That collapses the franchise simulation into a cheat sheet. Diamond is built to deepen the GM experience, not undercut it.
+**How to apply**:
+- Every rating-bearing query, view, or table joins `players_scouted_ratings` with the WHERE clause `scouting_team_id = <user_org_team_id>`. No exceptions.
+- The user-org team_id lives in `SaveConfig` (currently hardcoded `BOSTON_MLB_TEAM = 4`; v2 save-setup picker per D3 must include selecting the user's MLB org).
+- The L1 ingest pipeline must NOT load `scouting_team_id = 0` rows from `players_scouted_ratings.csv` — drop them at the L0→L1 boundary so they can't be reached by accident. (L0 keeps everything per provenance, but no L1+ table or view filters in team_id=0.)
+- A linter / reconciliation check should grep the codebase for `scouting_team_id = 0` and `scouting_team_id=0` and fail if found outside the L0→L1 filter itself.
+**Alternatives considered**:
+- Expose both views with a "show truth" toggle — rejected. Trivially easy to leave on, defeats the purpose, and once the truth is in the UI it's hard to un-see even if hidden again.
+- Default to scouted, expose objective behind a `--cheat` flag — rejected. Same problem at lower friction.
+- Use `team_id = 0` as a fallback when the user's scouts haven't graded a player — rejected. The dump's `team_id = 4` rows already cover all 18,130 scoped players; there is no gap to fill, and "the scout doesn't have an opinion" is itself meaningful information that shouldn't be silently substituted.
