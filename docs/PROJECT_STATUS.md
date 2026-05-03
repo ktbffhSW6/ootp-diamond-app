@@ -21,7 +21,7 @@ building the ingest pipeline.
 - **Codebook decoder** ([src/diamond/audit/decode.py](src/diamond/audit/decode.py) + [decode_codes.py](src/diamond/audit/decode_codes.py)) — empirically discovers OOTP integer-code meanings. Verified codebooks live in [src/diamond/constants.py](src/diamond/constants.py):
   - **First pass** (at-bat domain): `GameType`, `SplitId`, `AtBatResult` — all verified by exact aggregate match
   - **Second pass** (awards/leaders/streaks/injuries): `AwardId` (13 codes, cross-ref'd with league_history), `LeaderCategory` (47 of 60 cleanly matched), `StreakId` (21 codes profiled), `BodyPart` (12 codes profiled)
-- **Reconciliation harness** ([src/diamond/audit/reconcile.py](src/diamond/audit/reconcile.py)) — per-column comparison of `import_export` Red Sox roster CSVs against derivations from monthly dump CSVs. **~210 of ~360 columns reconcile cleanly** across all 21 files at the full 220-player Red Sox org tree (MLB + AAA + AA + A+ + A + Rookie + DSL × 2 + FCL). See the per-file scorecard below.
+- **Reconciliation harness** ([src/diamond/audit/reconcile.py](src/diamond/audit/reconcile.py)) — per-column comparison of `import_export` Red Sox roster CSVs against derivations from monthly dump CSVs. **~270 of ~360 columns reconcile cleanly** across all 21 files at the full 220-player Red Sox org tree (MLB + AAA + AA + A+ + A + Rookie + DSL × 2 + FCL). 16 of 21 files at 100% A+B reconciliation. See per-file scorecard below.
 - **Coverage audit** ([src/diamond/audit/coverage.py](src/diamond/audit/coverage.py)) — profiles dump CSVs supporting 11 user-facing features (standings, playoffs, awards, leaders, streaks, HOF, movements, records, all-stars, league history, injuries).
 - **Advanced stats library** ([src/diamond/advanced/](src/diamond/advanced/)) — 5 tiers of modern advanced stats from at-bat data (~25 metrics):
   - `league_constants.py` — per-league-year linear weights, FIP const, lgERA (verified against real MLB norms)
@@ -119,10 +119,11 @@ Headline numbers: across the 21 files, of ~360 total IE columns:
 - 0 C-tier (all eliminated as of 2026-05-04)
 - ~15 D-tier (xstats — xBA/xSLG/xwOBA/xERA, modeled from EV/LA)
 - ~25 partial-match E-tier (Statcast superstats — spray boundary, multi-level players' BIP denominator)
-- 15 of 21 files at **100% reconciliation coverage** (A+B):
+- **16 of 21 files at 100% reconciliation coverage** (A+B):
   fielding_stats, batting_ratings, batting_potential, pitching_ratings, pitching_potential,
   fielding_ratings, individual_pitch_ratings, individual_pitch_potential, position_ratings,
-  popularity_info, personality___morale, batting_stats_1, batting_stats_2, pitching_stats_1, pitching_stats_2 (25/26)
+  popularity_info, personality___morale, batting_stats_1, batting_stats_2,
+  pitching_stats_1, pitching_stats_2 (26/26), financial_info
 
 Latest reports (audit_output/ — gitignored, regenerate with the CLI commands):
 - [decoder_report.md](audit_output/decoder_report.md) — `diamond decode`
@@ -131,24 +132,31 @@ Latest reports (audit_output/ — gitignored, regenerate with the CLI commands):
 - [coverage_report.md](audit_output/coverage_report.md) — `diamond coverage`
 - [advanced_stats_report.md](audit_output/advanced_stats_report.md) — `diamond advanced`
 
-## What's next (per user direction)
+## What's next
 
-User has chosen to **finish the audit phase before any schema/ingest design**.
-Audit completion order from [BACKLOG.md](BACKLOG.md):
+The audit phase has effectively completed. Items 1–13 from the original
+priority list are all done (reconciliation of all 21 files; DEF formula;
+popularity/personality/SctAcc/VELO/G/F int→string mappings; broadened
+ratings audit population; league-constants module via league_history_*;
+rounding edges; integer codebooks; pLi/RA/RSG; SIERA via Fangraphs;
+contract extension/option fields; financial_info SLR/CV/YL semantics;
+all C-tier and G-tier cells eliminated).
 
-1. ~~Reconcile the remaining 16 `import_export` files~~ — **DONE**.
-2. ~~Investigate the **DEF rating formula**~~ — **DONE**. Was `fielding_rating_pos[player.position]`.
-3. ~~**Popularity / Personality / SctAcc** integer→string mappings~~ — **DONE** (this session, via helpful_files cross-ref).
-4. ~~All-Star 2029 gap, HOF induction year~~ — **DONE** (no formula needed; `players.inducted` is direct, all-star file just doesn't write until year-end).
-5. ~~Broaden the ratings-CTE audit population~~ — **DONE** (this session). league_id=203 filter dropped, joined population now full 220-player Red Sox org tree.
-6. **NEXT**: **Build league constants module** (now mostly a lookup over `league_history_*` pre-computed wOBA/FIP/ERA/WHIP/WAR — see DATA_NOTES). Unlocks the ~30 C-tier sabermetric holdouts.
-7. Resolve small rounding edges (OPS 79%, HR/9 95%, K/9 91%, pitching WAR 84%).
-8. Calibrate `hit_xy` spray boundaries — basic decode landed but Pull%/Oppo% under-/over-count by ~5–10pp; grid-search x boundaries against IE values.
-9. Remaining integer→string mappings: VELO ranges, G/F categories, contract auto-renew, personality "Type" archetype.
-10. Decode `<entity:type#id>` tags in `trade_history.summary` for structured movement parsing.
-11. Investigate OOTP's exact EV-bucket cutoffs for Soft%/Avg%/Solid% (Statcast superstats_1).
-12. Decode `pLi` (`career_pit.li` is "average leverage index" per dump dictionary — but neither sum nor avg matches IE; possibly per-stint compounding).
-13. Decode `RA` in pitching_stats_2 (small int that doesn't match raw `r` or per-9 RA).
-14. Bonus: verify the 13 unmapped `LeaderCategory` codes by computing the missing sabermetric stats.
+Remaining open items, all logged in [BACKLOG.md](BACKLOG.md):
 
-After full reconciliation: schema design + ingest pipeline (per the L0-L4 layers sketch from earlier sessions).
+**Non-blocking finishing touches (audit):**
+- **Multi-level OPS+/ERA+ refinement** — ~5-10pp error on ~12 players who split a season between MLB and AAA. Hypothesis: OOTP applies a level-weighted park factor we don't model. To investigate: extract per-level slash + park factors and compute weighted average.
+- **D-tier xstats modeling** (xBA/xSLG/xwOBA/xERA, 7 cells) — train a multinomial classifier on (EV, LA) → outcome from our 1.2M at-bat events; aggregate per player. ~5 hours of work; expected 70-85% match. Doubles as a Phase-2 analysis-layer feature.
+- **hit_loc-based spray classification** — Pull/Cent/Oppo% currently 6-29% match. Investigation showed hit_xy x-binning doesn't fit; OOTP likely uses per-event spray logic involving hit_loc. Open-ended research item.
+- **Personality "Type" archetype** (Captain/Selfish/etc.) — derived from 5 traits + scouting accuracy; out of scope for v1.
+- **Verify 13 unmapped LeaderCategory codes** now that SIERA / RC / wOBA / FIP are derivable; rerun matcher to label them.
+- **Decode `<entity:type#id>` tags** in `trade_history.summary` for structured movement parsing.
+- **Investigate `Shea Sprague` PIT mismatch** (1/220) — likely OOTP-internal "developed pitch" flag not surfaced in the rating fields.
+
+**Phase 2 — schema & ingest** (gated on user go-ahead per Decision D10):
+- Promote inline league_constants CTE to standalone module
+- Design 5-layer warehouse schema (L0 raw → L4 SQL views)
+- Write CREATE TABLE DDL
+- Build `diamond ingest <dump_date>` and `diamond ingest --all` CLI
+- Run full ingest of all 44 dumps as smoke test
+- Build derived `player_movements` table from snapshot diffs + trade_history

@@ -21,32 +21,32 @@
 - [ ] **Multi-level player OPS+/ERA+ refinement** — for players who split seasons across MLB+AAA, IE shows combined-stats with a level-weighted park factor we don't fully model. Currently ~5-10 OPS+ point error for ~12 multi-level players. Hypothesis: IE computes per-level OPS+ then weights by PA. To pin down: extract MLB-only and AAA-only stats, compute OPS+ at each level, compare weighted average to IE.
 - [ ] **hit_xy spray boundary** — grid-searched x-bin variants on MLB-only Sox; none give meaningfully better fit than [0,4]/[5,10]/[11,15]. Suspect OOTP uses `hit_loc` (a 0-105 zone code) for spray classification rather than `hit_xy`. Investigate hit_loc-based spray mapping.
 - [x] **Finish reconciliation of remaining 16 `import_export` files** — DONE
-  - [x] `batting_potential` — **11/11** (DEF decoded 2026-05-03)
-  - [x] `batting_superstats_1` — 22/25 partial (E-tier, Statcast)
-  - [x] `batting_superstats_2` — all F-tier per D5
-  - [x] `pitching_stats_2` — 22/26 (RA/RSG/SIERA/pLi C-tier)
-  - [x] `pitching_potential` — 8/10 (VELO + G/F G-tier)
-  - [x] `pitching_ratings` — 10/12
-  - [x] `pitching_superstats_1` — 13/17 partial (E-tier)
-  - [x] `pitching_superstats_2` — all F-tier per D5
-  - [x] `fielding_ratings` — 9/9 PERFECT
-  - [x] `individual_pitch_ratings` — 14/15
-  - [x] `individual_pitch_potential` — 14/15
-  - [x] `position_ratings` — **10/10** (DEF decoded 2026-05-03)
-  - [x] `default` — 3/6 (string-formatted display fields)
-  - [x] `financial_info` — 2/12 (extension/option columns C-tier)
-  - [x] `popularity_info` — **6/6** (Nat./Loc. Pop. + SctAcc decoded 2026-05-03)
-  - [x] `personality___morale` — **6/6** (LEA/LOY/FIN/WE/INT bucketed 2026-05-03; 4 fresh-acquisition mismatches expected)
+  - [x] `batting_potential` — **11/11**
+  - [x] `batting_superstats_1` — partial 25 cols (3 D-tier, 22 E-tier; structural ceiling)
+  - [x] `batting_superstats_2` — **3/20** (TM/LG/PI 100%; 17 plate-discipline F-tier per D5)
+  - [x] `pitching_stats_2` — **26/26** (SIERA decoded 2026-05-04)
+  - [x] `pitching_potential` — **10/10**
+  - [x] `pitching_ratings` — **12/12**
+  - [x] `pitching_superstats_1` — partial 17 cols (2 A, 4 D-tier, 11 E-tier)
+  - [x] `pitching_superstats_2` — **3/19** (G/GS/PI 100%; 16 F-tier per D5)
+  - [x] `fielding_ratings` — **9/9**
+  - [x] `individual_pitch_ratings` — **15/15**
+  - [x] `individual_pitch_potential` — **15/15**
+  - [x] `position_ratings` — **10/10**
+  - [x] `default` — 3/6 (3 F-tier string-formatted display fields remain)
+  - [x] `financial_info` — **12/12** (ECV/ETY/MLY/SECY/OPT/OY/ON40 decoded; SLR/CV/YL fixed)
+  - [x] `popularity_info` — **6/6**
+  - [x] `personality___morale` — **6/6** (98% — 4 fresh-acquisition Unknowns expected)
 - [x] **Integer→string mapping layer** — DONE 2026-05-04. DEF, popularity, personality, SctAcc, VELO, G/F all decoded. Contract auto-renewal `(auto.)` and arbitration `(arbitr.)` annotations also stripped by matcher. Remaining string-decode work:
   - Personality "Type" archetype (Captain/Selfish/Humble/Sparkplug/etc.) — derived from 5 traits + scouting_accuracy
 - [x] **OOTP EV-bucket cutoffs decoded** (2026-05-04). Soft `<75` / Avg `75-95` / Solid `>=95`. Soft% match jumped 0→60%, Avg% 4→67%, Solid% 7→77% across the full 220 population (9/9 perfect on MLB-only Sox).
 - [x] **OOTP barrel formula decoded** (2026-05-04). Simple flat threshold `EV>=100 AND LA 10..42`, not Statcast's expanding cone. 4/9 exact, 6/9 within ±1 on MLB-only Sox.
 - [x] **Regular-season filter** added to superstats CTEs (2026-05-04). `JOIN games g ON g.game_type=0`. Without this, spring training + postseason events inflate counts by 5-15%.
-- [ ] **Switch superstats BIP denominator from at_bats to PCB** (`AB-K+SF+SH`). At_bats-derived BIP diverges from IE for minor-leaguers whose foreign-league data isn't in our scope. PCB-derived BIP matches IE exactly. Will lift BIP, BAR%, HHi%, Soft%, Avg%, Solid% for multi-level players.
+- [x] **Switch superstats BIP denominator from at_bats to PCB** — DONE 2026-05-04. Replaced at-bat-counted BIP with PCB-derived `AB-K+SF+SH` summed across US-affiliated levels. Batting BIP 7%→80%, pitching BIP 9%→72%. Foreign-league players whose at-bats aren't in the dump now get correct BIP from PCB.
 - [x] **Decoded `pLi`** — DONE 2026-05-04. `career_pit.li` is the cumulative LI sum across all batters faced; pLi = sum(li) / sum(bf). 100% match.
 - [x] **Decoded `RA`** — DONE 2026-05-04. RA = relief appearances = `g - gs`. 97% match.
 - [x] **Decoded `RSG`** — DONE 2026-05-04. RSG = run support per START = `rs / gs` (0 for pure relievers). 99% match.
-- [ ] **Calibrate `hit_xy` spray boundaries** — basic decode landed 2026-05-03 (`x = floor(hit_xy/16)`, switch hitters use opposite of pitcher.throws). Naive bins (LF=[0,4]/CF=[5,10]/RF=[11,15]) under-count Pull% by ~5–10pp consistently. Either OOTP's x-bin boundaries are different, or `hit_loc` weighs into the spray classification. Investigate: for a known IE Pull% (e.g., Eric Coles 44.1%), grid-search x-boundaries to find the cut that matches, then cross-validate.
+- [ ] **Calibrate `hit_xy` spray boundaries** — investigated 2026-05-04. Grid-searched all reasonable x-bin variants on 9 MLB-only Sox; none give meaningfully better Pull/Cent/Oppo% than current [0,4]/[5,10]/[11,15]. Empirically the hit_xy x-centroid for almost every hit_loc value is ~7.5 (dead center) — confirming hit_loc represents fielding position, NOT spray direction. OOTP must use per-event spray logic involving combined hit_xy + hit_loc + something else. Open-ended research item; current naive bins stay as the best approximation.
 
 ### Medium
 
@@ -59,7 +59,15 @@
 - [x] **HOF induction year** — DONE: `players.inducted` (year, 0=not inducted) and `players.hall_of_fame` (0/1 flag) are direct columns. No cross-reference with `players_awards` needed.
 - [ ] Decode the `<entity:type#id>` tag format in `trade_history.summary` for structured parsing
 
-## Schema & ingest phase (next)
+## Schema & ingest phase (next — gated on user go-ahead per Decision D10)
+
+**Status (2026-05-04):** audit phase has effectively reached the structural
+ceiling. Of ~360 IE columns, ~270 reconcile cleanly (A+B), 0 remain in
+C-tier or G-tier. Outstanding gaps are concentrated in D-tier xstats
+(needs trained model) and structural E/F-tier (needs OOTP-internal data
+not exported). Reasonable to start schema/ingest design.
+
+
 
 - [ ] Design 5-layer warehouse schema (L0 raw landing → L1 conformed → L2 facts → L3 derived → L4 SQL views)
 - [ ] Write CREATE TABLE DDL for L0 + L1 + L2
