@@ -41,7 +41,12 @@ players) and documented as such. Safe to design schema.
 - [x] Build per-ingest reconciliation report comparing ingest output to source CSVs
   (the `reconcile.py` harness becomes a regression check per D8) —
   done 2026-05-05. `--source warehouse` flag; output byte-identical to CSV mode.
-- [ ] Build derived `player_movements` table from snapshot diffs + `trade_history`.
+- [x] Build derived `player_movements` table from snapshot diffs + `trade_history` —
+  done 2026-05-05. `src/diamond/schema/l3.py` first L3 table. 95,643 movements
+  across 45 dumps. Trade attribution deferred until trade_history.summary
+  parser lands (audit carry-forward).
+
+**Phase 2 (Schema & Ingest) closed.** Move on to UI phase.
 
 ## Audit phase — carry-forward (non-blocking)
 

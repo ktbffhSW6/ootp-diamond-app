@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-05 (in-game year 2029) — Phase 2 6 of 7 done (only `player_movements` left). UI/product design captured in [UI_DESIGN.md](UI_DESIGN.md) + decisions D13/D14/D15.
+**Last updated**: 2026-05-05 (in-game year 2029) — **Phase 2 closed**. All 7 items complete: warehouse built, ingest pipeline live, full --all ingest verified (45 dumps, 3.9 GB), reconcile harness wired to L1, `player_movements` shipping. UI/product design captured in [UI_DESIGN.md](UI_DESIGN.md) + decisions D13/D14/D15. **Phase 3 (UI implementation) is the next phase.**
 
 ---
 
@@ -125,13 +125,15 @@ Per [BACKLOG.md](BACKLOG.md), in priority order:
 6. ~~**Wire `reconcile.py` as a post-ingest regression check** (Decision D8)~~ —
    done 2026-05-05. `--source warehouse` flag added; output verified
    byte-identical to CSV-source mode (D8 contract satisfied).
-7. **Build derived `player_movements` table** from snapshot diffs + `trade_history` —
-   only Phase 2 item remaining.
+7. ~~**Build derived `player_movements` table**~~ — done 2026-05-05.
+   `src/diamond/schema/l3.py` with snapshot-diff + draft sources.
+   95,643 movements built from 45 dumps. Trade attribution deferred until
+   `trade_history.summary` parser lands (audit carry-forward).
 
-After Phase 2: UI implementation begins per [UI_DESIGN.md](UI_DESIGN.md). Eight
-major areas captured (cockpit / player pages / leaderboards / reviews /
-promotion-demotion / universes+chart-builder / glossary / AI overlay) with
-build sequence and decisions D13–D15 locking architecture.
+**Phase 2 closed.** Phase 3 (UI implementation) is the next phase, per
+[UI_DESIGN.md](UI_DESIGN.md). Eleven items in build order: scope
+expansion → glossary → player page → demotion/promotion → leaderboards →
+universes+charts → AI overlay → cockpit → reviews → wizard → sync.
 
 Open audit carry-forward items (non-blocking, can pick up opportunistically):
 multi-level OPS+/ERA+ park weighting, hit_loc-based spray, 13 unmapped
