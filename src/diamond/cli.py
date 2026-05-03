@@ -20,8 +20,12 @@ from diamond.audit import coverage as coverage_mod
 from diamond.audit import decode as decode_mod
 from diamond.audit import decode_codes as decode_codes_mod
 from diamond.audit import reconcile as reconcile_mod
+from diamond.config import BUILDING_THE_GREEN_MONSTER
+from diamond.schema import build_warehouse, open_warehouse_db, rebuild_l1_l2
+from rich.console import Console
 
 app = typer.Typer(help="OOTP 27 monthly-dump warehouse and analysis app", no_args_is_help=True)
+_console = Console()
 
 
 @app.callback()
@@ -76,6 +80,81 @@ def decode_codes(
 ) -> None:
     """Decode the four pending codebooks (award_id, leader.category, streak_id, body_part)."""
     decode_codes_mod.run(dump=dump, output_path=output)
+
+
+@app.command()
+def ingest(
+    dump: str | None = typer.Argument(
+        None,
+        help="Dump folder name (e.g., 'dump_2029_11'). Omit with --all or --rebuild-only.",
+    ),
+    all_dumps: bool = typer.Option(
+        False, "--all", help="Ingest every dump in <save>/dump/ in chronological order."
+    ),
+    rebuild_only: bool = typer.Option(
+        False,
+        "--rebuild-only",
+        help="Skip L0 ingest entirely; only rebuild L1+L2 from existing L0 data.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Re-ingest dumps already marked 'success' in _diamond_ingests.",
+    ),
+    no_rebuild: bool = typer.Option(
+        False,
+        "--no-rebuild",
+        help="Stop after L0 ingest; skip the L1+L2 rebuild.",
+    ),
+) -> None:
+    """Ingest OOTP dumps into the warehouse and rebuild L1+L2.
+
+    Writes to <save>/diamond/diamond.duckdb (per Decision D2). The warehouse
+    is layered:
+      L0   raw landing — one dump's CSVs become 69 l0_* tables
+      L1   conformed   — 12 reference + 35 event + 21 snapshot + 6 _current views
+      L2   facts       — 8 analytical-grain tables (see docs/SCHEMA.md)
+
+    Examples:
+        diamond ingest dump_2029_11        # ingest one dump + rebuild L1+L2
+        diamond ingest --all               # walk every dump folder in order
+        diamond ingest --rebuild-only      # rebuild L1+L2 from current L0
+        diamond ingest dump_2029_11 --force --no-rebuild   # L0 only, force re-ingest
+    """
+    save = BUILDING_THE_GREEN_MONSTER
+
+    # Argument validation: exactly one of {dump, --all, --rebuild-only}
+    modes = sum([dump is not None, all_dumps, rebuild_only])
+    if modes != 1:
+        _console.print(
+            "[red]Specify exactly one of:[/red] a dump name, --all, or --rebuild-only."
+        )
+        raise typer.Exit(1)
+
+    con = open_warehouse_db(save)
+    db_path = save.save_dir / "diamond" / "diamond.duckdb"
+    _console.print(f"[bold]Warehouse:[/bold] {db_path}\n")
+
+    try:
+        if rebuild_only:
+            rebuild_l1_l2(con, save, verbose=True)
+        else:
+            dumps_arg = None if all_dumps else [dump]
+            result = build_warehouse(
+                con,
+                save,
+                dumps=dumps_arg,
+                force=force,
+                rebuild=not no_rebuild,
+                verbose=True,
+                quiet_per_dump=all_dumps,  # cleaner output for --all
+            )
+            _console.print(
+                f"\n[bold]Summary:[/bold] {len(result['ingested'])} ingested, "
+                f"{len(result['skipped'])} skipped."
+            )
+    finally:
+        con.close()
 
 
 @app.command()

@@ -1,12 +1,18 @@
 """Warehouse build orchestrator.
 
-Currently exposes:
-  - init_admin_tables(con)             — create _diamond_ingests if missing
-  - record_ingest_start / _done        — admin-table bookkeeping
-  - dump_name_to_date(name)            — 'dump_2029_11' → date(2029, 11, 1)
-  - build_l0(con, save, dump_name)     — ingest one dump's CSVs into l0_*
+Public entry points:
 
-Future phases will add build_l1 / build_l2 here.
+  Per-layer (called individually by the smoke test):
+    init_admin_tables(con)             — create _diamond_ingests if missing
+    record_ingest_start / _done        — admin-table bookkeeping
+    dump_name_to_date(name)            — 'dump_2029_11' → date(2029, 11, 1)
+    build_l0(con, save, dump_name)     — ingest one dump's CSVs into l0_*
+
+  High-level (called by the `diamond ingest` CLI):
+    open_warehouse_db(save)            — open <save>/diamond/diamond.duckdb (D2)
+    ingest_dump(con, save, name, ...)  — single-dump L0 ingest with skip-if-success
+    rebuild_l1_l2(con, save, ...)      — full L1+L2 rebuild (cheap; ~30s)
+    build_warehouse(con, save, ...)    — full pipeline orchestrator
 
 The L0 build is dynamic CTAS / INSERT — DuckDB infers types from the CSVs
 via `read_csv_auto(sample_size=-1)`, which has been the working pattern
@@ -189,6 +195,19 @@ def _ingest_one_l0_table(
     return n
 
 
+def already_ingested(
+    con: duckdb.DuckDBPyConnection,
+    dump_name: str,
+) -> bool:
+    """Return True if `_diamond_ingests` shows this dump as 'success'."""
+    init_admin_tables(con)
+    row = con.execute(
+        "SELECT 1 FROM _diamond_ingests WHERE dump_name = ? AND status = 'success' LIMIT 1",
+        [dump_name],
+    ).fetchone()
+    return row is not None
+
+
 def build_l0(
     con: duckdb.DuckDBPyConnection,
     save: SaveConfig,
@@ -244,3 +263,169 @@ def build_l0(
                 f"from this dump (see above)."
             )
     return rows_per_table
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# High-level orchestration
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def open_warehouse_db(save: SaveConfig) -> duckdb.DuckDBPyConnection:
+    """Open (creating if needed) the per-save DuckDB at <save>/diamond/diamond.duckdb.
+
+    Per Decision D2, each save gets its own warehouse DB alongside its
+    `dump/` and `import_export/` folders. The `diamond/` subdirectory is
+    created if missing.
+    """
+    db_dir = save.save_dir / "diamond"
+    db_dir.mkdir(parents=True, exist_ok=True)
+    db_path = db_dir / "diamond.duckdb"
+    return duckdb.connect(str(db_path))
+
+
+def ingest_dump(
+    con: duckdb.DuckDBPyConnection,
+    save: SaveConfig,
+    dump_name: str,
+    *,
+    force: bool = False,
+    verbose: bool = True,
+) -> tuple[bool, dict[str, int]]:
+    """Ingest a single dump's CSVs into L0.
+
+    Returns (was_ingested, rows_per_table). If the dump is already 'success'
+    in `_diamond_ingests` and `force=False`, returns (False, {}).
+
+    Idempotent regardless: build_l0 itself uses DELETE-then-INSERT keyed on
+    dump_date, so re-ingesting (even with --force) is safe.
+    """
+    if not force and already_ingested(con, dump_name):
+        if verbose:
+            console.print(
+                f"[dim]Already ingested:[/dim] {dump_name} "
+                f"[dim](use --force to override)[/dim]"
+            )
+        return False, {}
+    rows = build_l0(con, save, dump_name, verbose=verbose)
+    return True, rows
+
+
+def rebuild_l1_l2(
+    con: duckdb.DuckDBPyConnection,
+    save: SaveConfig,
+    *,
+    verbose: bool = True,
+) -> dict[str, dict[str, int]]:
+    """Drop-and-rebuild L1 (machinery + reference + event + snapshot) and L2.
+
+    All builders are idempotent (CREATE OR REPLACE). Cheap enough to run
+    after every L0 ingest — measured at ~30s for the full warehouse on
+    "Building the Green Monster".
+
+    Returns nested dict of `{layer: {table_name: row_count}}`.
+    """
+    # Late imports avoid pulling these into module-import time when the
+    # schema package's other modules import build.py.
+    from diamond.schema.l1_event import build_l1_event
+    from diamond.schema.l1_machinery import build_l1_machinery
+    from diamond.schema.l1_reference import build_l1_reference
+    from diamond.schema.l1_snapshot import build_l1_snapshot
+    from diamond.schema.l2 import build_l2
+
+    out: dict[str, dict[str, int]] = {}
+    if verbose:
+        console.rule("L1 machinery")
+    out["l1_machinery"] = build_l1_machinery(con, save, verbose=verbose)
+    if verbose:
+        console.rule("L1 reference")
+    out["l1_reference"] = build_l1_reference(con, verbose=verbose)
+    if verbose:
+        console.rule("L1 events")
+    out["l1_event"] = build_l1_event(con, verbose=verbose)
+    if verbose:
+        console.rule("L1 snapshots")
+    out["l1_snapshot"] = build_l1_snapshot(con, save, verbose=verbose)
+    if verbose:
+        console.rule("L2 facts")
+    out["l2"] = build_l2(con, verbose=verbose)
+    return out
+
+
+def build_warehouse(
+    con: duckdb.DuckDBPyConnection,
+    save: SaveConfig,
+    *,
+    dumps: list[str] | None = None,
+    force: bool = False,
+    rebuild: bool = True,
+    verbose: bool = True,
+    quiet_per_dump: bool = False,
+) -> dict:
+    """Full ingest + rebuild orchestrator.
+
+    Args:
+        dumps: list of dump names to ingest. None means "all dumps in
+               `<save>/dump/` in chronological order".
+        force: re-ingest dumps already marked 'success'.
+        rebuild: after L0 ingest(s), rebuild L1+L2. Set False to defer
+                 the rebuild (e.g., during a multi-step pipeline).
+        verbose: master verbose flag.
+        quiet_per_dump: when ingesting many dumps, suppress the per-table
+                       row-count rows; show one summary line per dump
+                       instead. The L1+L2 rebuild remains verbose.
+
+    Returns: dict with keys
+        "ingested":   list of dump names actually ingested
+        "skipped":    list of dump names skipped (already 'success')
+        "l0_rows":    {dump_name: total_rows_inserted}
+        "l1_l2":      output of rebuild_l1_l2 (or None if rebuild=False)
+    """
+    init_admin_tables(con)
+    targets = dumps if dumps is not None else save.all_dump_names()
+
+    ingested: list[str] = []
+    skipped: list[str] = []
+    l0_totals: dict[str, int] = {}
+
+    for d in targets:
+        per_dump_verbose = verbose and not quiet_per_dump
+        if verbose and quiet_per_dump:
+            console.print(f"[dim]→[/dim] {d}", end=" ")
+        elif verbose:
+            console.rule(f"L0 ingest: {d}")
+        was_ingested, rows = ingest_dump(
+            con, save, d, force=force, verbose=per_dump_verbose
+        )
+        if was_ingested:
+            ingested.append(d)
+            total = sum(rows.values())
+            l0_totals[d] = total
+            if verbose and quiet_per_dump:
+                console.print(f"[green]✓[/green] {total:,} rows")
+        else:
+            skipped.append(d)
+            if verbose and quiet_per_dump:
+                console.print("[dim]skipped[/dim]")
+
+    if verbose:
+        console.print(
+            f"\n[bold]L0 done.[/bold] Ingested {len(ingested)}, skipped "
+            f"{len(skipped)} (already 'success')."
+        )
+
+    l1_l2 = None
+    if rebuild and (ingested or force):
+        l1_l2 = rebuild_l1_l2(con, save, verbose=verbose)
+    elif rebuild and not ingested:
+        if verbose:
+            console.print(
+                "[dim]No new dumps; skipping L1+L2 rebuild "
+                "(use --force or --rebuild-only to force).[/dim]"
+            )
+
+    return {
+        "ingested": ingested,
+        "skipped": skipped,
+        "l0_rows": l0_totals,
+        "l1_l2": l1_l2,
+    }

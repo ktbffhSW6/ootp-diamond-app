@@ -35,9 +35,14 @@ from diamond.schema.l1_snapshot import (
 from diamond.schema.l2 import build_l2
 from diamond.schema.build import (
     DIAMOND_INGESTS_DDL,
+    already_ingested,
     build_l0,
+    build_warehouse,
     dump_name_to_date,
+    ingest_dump,
     init_admin_tables,
+    open_warehouse_db,
+    rebuild_l1_l2,
     record_ingest_done,
     record_ingest_start,
 )
@@ -57,12 +62,17 @@ __all__ = [
     "build_l1_snapshot",
     "build_l2",
     "DIAMOND_INGESTS_DDL",
+    "already_ingested",
     "build_l0",
     "build_l1_machinery",
     "build_l1_reference",
     "build_l1_event",
+    "build_warehouse",
     "dump_name_to_date",
+    "ingest_dump",
     "init_admin_tables",
+    "open_warehouse_db",
+    "rebuild_l1_l2",
     "record_ingest_done",
     "record_ingest_start",
 ]
