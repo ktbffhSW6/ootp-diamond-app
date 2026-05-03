@@ -33,6 +33,7 @@ from diamond.schema.l1_snapshot import (
     build_l1_snapshot,
 )
 from diamond.schema.l2 import build_l2
+from diamond.schema.l3 import build_l3
 from diamond.schema.build import (
     DIAMOND_INGESTS_DDL,
     already_ingested,
@@ -61,6 +62,7 @@ __all__ = [
     "GENERIC_SNAPSHOTS",
     "build_l1_snapshot",
     "build_l2",
+    "build_l3",
     "DIAMOND_INGESTS_DDL",
     "already_ingested",
     "build_l0",

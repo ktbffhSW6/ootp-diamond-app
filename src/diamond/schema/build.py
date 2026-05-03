@@ -316,13 +316,16 @@ def rebuild_l1_l2(
     *,
     verbose: bool = True,
 ) -> dict[str, dict[str, int]]:
-    """Drop-and-rebuild L1 (machinery + reference + event + snapshot) and L2.
+    """Drop-and-rebuild L1 (machinery + reference + event + snapshot), L2, and L3.
 
     All builders are idempotent (CREATE OR REPLACE). Cheap enough to run
     after every L0 ingest — measured at ~30s for the full warehouse on
     "Building the Green Monster".
 
     Returns nested dict of `{layer: {table_name: row_count}}`.
+
+    Function name kept as `rebuild_l1_l2` for backward compatibility, but
+    it now also runs L3 (player_movements). Future L3 builders append here.
     """
     # Late imports avoid pulling these into module-import time when the
     # schema package's other modules import build.py.
@@ -331,6 +334,7 @@ def rebuild_l1_l2(
     from diamond.schema.l1_reference import build_l1_reference
     from diamond.schema.l1_snapshot import build_l1_snapshot
     from diamond.schema.l2 import build_l2
+    from diamond.schema.l3 import build_l3
 
     out: dict[str, dict[str, int]] = {}
     if verbose:
@@ -348,6 +352,9 @@ def rebuild_l1_l2(
     if verbose:
         console.rule("L2 facts")
     out["l2"] = build_l2(con, verbose=verbose)
+    if verbose:
+        console.rule("L3 derived")
+    out["l3"] = build_l3(con, verbose=verbose)
     return out
 
 
