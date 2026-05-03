@@ -29,3 +29,7 @@ secrets.json
 
 # Diamond ephemera
 audit_output/
+
+# Local-only reference notes (cross-project recon material from another save;
+# kept on disk for mining but not version-controlled)
+docs/helpful_files/
