@@ -64,9 +64,13 @@ to proceed. Pick up opportunistically.
 - [ ] **Verify 13 unmapped `leader.category` codes** by computing the missing
   derived stats (RC, wOBA, FIP, SIERA, K%, SV%, QS%, CG%, SHO%, GO/AO) and
   re-running the matcher.
-- [ ] **Investigate `Shea Sprague` PIT mismatch** (1/220 in `individual_pitch_ratings`):
-  IE shows 2 but the player has 3 non-zero pitch ratings. Likely an
-  OOTP-internal "developed pitch" flag we can't see from rating fields alone.
+- [x] **Investigate `Shea Sprague` PIT mismatch** — confirmed 2026-05-05 as
+  structurally inaccessible. Exhaustive investigation ruled out rating
+  thresholds, position/role, age/experience, rating-talent gaps,
+  evolution patterns, and other CSVs. OOTP's "developed pitch" state is
+  internal and not exposed in any dump column. Permanent 1/220 (99.5%
+  match) limitation; count-non-zero rule stays. Full investigation logged
+  in DATA_NOTES.md.
 - [ ] **Decode `<entity:type#id>` tags** in `trade_history.summary` for structured
   movement parsing (`<Houston Astros:team#12>`, `<Bryan King:player#20728>`).
 - [ ] **Personality "Type" archetype** (Captain/Selfish/Humble/Sparkplug/etc.) —
