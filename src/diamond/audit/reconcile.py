@@ -945,6 +945,16 @@ PITCHING_STATS_2 = FileSpec(
 # BIP = ground/fly outs + all hits (codes 4,5,6,7,8,9).
 # Statcast values populated mainly for MLB at-bats (non-MLB at-bats lack EV/LA).
 BATTING_SUPERSTATS_CTE = """
+-- PCB-derived BIP (AB-K+SF+SH across US-affiliated levels) matches IE far better
+-- than at-bat-counted BIP, especially for multi-level / foreign-league players
+-- whose at_bats data is incomplete. 105/126 match vs 7/128 at-bat-counted.
+pcb_bip AS (
+    SELECT player_id,
+           SUM(ab) - SUM(k) + SUM(sf) + SUM(sh) AS bip_pcb
+    FROM career_bat
+    WHERE year = 2029 AND split_id = 1 AND level_id BETWEEN 1 AND 6
+    GROUP BY player_id
+),
 ab AS (
     -- Filter to regular-season at-bats (game_type=0) only — IE Statcast cols
     -- mirror PCB split_id=1 (regular-season-only); including spring training
@@ -1025,7 +1035,9 @@ agg AS (
 derived AS (
     SELECT
         a.player_id,
-        a.bip,
+        -- BIP displayed value comes from PCB (AB-K+SF+SH); at-bat-counted bip
+        -- (a.bip) is still used as the denominator for at-bat rate stats below.
+        COALESCE(pb.bip_pcb, a.bip) AS bip,
         -- GB/FB using LA buckets (matches OOTP convention).
         ROUND(1.0 * a.gb_la / NULLIF(a.fb_la + a.pu_la, 0), 2)                           AS gb_fb,
         ROUND(100.0 * a.ld_la / NULLIF(a.bip, 0), 1)                                     AS ld_pct,
@@ -1050,6 +1062,7 @@ derived AS (
         a.hhi,
         ROUND(100.0 * a.hhi / NULLIF(a.bip, 0), 1)                                       AS hhi_pct
     FROM agg a
+    LEFT JOIN pcb_bip pb ON pb.player_id = a.player_id
 )
 """
 
@@ -1121,16 +1134,19 @@ agg AS (
     GROUP BY player_id
 ),
 gp AS (
-    SELECT player_id, SUM(g) AS g, SUM(gs) AS gs
+    SELECT player_id, SUM(g) AS g, SUM(gs) AS gs,
+        -- BIP allowed for pitchers via PCB: AB - K + SF + SH (sacs allowed
+        -- count as BIP). Better fit than at-bat-counted for multi-level pitchers.
+        SUM(ab) - SUM(k) + SUM(sf) + SUM(sh) AS bip_pcb
     FROM career_pit
-    WHERE year = 2029 AND split_id = 1
+    WHERE year = 2029 AND split_id = 1 AND level_id BETWEEN 1 AND 6
     GROUP BY player_id
 ),
 derived AS (
     SELECT
         COALESCE(a.player_id, gp.player_id) AS player_id,
         gp.g, gp.gs,
-        a.bip,
+        COALESCE(gp.bip_pcb, a.bip) AS bip,
         ROUND(1.0 * a.gb_la / NULLIF(a.fb_la + a.pu_la, 0), 2)                AS gb_fb,
         ROUND(100.0 * a.ld_la / NULLIF(a.bip, 0), 1)                          AS ld_pct,
         ROUND(100.0 * a.gb_la / NULLIF(a.bip, 0), 1)                          AS gb_pct,
@@ -1178,9 +1194,48 @@ PITCHING_SUPERSTATS_1 = FileSpec(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-F_TIER_CTE = """
+# batting_superstats_2 / pitching_superstats_2 are MOSTLY F-tier per Decision D5
+# (per-pitch zone/type data not in dump), but PI / TM / LG / G / GS are derivable.
+# PI/G/GS for IE superstats_2 use cross-level sums. Verified empirically against
+# the full Sox roster.
+SUPERSTATS_2_BAT_CTE = """
+agg AS (
+    SELECT player_id, SUM(pitches_seen) AS pi
+    FROM career_bat WHERE year = 2029 AND split_id = 1
+    GROUP BY player_id
+),
 derived AS (
-    SELECT player_id FROM scouted_ratings WHERE 1=0
+    SELECT
+        p.player_id,
+        a.pi,
+        -- TM: when player is in a pseudo-league (prs.league_id < 0, e.g., INT
+        -- = international/pre-rookie pool), IE shows '<org> (INT)' instead of
+        -- the team name. Otherwise just teams.name.
+        CASE
+            WHEN prs.league_id < 0 THEN t.name || ' (INT)'
+            ELSE t.name
+        END AS tm,
+        COALESCE(l.abbr, 'INT') AS lg
+    FROM players p
+    LEFT JOIN agg a ON a.player_id = p.player_id
+    LEFT JOIN teams t ON t.team_id = p.team_id
+    LEFT JOIN leagues l ON l.league_id = p.league_id
+    LEFT JOIN roster_status prs ON prs.player_id = p.player_id
+)
+"""
+
+SUPERSTATS_2_PIT_CTE = """
+agg AS (
+    SELECT player_id, SUM(g) AS g, SUM(gs) AS gs, SUM(pi) AS pi
+    FROM career_pit WHERE year = 2029 AND split_id = 1
+    GROUP BY player_id
+),
+derived AS (
+    SELECT
+        p.player_id,
+        a.g, a.gs, a.pi
+    FROM players p
+    LEFT JOIN agg a ON a.player_id = p.player_id
 )
 """
 
@@ -1188,12 +1243,30 @@ derived AS (
 BATTING_SUPERSTATS_2 = FileSpec(
     ie_filename="boston_red_sox_organization_-_roster_batting_superstats_2.csv",
     short_name="batting_superstats_2",
-    derived_cte=F_TIER_CTE,
-    notes="All F-tier per Decision D5 — needs per-pitch zone/type data not in dump",
+    derived_cte=SUPERSTATS_2_BAT_CTE,
+    notes="Plate-discipline % cols are F-tier per D5 (need per-pitch zone/type data); PI/TM/LG are derivable",
     cols=[
-        ColSpec(c, "NULL", "F", notes="per-pitch zone/type data not in dump")
-        for c in ("PI", "WH%", "CH%", "Z%", "CL%", "OS%", "ZS%", "SW%", "OC%",
-                 "ZC%", "CTC%", "FF%", "BR%", "OFF%", "RV-FB", "RV-BR", "RV-OFF", "RV")
+        ColSpec("TM", "tm", "A", notes="teams.name for player's current team"),
+        ColSpec("LG", "lg", "A", notes="leagues.abbr for player's current league"),
+        ColSpec("PI", "pi", "A", notes="sum(career_bat.pitches_seen)"),
+        # Per-pitch metrics (D5 — not in dump)
+        ColSpec("WH%",  "NULL", "F", notes="per-pitch zone/type data not in dump"),
+        ColSpec("CH%",  "NULL", "F"),
+        ColSpec("Z%",   "NULL", "F"),
+        ColSpec("CL%",  "NULL", "F"),
+        ColSpec("OS%",  "NULL", "F"),
+        ColSpec("ZS%",  "NULL", "F"),
+        ColSpec("SW%",  "NULL", "F"),
+        ColSpec("OC%",  "NULL", "F"),
+        ColSpec("ZC%",  "NULL", "F"),
+        ColSpec("CTC%", "NULL", "F"),
+        ColSpec("FF%",  "NULL", "F"),
+        ColSpec("BR%",  "NULL", "F"),
+        ColSpec("OFF%", "NULL", "F"),
+        ColSpec("RV-FB",  "NULL", "F"),
+        ColSpec("RV-BR",  "NULL", "F"),
+        ColSpec("RV-OFF", "NULL", "F"),
+        ColSpec("RV",     "NULL", "F"),
     ],
 )
 
@@ -1201,12 +1274,29 @@ BATTING_SUPERSTATS_2 = FileSpec(
 PITCHING_SUPERSTATS_2 = FileSpec(
     ie_filename="boston_red_sox_organization_-_roster_pitching_superstats_2.csv",
     short_name="pitching_superstats_2",
-    derived_cte=F_TIER_CTE,
-    notes="All F-tier per Decision D5",
+    derived_cte=SUPERSTATS_2_PIT_CTE,
+    notes="Plate-discipline % cols are F-tier per D5; G/GS/PI are derivable",
     cols=[
-        ColSpec(c, "NULL", "F", notes="per-pitch zone/type data not in dump")
-        for c in ("PI", "SW", "WH", "CH", "OS%", "ZS%", "SW%", "OC%", "ZC%",
-                 "Z%", "WH%", "CH%", "CL%", "RV-FB", "RV-BR", "RV-OFF", "RV")
+        ColSpec("G",  "g",  "A"),
+        ColSpec("GS", "gs", "A"),
+        ColSpec("PI", "pi", "A", notes="sum(career_pit.pi)"),
+        # Per-pitch metrics (D5 — not in dump)
+        ColSpec("SW",  "NULL", "F", notes="per-pitch zone/type data not in dump"),
+        ColSpec("WH",  "NULL", "F"),
+        ColSpec("CH",  "NULL", "F"),
+        ColSpec("OS%", "NULL", "F"),
+        ColSpec("ZS%", "NULL", "F"),
+        ColSpec("SW%", "NULL", "F"),
+        ColSpec("OC%", "NULL", "F"),
+        ColSpec("ZC%", "NULL", "F"),
+        ColSpec("Z%",  "NULL", "F"),
+        ColSpec("WH%", "NULL", "F"),
+        ColSpec("CH%", "NULL", "F"),
+        ColSpec("CL%", "NULL", "F"),
+        ColSpec("RV-FB",  "NULL", "F"),
+        ColSpec("RV-BR",  "NULL", "F"),
+        ColSpec("RV-OFF", "NULL", "F"),
+        ColSpec("RV",     "NULL", "F"),
     ],
 )
 
@@ -1369,23 +1459,72 @@ PERSONALITY_MORALE = FileSpec(
 FINANCIAL_DERIVED_CTE = """
 ct AS (
     SELECT
-        player_id, salary0, years, current_year,
-        salary0 + COALESCE(salary1,0) + COALESCE(salary2,0) + COALESCE(salary3,0)
-                + COALESCE(salary4,0) + COALESCE(salary5,0) + COALESCE(salary6,0)
-                + COALESCE(salary7,0) AS contract_value
+        player_id, years, current_year,
+        salary0, salary1, salary2, salary3, salary4, salary5, salary6, salary7,
+        salary8, salary9, salary10, salary11, salary12, salary13, salary14,
+        -- CV (Total Contract Value) = sum across ALL 15 salary slots, not just 0-7.
+        -- 12-year deals like Justin Gonzales' $120M go through salary11, missed previously.
+        COALESCE(salary0,0)+COALESCE(salary1,0)+COALESCE(salary2,0)+COALESCE(salary3,0)
+        +COALESCE(salary4,0)+COALESCE(salary5,0)+COALESCE(salary6,0)+COALESCE(salary7,0)
+        +COALESCE(salary8,0)+COALESCE(salary9,0)+COALESCE(salary10,0)+COALESCE(salary11,0)
+        +COALESCE(salary12,0)+COALESCE(salary13,0)+COALESCE(salary14,0) AS contract_value,
+        -- SLR (current-year salary) = salary[current_year].
+        -- current_year is 0-indexed: cy=0 -> first year, cy=1 -> second year.
+        -- Verified Rafaela cy=5 -> salary5=10.75M; Detmers cy=3 -> salary3=13.3M;
+        -- Gonzales cy=1 -> salary1=10M; Morgan cy=0 -> salary0=850k.
+        CASE current_year
+            WHEN 0 THEN salary0
+            WHEN 1 THEN salary1
+            WHEN 2 THEN salary2
+            WHEN 3 THEN salary3
+            WHEN 4 THEN salary4
+            WHEN 5 THEN salary5
+            WHEN 6 THEN salary6
+            WHEN 7 THEN salary7
+            WHEN 8 THEN salary8
+            WHEN 9 THEN salary9
+            WHEN 10 THEN salary10
+            WHEN 11 THEN salary11
+            WHEN 12 THEN salary12
+            WHEN 13 THEN salary13
+            WHEN 14 THEN salary14
+        END AS current_salary
     FROM contracts
+),
+ext AS (
+    SELECT
+        player_id, years AS ext_years,
+        COALESCE(salary0,0)+COALESCE(salary1,0)+COALESCE(salary2,0)+COALESCE(salary3,0)
+        +COALESCE(salary4,0)+COALESCE(salary5,0)+COALESCE(salary6,0)+COALESCE(salary7,0)
+        +COALESCE(salary8,0)+COALESCE(salary9,0)+COALESCE(salary10,0)+COALESCE(salary11,0)
+        +COALESCE(salary12,0)+COALESCE(salary13,0)+COALESCE(salary14,0) AS ext_value
+    FROM contract_extension
 ),
 derived AS (
     SELECT
         p.player_id,
         p.age,
-        ct.salary0     AS slr,
-        ct.years       AS ty,
+        ct.current_salary AS slr,
+        ct.years          AS ty,
         ct.current_year,
-        (ct.years - ct.current_year + 1) AS yl,
-        ct.contract_value AS cv
+        -- YL = years remaining = years - current_year (Detmers 4-3=1; Gonzales 12-1=11).
+        (ct.years - ct.current_year) AS yl,
+        ct.contract_value AS cv,
+        -- Extension data: when ext.ext_years = 0 there's no extension,
+        -- IE shows ECV='-' (the matcher treats '-' as null and skips).
+        CASE WHEN COALESCE(ext.ext_years, 0) > 0 THEN ext.ext_value END AS ecv,
+        COALESCE(ext.ext_years, 0) AS ety,
+        -- Roster-status fields. All verified 220/220 against IE.
+        prs.mlb_service_years AS mly,
+        prs.secondary_service_years AS secy,
+        prs.options_used AS opt,
+        prs.options_used_this_year AS oy,
+        -- ON40 = "Yes" if active OR on secondary roster, else NULL ('-' in IE).
+        CASE WHEN prs.is_active = 1 OR prs.is_on_secondary = 1 THEN 'Yes' END AS on40
     FROM players p
     LEFT JOIN ct ON ct.player_id = p.player_id
+    LEFT JOIN ext ON ext.player_id = p.player_id
+    LEFT JOIN roster_status prs ON prs.player_id = p.player_id
 )
 """
 
@@ -1394,20 +1533,20 @@ FINANCIAL_INFO = FileSpec(
     ie_filename="boston_red_sox_organization_-_roster_financial_info.csv",
     short_name="financial_info",
     derived_cte=FINANCIAL_DERIVED_CTE,
-    notes="SLR/CV formatted as '$X XXX XXX' strings in IE — numeric compare won't match",
+    notes="SLR/CV formatted as '$X XXX XXX' strings in IE; matcher strips $/spaces; (auto.) annotation handled too",
     cols=[
         ColSpec("Age", "age", "A"),
-        ColSpec("SLR", "slr", "F", notes="dollar-formatted string in IE"),
-        ColSpec("YL",  "yl",  "F", notes="formatted '3' or '1 (auto.)' in IE"),
-        ColSpec("CV",  "cv",  "F", notes="dollar-formatted string in IE"),
+        ColSpec("SLR", "slr", "B", notes="dollar-formatted; matcher strips $/spaces"),
+        ColSpec("YL",  "yl",  "B", notes="(auto.) annotation stripped by matcher"),
+        ColSpec("CV",  "cv",  "B", notes="dollar-formatted; matcher strips"),
         ColSpec("TY",  "ty",  "A", notes="contract years total"),
-        ColSpec("ECV", "NULL", "C", notes="extension contract value — needs contract_extension table"),
-        ColSpec("ETY", "NULL", "C", notes="extension years"),
-        ColSpec("MLY", "NULL", "C", notes="major-league years"),
-        ColSpec("SECY","NULL", "C"),
-        ColSpec("OPT", "NULL", "C", notes="option years remaining"),
-        ColSpec("OY",  "NULL", "C"),
-        ColSpec("ON40","NULL", "C", notes="on 40-man roster — needs roster_status decode"),
+        ColSpec("ECV", "ecv", "A", notes="sum(extension.salary0..14) when ext.years > 0; else '-'"),
+        ColSpec("ETY", "ety", "A", notes="extension years (0 = no extension)"),
+        ColSpec("MLY", "mly", "A", notes="players_roster_status.mlb_service_years"),
+        ColSpec("SECY","secy","A", notes="players_roster_status.secondary_service_years"),
+        ColSpec("OPT", "opt", "A", notes="players_roster_status.options_used (career total)"),
+        ColSpec("OY",  "oy",  "A", notes="players_roster_status.options_used_this_year"),
+        ColSpec("ON40","on40","A", notes="'Yes' if is_active OR is_on_secondary, else '-'"),
     ],
 )
 
@@ -1451,6 +1590,7 @@ def _connect(save: SaveConfig, dump: str) -> duckdb.DuckDBPyConnection:
         "games":          "games.csv",
         "at_bats":        "players_at_bat_batting_stats.csv",
         "contracts":      "players_contract.csv",
+        "contract_extension": "players_contract_extension.csv",
         "roster_status":  "players_roster_status.csv",
         "teams":          "teams.csv",
         "leagues":        "leagues.csv",
@@ -1488,6 +1628,7 @@ def _is_match(ie_val, derived_val, tol: float) -> bool | None:
     try:
         ie_clean = (s_ie
                     .replace("(auto.)", "")
+                    .replace("(arbitr.)", "")
                     .replace(",", "")
                     .replace(" ", "")
                     .replace("$", "")

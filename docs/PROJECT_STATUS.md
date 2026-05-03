@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-04 (in-game year 2029) — sweeping reconciliation pass: ratings 100%, sabermetric stats wired to league constants
+**Last updated**: 2026-05-04 (in-game year 2029) — second sweeping pass: financial_info 12/12, superstats BIP swap, contract extensions decoded
 
 ---
 
@@ -32,9 +32,21 @@ building the ingest pipeline.
   - `defensive.py` — Tier 4: RF/9, RF/G, Catcher Framing+, OF Assist Rate
   - `approach.py` — Tier 5: 2-strike performance, count-state splits, 4-pitch BB%, 3-pitch K%
 
-## Most-recent change
+## Most-recent change (second sweeping pass, 2026-05-04 evening)
 
-Sweeping reconciliation pass — pushed everything we could to 100% match while preserving the audit's full 220-player population. **15 of 21 files now at 100% reconciliation coverage (A+B tiers).** Highlights:
+Tackled the "what's left" backlog. Changes:
+
+- **financial_info: 2/12 → 12/12 at 100%**. Decoded ECV (sum of `players_contract_extension.salary*`), ETY (extension years), MLY/SECY (mlb_service_years/secondary_service_years), OPT/OY (options_used/options_used_this_year), ON40 (is_active OR is_on_secondary). Also fixed SLR/CV/YL: SLR uses `salary[current_year]` (current_year is 0-indexed, not 1-indexed); CV sums salary0..14 (was just 0..7, missed 12-yr deals); YL = `years - current_year` (dropped the +1). Matcher now strips `(arbitr.)` annotation in addition to `(auto.)`.
+- **batting_superstats_2 / pitching_superstats_2 lifted from 0% F-tier to 3 A-tier each**. Added TM (teams.name; appends '(INT)' for `players_roster_status.league_id < 0` pseudo-leagues like the international FA pool — 100%), LG (leagues.abbr — 100%), PI (sum of `pitches_seen` / `pi` — 95-96%). Plate-discipline % cols stay F-tier per D5.
+- **Superstats BIP swap**: replaced at-bat-counted BIP with PCB-derived `AB-K+SF+SH` summed across US-affiliated levels. batting BIP 7%→80%, pitching BIP 9%→72%. Foreign-league players whose at-bats aren't in the dump now get correct BIP from PCB.
+- **Multi-level OPS+/ERA+ explored**: confirmed mismatches are caused by IE using a level-weighted park factor (vs our halved-Boston-park). Logged for future; ~5-10pp error on 12 multi-level players.
+- **hit_xy spray boundaries grid-searched**: no x-bin variant gives meaningfully better Pull/Cent/Oppo% than current. Suspect OOTP uses `hit_loc` not `hit_xy` for spray classification. Left as-is.
+
+**16 of 21 files now at 100% reconciliation coverage (A+B).**
+
+## Earlier today (first sweeping pass)
+
+Sweeping reconciliation pass — pushed everything we could to 100% match while preserving the audit's full 220-player population. Highlights:
 
 - **All 6 ratings/potential files at 100% A-tier**: VELO and G/F integer→string mappings decoded (VELO 0-19 → '75-80 Mph' band, G/F 0-100 → EX FB / FB / NEU / GB / EX GB buckets).
 - **pitching_stats_2 unknowns decoded**: `RA = G - GS` (97% match), `RSG = rs / GS` (run support per START, 99%), `pLi = SUM(li) / SUM(BF)` (100%), `CG%` and `IRS%` (100% each).
@@ -85,12 +97,12 @@ F=cannot replicate (per D5 or string-format), G=needs scale conversion.
 | `pitching_stats_2` | **25/26** | — SIERA C-tier (only). RA/RSG/pLi/CG%/IRS% all decoded 2026-05-04 |
 | `batting_superstats_1` | partial 22/25 (E-tier) | EV-bucket cutoffs need investigation; xBA/xSLG/xwOBA (D); Pull%/Cent%/Oppo% need hit_xy decode |
 | `pitching_superstats_1` | partial 13/17 (E-tier) | same EV/bucket issues; xBA/xSLG/xwOBA/xERA (D) |
-| `batting_superstats_2` | 0/18 | **all F-tier per D5** (per-pitch zone/type data not in dump) |
-| `pitching_superstats_2` | 0/17 | **all F-tier per D5** |
+| `batting_superstats_2` | **3/20** | 17 plate-discipline % cols F-tier per D5 (no per-pitch data); TM/LG/PI all 100% |
+| `pitching_superstats_2` | **3/19** | 16 plate-discipline % cols F-tier per D5; G/GS/PI all 100% |
 | `default` | 3/6 | SLR/YL string-formatted; MLY TBD |
 | `popularity_info` | **6/6** | — (Nat./Loc. Pop. + SctAcc decoded 2026-05-03) |
 | `personality___morale` | **6/6** | — (LEA/LOY/FIN/WE/INT bucketed 2026-05-03; 4 rookie mismatches expected) |
-| `financial_info` | 2/12 | SLR/YL/CV string-formatted; ECV/ETY/MLY/SECY/OPT/OY/ON40 (C: extension/option data) |
+| `financial_info` | **12/12** | — (ECV/ETY decoded from players_contract_extension; MLY/SECY/OPT/OY/ON40 from players_roster_status; SLR/YL/CV current-year-salary semantics fixed 2026-05-04) |
 
 Headline numbers: across the 21 files, of ~360 total IE columns:
 - **~250 reconcile cleanly (A/B)** — gained ~40 from 2026-05-04 sweeping pass

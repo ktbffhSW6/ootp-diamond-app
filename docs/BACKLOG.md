@@ -18,7 +18,8 @@
 - [ ] **Verify the 13 unmapped `leader.category` codes** by computing the missing derived stats (RC, wOBA, FIP, SIERA, K%, SV%, QS%, CG%, SHO%, GO/AO) and re-running the matcher
 - [x] **Build league constants module** — DONE 2026-05-04. Inline CTE in reconcile.py pulls per-(league,year,level) constants from `league_history_*_stats` and joins each player by `primary_level`. OPS+/RC/RC27/wOBA/ERA+/FIP all wired. RC at 100%, RC/27 99%, wOBA 79%, OPS+/ERA+/FIP 60-70% (limited by multi-level player handling and minor rounding cascades).
 - [ ] **Standalone league_constants module** — promote the inline CTE to a proper Python module (`src/diamond/league_constants.py`) with a clean dataclass and per-(league_id, year, level_id) lookup. Ready to extract once schema phase begins.
-- [ ] **Multi-level player OPS+/ERA+ refinement** — for players who split seasons across MLB+AAA, IE shows combined-stats with a level-weighted park factor we don't model. Currently produces ~5-15 OPS+ point error for those rows. Need to compute level-weighted park factor from `players_career_*_stats` proportions.
+- [ ] **Multi-level player OPS+/ERA+ refinement** — for players who split seasons across MLB+AAA, IE shows combined-stats with a level-weighted park factor we don't fully model. Currently ~5-10 OPS+ point error for ~12 multi-level players. Hypothesis: IE computes per-level OPS+ then weights by PA. To pin down: extract MLB-only and AAA-only stats, compute OPS+ at each level, compare weighted average to IE.
+- [ ] **hit_xy spray boundary** — grid-searched x-bin variants on MLB-only Sox; none give meaningfully better fit than [0,4]/[5,10]/[11,15]. Suspect OOTP uses `hit_loc` (a 0-105 zone code) for spray classification rather than `hit_xy`. Investigate hit_loc-based spray mapping.
 - [x] **Finish reconciliation of remaining 16 `import_export` files** — DONE
   - [x] `batting_potential` — **11/11** (DEF decoded 2026-05-03)
   - [x] `batting_superstats_1` — 22/25 partial (E-tier, Statcast)
@@ -36,8 +37,7 @@
   - [x] `financial_info` — 2/12 (extension/option columns C-tier)
   - [x] `popularity_info` — **6/6** (Nat./Loc. Pop. + SctAcc decoded 2026-05-03)
   - [x] `personality___morale` — **6/6** (LEA/LOY/FIN/WE/INT bucketed 2026-05-03; 4 fresh-acquisition mismatches expected)
-- [x] **Integer→string mapping layer** — DONE 2026-05-04. DEF, popularity, personality, SctAcc, VELO, G/F all decoded. Remaining string-decode work:
-  - Contract auto-renewal flag and dollar formatting (financial_info — F-tier display)
+- [x] **Integer→string mapping layer** — DONE 2026-05-04. DEF, popularity, personality, SctAcc, VELO, G/F all decoded. Contract auto-renewal `(auto.)` and arbitration `(arbitr.)` annotations also stripped by matcher. Remaining string-decode work:
   - Personality "Type" archetype (Captain/Selfish/Humble/Sparkplug/etc.) — derived from 5 traits + scouting_accuracy
 - [x] **OOTP EV-bucket cutoffs decoded** (2026-05-04). Soft `<75` / Avg `75-95` / Solid `>=95`. Soft% match jumped 0→60%, Avg% 4→67%, Solid% 7→77% across the full 220 population (9/9 perfect on MLB-only Sox).
 - [x] **OOTP barrel formula decoded** (2026-05-04). Simple flat threshold `EV>=100 AND LA 10..42`, not Statcast's expanding cone. 4/9 exact, 6/9 within ±1 on MLB-only Sox.
