@@ -507,8 +507,46 @@ across the full 220-player roster because:
    (MLB + affiliated minors + KBO + indy). Players who appeared in
    foreign leagues have incomplete at-bat data. We can't reproduce
    their IE numbers from the at-bat log alone.
-3. The Pull/Cent/Oppo% x-bin boundaries on `hit_xy` are still off by
-   ~5-10pp consistently — exact OOTP boundary still TBD.
+3. The Pull/Cent/Oppo% classification doesn't fit a simple x-bin model
+   on `hit_xy`. Empirically, the hit_xy x-centroid for almost every
+   `hit_loc` value is ~7.5 (dead center) — confirming `hit_loc` represents
+   fielding position not spray direction. Only hit_loc 80, 98-105 are
+   LF-specific. OOTP must use per-event spray logic we can't reverse-
+   engineer from these fields alone.
+
+## SIERA decoded (2026-05-04)
+
+OOTP's IE SIERA matches the **Fangraphs canonical formula** (the long
+version with quadratic and interaction terms):
+
+```
+SIERA = 6.145
+      - 16.986 · (K/PA)
+      + 11.434 · (BB/PA)
+      - 1.858  · ((GB - FB) / PA)
+      + 7.653  · (K/PA)²
+      - 6.664  · ((GB - FB) / PA)²
+      + 10.130 · (K/PA) · ((GB - FB) / PA)
+      - 5.195  · (BB/PA) · ((GB - FB) / PA)
+```
+
+- Verified Crochet IE 2.27 vs calc 2.25 (off 0.02).
+- 95% match across MLB-only Sox pitchers (96/101 within ±0.1).
+- Aggregated across all levels (no level filter; net_GB is the player's
+  cross-level groundball-vs-flyball net rate).
+- Note: OOTP's `gb`/`fb` columns lump pop-ups in with fly balls, so the
+  `(GB - FB)` term implicitly excludes the standard "PU" subset. That's
+  consistent with the Fangraphs simplification used here.
+
+## All C-tier cells eliminated (2026-05-04)
+
+After the third reconciliation pass, **zero columns remain in C-tier**.
+The audit went from 30+ C-tier columns at start to 0 via:
+- League-constants module (lookup over `league_history_*_stats`):
+  OPS+, ERA+, FIP, RC, RC/27, wOBA, ISO
+- Empirical decode: pLi, RA, RSG, CG%, IRS%, GO%, PPG
+- SIERA via Fangraphs formula
+- Contract data via `players_contract_extension` + `players_roster_status`
 
 ## Pitching counter decodes (2026-05-04)
 

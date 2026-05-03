@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-04 (in-game year 2029) — second sweeping pass: financial_info 12/12, superstats BIP swap, contract extensions decoded
+**Last updated**: 2026-05-04 (in-game year 2029) — third pass: SIERA decoded; all C-tier cells eliminated
 
 ---
 
@@ -32,7 +32,15 @@ building the ingest pipeline.
   - `defensive.py` — Tier 4: RF/9, RF/G, Catcher Framing+, OF Assist Rate
   - `approach.py` — Tier 5: 2-strike performance, count-state splits, 4-pitch BB%, 3-pitch K%
 
-## Most-recent change (second sweeping pass, 2026-05-04 evening)
+## Most-recent change (third pass, 2026-05-04 late evening)
+
+Targeted the remaining C-tier and E-tier cells:
+
+- **SIERA decoded** — Fangraphs canonical formula (the long version with K%², netGB%², and the K×netGB / BB×netGB interaction terms). 95% match across MLB-only Sox pitchers; verified Crochet calc 2.25 vs IE 2.27. **All C-tier cells now eliminated** — pitching_stats_2 at 26/26.
+- **hit_loc spray investigation** — empirically the hit_xy x-centroid for almost every hit_loc value is ~7.5 (dead center), confirming hit_loc represents fielding position not spray direction. Only hit_loc 80, 98-105 are LF-specific. Spray classification needs OOTP-specific per-event logic we can't reverse-engineer from these fields alone. Logged.
+- **LA bucket boundaries** grid-searched (gb_max ∈ {-5,0,5,10,15} × ld_max × fb_max). Current GB≤10 / LD 10..25 / FB 25..50 / PU>50 is near-optimal; the FB% 1-2pp residual gap on most players reflects an OOTP-specific "fly-ball" inclusion rule we can't pin down without more metadata.
+
+## Earlier 2026-05-04 (second sweeping pass)
 
 Tackled the "what's left" backlog. Changes:
 
@@ -94,7 +102,7 @@ F=cannot replicate (per D5 or string-format), G=needs scale conversion.
 | `individual_pitch_ratings` | **15/15** | — (VELO decoded 2026-05-04) |
 | `individual_pitch_potential` | **15/15** | — (VELO decoded 2026-05-04) |
 | `position_ratings` | **10/10** | — |
-| `pitching_stats_2` | **25/26** | — SIERA C-tier (only). RA/RSG/pLi/CG%/IRS% all decoded 2026-05-04 |
+| `pitching_stats_2` | **26/26** | — (SIERA decoded 2026-05-04 via Fangraphs formula; all 26 cols reconcile) |
 | `batting_superstats_1` | partial 22/25 (E-tier) | EV-bucket cutoffs need investigation; xBA/xSLG/xwOBA (D); Pull%/Cent%/Oppo% need hit_xy decode |
 | `pitching_superstats_1` | partial 13/17 (E-tier) | same EV/bucket issues; xBA/xSLG/xwOBA/xERA (D) |
 | `batting_superstats_2` | **3/20** | 17 plate-discipline % cols F-tier per D5 (no per-pitch data); TM/LG/PI all 100% |
@@ -105,10 +113,10 @@ F=cannot replicate (per D5 or string-format), G=needs scale conversion.
 | `financial_info` | **12/12** | — (ECV/ETY decoded from players_contract_extension; MLY/SECY/OPT/OY/ON40 from players_roster_status; SLR/YL/CV current-year-salary semantics fixed 2026-05-04) |
 
 Headline numbers: across the 21 files, of ~360 total IE columns:
-- **~250 reconcile cleanly (A/B)** — gained ~40 from 2026-05-04 sweeping pass
+- **~270 reconcile cleanly (A/B)** — gained ~60 from 2026-05-04 multi-pass work
 - ~50 are F-tier by design (D5: plate-discipline; string-formatted display fields)
 - 0 G-tier (all int→string mappings decoded: DEF, popularity, personality, SctAcc, VELO, G/F)
-- ~5 C-tier remaining (SIERA, contract extension/option fields)
+- 0 C-tier (all eliminated as of 2026-05-04)
 - ~15 D-tier (xstats — xBA/xSLG/xwOBA/xERA, modeled from EV/LA)
 - ~25 partial-match E-tier (Statcast superstats — spray boundary, multi-level players' BIP denominator)
 - 15 of 21 files at **100% reconciliation coverage** (A+B):

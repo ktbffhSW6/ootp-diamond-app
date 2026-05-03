@@ -335,6 +335,19 @@ derived AS (
         -- all batters faced; pLi = sum(li) / sum(bf). Verified empirically
         -- against IE for MLB-only pitchers (Crochet 706/735≈0.96; Lei 624/270≈2.31).
         ROUND(1.0 * a.li_cum / NULLIF(a.bf, 0), 2) AS p_li,
+        -- SIERA — Fangraphs published formula. Verified against IE 2026-05-04;
+        -- Crochet 2.25 vs IE 2.27, 96/101 within ±0.1 across MLB-only Sox.
+        ROUND(
+            6.145
+            - 16.986 * (a.k::DOUBLE / NULLIF(a.bf, 0))
+            + 11.434 * (a.bb::DOUBLE / NULLIF(a.bf, 0))
+            - 1.858  * ((a.gb - a.fb)::DOUBLE / NULLIF(a.bf, 0))
+            + 7.653  * POWER(a.k::DOUBLE / NULLIF(a.bf, 0), 2)
+            - 6.664  * POWER((a.gb - a.fb)::DOUBLE / NULLIF(a.bf, 0), 2)
+            + 10.130 * (a.k::DOUBLE / NULLIF(a.bf, 0)) * ((a.gb - a.fb)::DOUBLE / NULLIF(a.bf, 0))
+            - 5.195  * (a.bb::DOUBLE / NULLIF(a.bf, 0)) * ((a.gb - a.fb)::DOUBLE / NULLIF(a.bf, 0)),
+            2
+        ) AS siera,
         -- ERA+: 100 * lg_ERA / player_ERA * park_adjustment.
         -- Park adjustment ~ 1 + (parks.avg - 1) * 0.8 (fits ~1.04 for Fenway,
         -- which gives Crochet 127, IE 127). Per-level lg_ERA from
@@ -927,7 +940,8 @@ PITCHING_STATS_2 = FileSpec(
                 notes="run support per start (rs/gs); 0.0 for pure relievers"),
         # GO% in IE is a decimal fraction with 2-decimal precision (0.17 = 17%).
         ColSpec("GO%",   "ROUND(d.go_pct, 2)", "B", tolerance=RATE_TOLERANCE),
-        ColSpec("SIERA", "NULL",    "C", notes="complex sabermetric formula; needs custom impl"),
+        ColSpec("SIERA", "siera",  "B", tolerance=0.15,
+                notes="Fangraphs formula: 6.145 - 16.986*K%+11.434*BB%-1.858*netGB% + interaction terms"),
         ColSpec("SB",    "sb_against", "A"),
         ColSpec("CS",    "cs_against", "A"),
         ColSpec("WPA",   "ROUND(d.wpa, 1)", "A", tolerance=0.05),
