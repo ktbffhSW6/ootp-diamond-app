@@ -1,0 +1,36 @@
+"""Diamond warehouse schema package.
+
+Three layers of CREATE TABLE DDL:
+  - l0:  raw landing — one table per dump CSV, dynamic CTAS with admin
+         columns (dump_date / ingest_ts / file_seq).
+  - l1:  conformed — typed/scoped/deduped entity tables (Phase B+).
+  - l2:  facts — analytical-grain fact tables (Phase E).
+
+The orchestrator entry point is `diamond.schema.build` which exposes
+build_l0 today and will gain build_l1 / build_l2 in subsequent phases.
+
+See docs/SCHEMA.md for the full design and DECISIONS.md / D12 for the
+scouted-ratings-only rule that's enforced at the L0→L1 boundary.
+"""
+
+from diamond.schema.l0 import L0_CATALOG, L0_SKIP, L0Spec
+from diamond.schema.build import (
+    DIAMOND_INGESTS_DDL,
+    build_l0,
+    dump_name_to_date,
+    init_admin_tables,
+    record_ingest_done,
+    record_ingest_start,
+)
+
+__all__ = [
+    "L0_CATALOG",
+    "L0_SKIP",
+    "L0Spec",
+    "DIAMOND_INGESTS_DDL",
+    "build_l0",
+    "dump_name_to_date",
+    "init_admin_tables",
+    "record_ingest_done",
+    "record_ingest_start",
+]
