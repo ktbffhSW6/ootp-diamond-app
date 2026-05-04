@@ -21,11 +21,17 @@ export default function HomePage() {
         >
           → Glossary
         </Link>
+        <Link
+          href="/player/6"
+          className="text-blue-600 underline-offset-2 hover:underline"
+        >
+          → Player page (Carlos Rodón as the demo path)
+        </Link>
       </div>
       <p className="text-xs text-slate-400">
         Phase 3 build order:{" "}
         <span className="font-mono">
-          glossary ✓ · player · demotion/promotion · leaderboards · universes
+          glossary ✓ · player ✓ · demotion/promotion · leaderboards · universes
           · AI overlay · cockpit · reviews · setup wizard
         </span>
       </p>

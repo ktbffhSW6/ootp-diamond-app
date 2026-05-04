@@ -327,7 +327,40 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
   (Pydantic → TS pipeline), `Makefile`, `docs/DEV.md` setup guide.
   End-to-end browser flow validated: home → /glossary → /glossary/wOBA
   with KaTeX-rendered MathML + related-stat chips + Fangraphs link.
-- [ ] **Player page** — Bref-shaped layout, Savant-styled visuals, AI assistant.
+- [/] **Player page** — Bref-shaped layout, Savant-styled visuals, AI assistant.
+  - [x] **Stats tab v1** — done 2026-05-07. `GET /api/players/{id}` +
+    `/player/[id]` route. Bio header (name, nick, position, B/T,
+    current team, retired/HoF flags) + tab strip (Stats active;
+    Charts/Game log/Comparisons/Scouting/Contract placeholders).
+    Bref-shaped batting + pitching disclosure rows: per-year row
+    (combined "TOT" if multi-stint, single stint otherwise), click
+    chevron to expand per-(level, team) sub-rows. Career-totals row
+    pinned at table bottom. Column headers + tooltips read from
+    `STATS[id]` (D15 contract); dictionary expanded by 13 entries
+    (G_batter, AB, H, D, T, L, G_pitcher, GS, ER, H_allowed,
+    R_allowed, HR_allowed, BB_allowed). Smoke tested live: 16-yr
+    Carlos Rodón career renders w/ 1796⅓ IP, 3.92 ERA; 5-stint
+    2029 Raymer Medina with synthesized TOT + indented stints
+    expanding correctly.
+  - [ ] **Stats tab v2** — fielding stats subtable (uses
+    `f_player_season_fielding`; needs ~8 new dictionary entries:
+    G_fielder, GS_fielder, INN, PO, A, E, DP, FPCT). Advanced-stats
+    column block (wOBA / wRC+ / OPS+ / FIP / ERA+ / WAR / Statcast
+    EV+barrel) — requires either materializing
+    `f_player_season_advanced_*` L3 tables (listed as future work in
+    `src/diamond/schema/l3.py` docstring) or threading the existing
+    `diamond.advanced.*` on-demand computations through the request
+    handler.
+  - [ ] **Charts tab** — radial career arc (angular = year, radius
+    = headline stat: OPS+/wRC+/WAR/ERA+, color = team or level).
+    Per the design discussion 2026-05-07: radial earns its keep as
+    a viz, not a navigation aid. Optional: clicking a wedge scrolls
+    Stats tab to that year.
+  - [ ] **Other tabs** — Game log, Comparisons, Scouting, Contract.
+    URL pattern `/player/<id>/<season>` (per-year zoom) blocked on
+    Stats tab v2.
+  - [ ] **Right-rail AI assistant** (per D14) — defer until AI
+    overlay scaffolding lands.
 - [ ] **Promotion/demotion decision tool** — flagship "GM sidekick" feature.
 - [ ] **Custom leaderboards** — Fangraphs-style sortable filterable tables.
 - [ ] **Universes + chart builder + scatter** *(bundled)* — Vega-Lite spec

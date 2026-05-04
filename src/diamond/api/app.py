@@ -24,7 +24,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from diamond.api.routes import glossary, health
+from diamond.api.routes import glossary, health, players
 
 
 # CORS allowlist — Next.js dev server runs on :3000 by default.
@@ -63,6 +63,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router, prefix="/api", tags=["health"])
     app.include_router(glossary.router, prefix="/api", tags=["glossary"])
+    app.include_router(players.router, prefix="/api", tags=["players"])
 
     return app
 

@@ -201,6 +201,111 @@ _ENTRIES: list[Stat] = [
     # ─────────────────────────────────────────────────────────────────
 
     Stat(
+        id="G_batter",
+        display_name="Games (batter)",
+        short_label="G",
+        category="batting",
+        formula_tex="",
+        formula_plain="(count)",
+        description=(
+            "Games in which the player appeared as a batter (any PA). "
+            "Distinct from pitcher G (mound appearances) and fielder G "
+            "(defensive appearances) — two-way players have separate "
+            "totals across all three."
+        ),
+        units="count",
+        typical_range="Full-time MLB: ~140+; everyday: ~120; bench: <80",
+        interpretation="Higher = more playing time. Pair with PA for "
+                       "depth-of-role context.",
+        caveats="Counts any game with a PA, including pinch-hit-only appearances.",
+        source="f_player_season_batting.g",
+        formula_source="OOTP raw",
+        related=("PA", "G_pitcher"),
+        refs={"Bref": f"{_BR}/Games_played"},
+    ),
+
+    Stat(
+        id="AB",
+        display_name="At Bats",
+        short_label="AB",
+        category="batting",
+        formula_tex=r"\mathrm{AB} = \mathrm{PA} - BB - HBP - SF - SH - CI",
+        formula_plain="AB = PA - BB - HBP - SF - SH - CI",
+        description=(
+            "Plate appearances excluding walks, HBPs, sacrifices, and catcher's "
+            "interference. The denominator for AVG and SLG."
+        ),
+        units="count",
+        typical_range="Full-time MLB: ~550+; everyday: ~450; bench: <250",
+        interpretation="Lower than PA by ~50-100 over a full season.",
+        caveats=None,
+        source="f_player_season_batting.ab",
+        formula_source="OOTP raw / standard",
+        related=("PA", "AVG", "SLG"),
+        refs={"Bref": f"{_BR}/At_bat"},
+    ),
+
+    Stat(
+        id="H",
+        display_name="Hits",
+        short_label="H",
+        category="batting",
+        formula_tex=r"H = 1B + 2B + 3B + HR",
+        formula_plain="H = 1B + 2B + 3B + HR",
+        description="Total hits — singles plus extra-base hits.",
+        units="count",
+        typical_range="Star: 180+; batting-title contender: 200+",
+        interpretation="Higher = more contact production. Pair with AB → AVG.",
+        caveats=None,
+        source="f_player_season_batting.h",
+        formula_source="OOTP raw",
+        related=("AB", "AVG", "D", "T", "HR"),
+        refs={"Bref": f"{_BR}/Hit_(baseball)"},
+    ),
+
+    Stat(
+        id="D",
+        display_name="Doubles",
+        short_label="2B",
+        category="batting",
+        formula_tex="",
+        formula_plain="(count)",
+        description=(
+            "Hits where the batter reached 2nd base on the play (without an "
+            "error advancing). The most common extra-base hit."
+        ),
+        units="count",
+        typical_range="Doubles hitter: 40+; league leader: 50+",
+        interpretation="Higher = more gap power.",
+        caveats=None,
+        source="f_player_season_batting.d",
+        formula_source="OOTP raw",
+        related=("H", "T", "HR", "SLG", "ISO"),
+        refs={"Bref": f"{_BR}/Double_(baseball)"},
+    ),
+
+    Stat(
+        id="T",
+        display_name="Triples",
+        short_label="3B",
+        category="batting",
+        formula_tex="",
+        formula_plain="(count)",
+        description=(
+            "Hits where the batter reached 3rd base on the play. Rare; "
+            "speed and ballpark geometry both contribute."
+        ),
+        units="count",
+        typical_range="Speed-and-gap hitter: 8+; league leader: 12+",
+        interpretation="Higher = speed plus gap-power combo. Park-sensitive.",
+        caveats="Heavily ballpark-dependent — Coors / spacious gaps inflate.",
+        source="f_player_season_batting.t",
+        formula_source="OOTP raw",
+        related=("H", "D", "HR", "SLG"),
+        refs={"Bref": f"{_BR}/Triple_(baseball)"},
+    ),
+
+    Stat(
         id="PA",
         display_name="Plate Appearances",
         short_label="PA",
@@ -500,6 +605,67 @@ _ENTRIES: list[Stat] = [
     # ─────────────────────────────────────────────────────────────────
 
     Stat(
+        id="G_pitcher",
+        display_name="Games (pitcher)",
+        short_label="G",
+        category="pitching",
+        formula_tex="",
+        formula_plain="(count)",
+        description=(
+            "Mound appearances. Distinct from G as a batter — for two-way "
+            "players, this counts only games where the player pitched."
+        ),
+        units="count",
+        typical_range="SP: ~30; closer: ~60; setup/middle: 70+",
+        interpretation="Higher = more mound usage. Workload signal.",
+        caveats=None,
+        source="f_player_season_pitching.g",
+        formula_source="OOTP raw",
+        related=("GS", "IP", "G_batter"),
+        refs={"Bref": f"{_BR}/Games_played"},
+    ),
+
+    Stat(
+        id="GS",
+        display_name="Games Started (pitcher)",
+        short_label="GS",
+        category="pitching",
+        formula_tex="",
+        formula_plain="(count)",
+        description="Games where this pitcher was the starting pitcher.",
+        units="count",
+        typical_range="Full SP: 30+; swing/spot starter: 10-20; reliever: 0",
+        interpretation="GS / G ratio identifies SP vs RP role.",
+        caveats=None,
+        source="f_player_season_pitching.gs",
+        formula_source="OOTP raw",
+        related=("G_pitcher", "IP"),
+        refs={"Bref": f"{_BR}/Games_started"},
+    ),
+
+    Stat(
+        id="L",
+        display_name="Losses (pitcher)",
+        short_label="L",
+        category="pitching",
+        formula_tex="",
+        formula_plain="(count)",
+        description=(
+            "Games where the pitcher gets credited as the losing pitcher of "
+            "record. Like W, heavily team- and bullpen-dependent."
+        ),
+        units="count",
+        typical_range="Workhorse SP: 8-12 in a typical year; rough season: 15+",
+        interpretation="Lower = better, but offense-starved teams inflate "
+                       "ace pitchers' losses.",
+        caveats="Team-context-dependent. Use FIP / ERA+ for pitcher quality.",
+        source="f_player_season_pitching.l",
+        formula_source="OOTP raw",
+        related=("W", "ERA", "FIP"),
+        refs={"Bref": f"{_BR}/Loss_(baseball)"},
+    ),
+
+    Stat(
         id="W",
         display_name="Wins (pitcher)",
         short_label="W",
@@ -586,6 +752,110 @@ _ENTRIES: list[Stat] = [
         formula_source="OOTP raw",
         related=("FIP", "K_batter", "ERA"),
         refs={"Bref": f"{_BR}/Strikeout"},
+    ),
+
+    Stat(
+        id="H_allowed",
+        display_name="Hits Allowed",
+        short_label="H",
+        category="pitching",
+        formula_tex="",
+        formula_plain="(count)",
+        description="Hits given up by the pitcher across the period.",
+        units="count",
+        typical_range="Workhorse SP season: 150-200 H allowed",
+        interpretation="Lower = better. Pair with IP via H/9 for rate.",
+        caveats="Doesn't isolate pitcher contribution from defense; FIP "
+                "strips out defensive variation.",
+        source="f_player_season_pitching.ha",
+        formula_source="OOTP raw",
+        related=("WHIP", "ERA", "FIP"),
+        refs={"Bref": f"{_BR}/Hits_allowed"},
+    ),
+
+    Stat(
+        id="R_allowed",
+        display_name="Runs Allowed",
+        short_label="R",
+        category="pitching",
+        formula_tex="",
+        formula_plain="(count)",
+        description=(
+            "Runs (earned + unearned) scored against this pitcher. "
+            "RA/9 is sometimes preferred over ERA in WAR computations "
+            "because it's defense-blind in the same direction as FIP."
+        ),
+        units="count",
+        typical_range="Ace season: <70; replacement-level full year: 100+",
+        interpretation="Lower = better.",
+        caveats="Includes unearned runs — pair with ER for context.",
+        source="f_player_season_pitching.r",
+        formula_source="OOTP raw",
+        related=("ER", "ERA"),
+        refs={"Bref": f"{_BR}/Runs_allowed"},
+    ),
+
+    Stat(
+        id="ER",
+        display_name="Earned Runs",
+        short_label="ER",
+        category="pitching",
+        formula_tex="",
+        formula_plain="(count)",
+        description=(
+            "Runs scored against the pitcher excluding those that scored "
+            "as a result of fielding errors or passed balls. The numerator "
+            "of ERA."
+        ),
+        units="count",
+        typical_range="Ace SP: <60; league avg starter: ~80",
+        interpretation="Lower = better.",
+        caveats="The official-scorer judgement on errors makes ER slightly "
+                "subjective; FIP avoids this entirely.",
+        source="f_player_season_pitching.er",
+        formula_source="OOTP raw",
+        related=("ERA", "R_allowed"),
+        refs={"Bref": f"{_BR}/Earned_run"},
+    ),
+
+    Stat(
+        id="HR_allowed",
+        display_name="Home Runs Allowed",
+        short_label="HR",
+        category="pitching",
+        formula_tex="",
+        formula_plain="(count)",
+        description=(
+            "Home runs given up. The single biggest input to FIP — each "
+            "HR weighted 13× (vs 3× for BB and -2× for K)."
+        ),
+        units="count",
+        typical_range="Ace SP: <20; HR-prone season: 30+",
+        interpretation="Lower = better. Park- and contact-sensitive.",
+        caveats="Park-sensitive (Coors / Yankee Stadium inflate, Petco "
+                "deflates). Use ERA+ / xFIP for park-neutral readings.",
+        source="f_player_season_pitching.hra",
+        formula_source="OOTP raw",
+        related=("FIP", "HR", "BARREL_PCT"),
+        refs={"Bref": f"{_BR}/Home_run"},
+    ),
+
+    Stat(
+        id="BB_allowed",
+        display_name="Walks Allowed",
+        short_label="BB",
+        category="pitching",
+        formula_tex="",
+        formula_plain="(count)",
+        description="Walks issued by the pitcher.",
+        units="count",
+        typical_range="Control artist: <30 per season; league avg SP: ~50",
+        interpretation="Lower = better. Pair with IP via BB/9 for rate.",
+        caveats=None,
+        source="f_player_season_pitching.bb",
+        formula_source="OOTP raw",
+        related=("WHIP", "FIP", "BB"),
+        refs={"Bref": f"{_BR}/Base_on_balls"},
     ),
 
     Stat(

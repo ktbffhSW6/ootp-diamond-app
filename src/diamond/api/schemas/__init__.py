@@ -19,5 +19,29 @@ Conventions:
 
 from diamond.api.schemas.glossary import GlossaryEntry, GlossaryListResponse
 from diamond.api.schemas.health import HealthResponse
+from diamond.api.schemas.player import (
+    PlayerBattingSeason,
+    PlayerBattingStint,
+    PlayerBio,
+    PlayerCareerBatting,
+    PlayerCareerPitching,
+    PlayerPitchingSeason,
+    PlayerPitchingStint,
+    PlayerResponse,
+    TeamRef,
+)
 
-__all__ = ["GlossaryEntry", "GlossaryListResponse", "HealthResponse"]
+__all__ = [
+    "GlossaryEntry",
+    "GlossaryListResponse",
+    "HealthResponse",
+    "PlayerBattingSeason",
+    "PlayerBattingStint",
+    "PlayerBio",
+    "PlayerCareerBatting",
+    "PlayerCareerPitching",
+    "PlayerPitchingSeason",
+    "PlayerPitchingStint",
+    "PlayerResponse",
+    "TeamRef",
+]

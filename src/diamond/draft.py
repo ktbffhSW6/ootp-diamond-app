@@ -25,21 +25,12 @@ from rich.console import Console
 from rich.table import Table
 
 from diamond.config import BUILDING_THE_GREEN_MONSTER, SaveConfig
+# Position + level codebooks live in `diamond.constants` (canonical home for
+# OOTP integer mappings per CLAUDE.md). Re-imported here so existing call
+# sites (`POSITION_NAMES`, `LEVEL_NAMES`) keep working without churn.
+from diamond.constants import LEVEL_NAMES, POSITION_NAMES  # noqa: F401
 
 console = Console()
-
-
-# Position codes — see DATA_NOTES.md / players.position
-POSITION_NAMES: dict[int, str] = {
-    1: "P",   2: "C",   3: "1B",  4: "2B",  5: "3B",
-    6: "SS",  7: "LF",  8: "CF",  9: "RF",  10: "DH",
-}
-
-# OOTP level convention: lower = closer to MLB
-LEVEL_NAMES: dict[int, str] = {
-    1: "MLB",  2: "AAA",  3: "AA",  4: "A+",  5: "A",
-    6: "Rk",   7: "DSL",  8: "DSL2",
-}
 
 
 # Outcome ordering — best to worst, used for sort + display

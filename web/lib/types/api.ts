@@ -59,3 +59,196 @@ export interface HealthResponse {
   status: string;
   api_version: string;
 }
+/**
+ * A year's worth of batting — one or more stints + optional TOT row.
+ *
+ * `stints` always has 1+ rows (sorted by level then team). `combined`
+ * is populated only when there were multiple stints; equal to None
+ * when a single stint covers the whole year.
+ */
+export interface PlayerBattingSeason {
+  year: number;
+  age: number | null;
+  stints: PlayerBattingStint[];
+  combined: PlayerBattingStint | null;
+}
+/**
+ * One batter row at (year, league, level, team) grain.
+ *
+ * Counting fields come straight from `f_player_season_batting`; rate
+ * fields are computed in the route. `is_combined=True` flags the
+ * synthesized per-season "TOT" row (team_id is null on those).
+ */
+export interface PlayerBattingStint {
+  year: number;
+  age: number | null;
+  is_combined: boolean;
+  team: TeamRef | null;
+  g: number;
+  pa: number;
+  ab: number;
+  r: number;
+  h: number;
+  d: number;
+  t: number;
+  hr: number;
+  rbi: number;
+  sb: number;
+  cs: number;
+  bb: number;
+  so: number;
+  hbp: number;
+  sf: number;
+  avg: number | null;
+  obp: number | null;
+  slg: number | null;
+  ops: number | null;
+}
+/**
+ * Slim team reference embedded in stints + bio.
+ *
+ * Carries enough to render a column without round-tripping the team list:
+ * abbr (short label), nickname (long label), league_abbr (e.g. "AL/NL"
+ * or affiliate league), and level_id (mapped to MLB/AAA/AA/etc. via
+ * `LEVEL_NAMES` on the frontend or via the `level_name` convenience).
+ */
+export interface TeamRef {
+  team_id: number;
+  abbr: string | null;
+  nickname: string | null;
+  league_id: number | null;
+  league_abbr: string | null;
+  level_id: number | null;
+  level_name: string | null;
+}
+/**
+ * Identifying / display fields for the player header.
+ *
+ * `position_name` is the resolved display string ("1B", "RHP", etc.)
+ * via `POSITION_NAMES`. `bats_throws` collapses bats + throws to
+ * Bref-style "L/R" / "R/R" / "S/R" — three letters of useful signal
+ * in one line of the header.
+ */
+export interface PlayerBio {
+  player_id: number;
+  bbref_id: string | null;
+  first_name: string;
+  last_name: string;
+  nick_name: string | null;
+  full_name: string;
+  age: number | null;
+  date_of_birth: string | null;
+  height_cm: number | null;
+  weight_kg: number | null;
+  bats: number | null;
+  throws: number | null;
+  bats_throws: string;
+  position: number | null;
+  position_name: string;
+  uniform_number: number | null;
+  retired: boolean;
+  free_agent: boolean;
+  hall_of_fame: boolean;
+  current_team: TeamRef | null;
+}
+/**
+ * Cross-season cross-level batting career totals (counting + slash).
+ *
+ * Computed by SUMing every stint with split_id=1 (the overall split),
+ * matching the convention in `f_player_career`. Restricted to
+ * counting-stat fields per Decision D11 — rate stats are derivable.
+ */
+export interface PlayerCareerBatting {
+  g: number;
+  pa: number;
+  ab: number;
+  r: number;
+  h: number;
+  d: number;
+  t: number;
+  hr: number;
+  rbi: number;
+  sb: number;
+  cs: number;
+  bb: number;
+  so: number;
+  hbp: number;
+  sf: number;
+  avg: number | null;
+  obp: number | null;
+  slg: number | null;
+  ops: number | null;
+}
+export interface PlayerCareerPitching {
+  g: number;
+  gs: number;
+  w: number;
+  l: number;
+  sv: number;
+  outs: number;
+  ip_display: number;
+  h: number;
+  r: number;
+  er: number;
+  hr: number;
+  bb: number;
+  so: number;
+  bf: number;
+  era: number | null;
+  whip: number | null;
+  k_per_9: number | null;
+  bb_per_9: number | null;
+}
+export interface PlayerPitchingSeason {
+  year: number;
+  age: number | null;
+  stints: PlayerPitchingStint[];
+  combined: PlayerPitchingStint | null;
+}
+/**
+ * One pitcher row at (year, league, level, team) grain.
+ *
+ * `ip_display` is the Bref-style innings-pitched representation
+ * (172.1 = 172⅓ IP = 517 outs); the frontend renders it as-is. Use
+ * `outs` for any computation — display-form IP is lossy across
+ * arithmetic.
+ */
+export interface PlayerPitchingStint {
+  year: number;
+  age: number | null;
+  is_combined: boolean;
+  team: TeamRef | null;
+  g: number;
+  gs: number;
+  w: number;
+  l: number;
+  sv: number;
+  outs: number;
+  ip_display: number;
+  h: number;
+  r: number;
+  er: number;
+  hr: number;
+  bb: number;
+  so: number;
+  bf: number;
+  era: number | null;
+  whip: number | null;
+  k_per_9: number | null;
+  bb_per_9: number | null;
+}
+/**
+ * ``GET /api/players/{player_id}`` response.
+ *
+ * Fields are nullable when the player never accumulated stats of that
+ * type — e.g. a position player has `pitching_seasons=[]` and
+ * `pitching_career=None`. The frontend uses these nulls to decide
+ * which subsections of the page to render.
+ */
+export interface PlayerResponse {
+  bio: PlayerBio;
+  batting_seasons: PlayerBattingSeason[];
+  pitching_seasons: PlayerPitchingSeason[];
+  batting_career: PlayerCareerBatting | null;
+  pitching_career: PlayerCareerPitching | null;
+}

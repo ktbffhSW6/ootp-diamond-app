@@ -268,6 +268,34 @@ def personality_bucket(value: int | None) -> str | None:
     return "High"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Position + level name mappings
+#
+# Not IntEnums (these display strings rather than carry semantic flags), but
+# they belong in this module per CLAUDE.md: codebooks for OOTP integer fields
+# live here. Multiple feature modules need them — draft tables, the player
+# API route, future scouting / roster UIs — so a single source of truth keeps
+# the mapping consistent.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# `players.position` codes — primary fielding position. See DATA_NOTES.md.
+# 10 = DH (DH-only player; rare for two-way / position players to carry this).
+POSITION_NAMES: dict[int, str] = {
+    1: "P",   2: "C",   3: "1B",  4: "2B",  5: "3B",
+    6: "SS",  7: "LF",  8: "CF",  9: "RF",  10: "DH",
+}
+
+
+# `teams.level` / `players_career_*.level_id` — playing level. Lower = closer
+# to MLB. Levels 1-6 are US-affiliated minors (the path the audit uses);
+# level 7+ are independent leagues / overseas (KBO, NPB, etc.).
+LEVEL_NAMES: dict[int, str] = {
+    1: "MLB",  2: "AAA",  3: "AA",  4: "A+",  5: "A",
+    6: "Rk",   7: "DSL",  8: "DSL2",
+}
+
+
 class BodyPart(IntEnum):
     """`players_injury_history.body_part` — 12 codes profiled. Names derived
     from injury frequency + average length + day-to-day rate. Mappings are

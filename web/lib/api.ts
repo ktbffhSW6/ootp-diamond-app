@@ -17,6 +17,7 @@ import type {
   GlossaryEntry,
   GlossaryListResponse,
   HealthResponse,
+  PlayerResponse,
 } from "@/lib/types/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -47,4 +48,11 @@ export async function getGlossaryEntry(
   return fetchJson<GlossaryEntry>(
     `/api/glossary/${encodeURIComponent(id)}`,
   );
+}
+
+// Player page payload — bio + per-season batting/pitching + career totals.
+// 404 surfaces as a thrown Error containing "404"; the page handler
+// converts that to Next.js notFound().
+export async function getPlayer(playerId: number): Promise<PlayerResponse> {
+  return fetchJson<PlayerResponse>(`/api/players/${playerId}`);
 }
