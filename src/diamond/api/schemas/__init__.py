@@ -1,0 +1,22 @@
+"""Pydantic schemas — the API contract between FastAPI and Next.js.
+
+Per D16: these models are the single source of truth for response
+shapes. ``make types`` regenerates ``web/lib/types/api.ts`` from
+them, so a field-name change here propagates automatically to the
+frontend on the next type-gen run.
+
+Conventions:
+- One module per logical resource (``glossary.py``, future
+  ``player.py``, ``records.py``, etc.).
+- Schemas use snake_case field names (matches Python convention +
+  matches the dictionary's internal ids). The frontend re-maps to
+  camelCase only where idiomatic React requires it.
+- Pure read-models — no input/POST schemas needed in v1; the API is
+  read-only.
+- Re-export at the package level so ``from diamond.api.schemas
+  import GlossaryEntry`` works regardless of the source file.
+"""
+
+from diamond.api.schemas.glossary import GlossaryEntry, GlossaryListResponse
+
+__all__ = ["GlossaryEntry", "GlossaryListResponse"]

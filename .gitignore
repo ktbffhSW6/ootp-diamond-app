@@ -30,6 +30,12 @@ secrets.json
 # Diamond ephemera
 audit_output/
 
+# Frontend build artifacts (web/.gitignore mirrors these for IDE clarity)
+web/node_modules/
+web/.next/
+web/out/
+*.tsbuildinfo
+
 # Local-only reference notes (cross-project recon material from another save;
 # kept on disk for mining but not version-controlled)
 docs/helpful_files/

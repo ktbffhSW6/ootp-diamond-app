@@ -166,14 +166,17 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
 
 1. ✅ **D13 reference scope expansion** — done 2026-05-07.
 2. ✅ **D15 stat dictionary** thin v1 — done 2026-05-07. 39 entries +
-   CLI + smoke. Long-tail entries land as UI screens reach for them.
+   CLI + smoke.
 3. ✅ **D16 tech stack pick** — done 2026-05-07. FastAPI + Next.js
-   (App Router) with Pydantic-derived TS types. Tailwind + shadcn/ui
-   + Vega-Embed + Plotly WebGL + KaTeX + TanStack Table.
-4. **Scaffold `src/diamond/api/` + `web/`** — directory layout,
-   Pydantic→TS type-gen pipeline, `make dev` task runner running
-   `uvicorn` on `:8000` and `pnpm dev` on `:3000`. Roughly 1-2 days
-   per D16's setup-cost note.
+   (App Router) with Pydantic-derived TS types.
+4. ✅ **API + web scaffold** — done 2026-05-07. `src/diamond/api/`
+   (FastAPI app + glossary route + Pydantic schemas + health probe);
+   `web/` (Next.js 15 App Router + Tailwind + KaTeX + glossary list
+   + detail pages); `scripts/generate_types.py` Pydantic→TS pipeline;
+   `Makefile` with `make api / web / types / smoke` targets;
+   `docs/DEV.md` setup guide. Backend smoke-tested live (`/api/health`,
+   `/api/glossary`, `/api/glossary/wOBA`, 404 path). **Frontend
+   awaits Node 20+ + pnpm install** — see DEV.md.
 5. **Player page** — first user-facing feature; Bref-shaped layout +
    Savant-styled percentile bars + AI assistant pinned in right rail.
    Consumes `STATS[id]` from D15 for every column header / tooltip.

@@ -18,10 +18,23 @@ dependencies = [
     # and history_statcast_* L0-shaped tables. pulls in pandas/numpy as
     # transitive deps.
     "pybaseball>=2.2.7",
+    # FastAPI backend per Decision D16 — serves the typed HTTP API the
+    # Next.js frontend consumes. uvicorn is the ASGI runner; httptools
+    # accelerates request parsing on Windows.
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0.0", "ruff>=0.6.0"]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.6.0",
+    # pydantic-to-typescript drives the `make types` step that
+    # generates `web/lib/types/api.ts` from the Pydantic schemas in
+    # `src/diamond/api/schemas/`. Pulls in `json2ts` as a Node
+    # peer-dep — install via `pnpm install` in `web/`.
+    "pydantic-to-typescript>=2.0.0",
+]
 
 [project.scripts]
 diamond = "diamond.cli:app"

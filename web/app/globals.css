@@ -1,0 +1,11 @@
+/* Tailwind base + components + utilities. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* KaTeX styles — imported here once globally rather than per-component
+ * so formula tooltips don't each carry their own copy. The package
+ * ships its own CSS; pulling it in via @import lets bundlers tree-
+ * shake unused parts and works without running the KaTeX loader.
+ */
+@import "katex/dist/katex.min.css";
