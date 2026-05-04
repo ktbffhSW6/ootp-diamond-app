@@ -138,14 +138,35 @@ and count-state splits).
   9 pitcher, 1 mixed) but display labels are best-guess. Cross-reference OOTP
   UI screenshots / in-game help to lock names, then expose as
   "longest active streak per category."
-- [ ] **Record breakers** — (a) computed records via max-agg over
-  `players_career_*` + `league_history_*` + `team_history_*` (clean, B-tier);
-  (b) `messages.csv` news-feed parsing for record-set events (sloppy, D-tier).
-  Build (a) first.
-- [ ] **Award winners leaderboards** — `players_awards` (13 codes verified).
-  Career-totals per award, per-league/year top winners, franchise totals.
-- [ ] **Hall of Fame tracker** — `players.hall_of_fame` + `players.inducted`
-  direct columns. Join to `players_awards` for the path to induction.
+- [x] **Record breakers** — done 2026-05-06. New L3 table
+  `f_record_player` (825 rows) with all-time MLB top-25 leaderboards
+  per (scope × discipline × category) — single-season + career, batting +
+  pitching, counting stats only (HR/RBI/R/H/BB/SB/2B/3B/PA/WAR for
+  batting; W/S/K/IP/SHO/CG/QS/WAR for pitching). MLB-scoped
+  (league_id=203, level_id=1) for v1; foreign / minor-league records
+  unlock by parameterizing `RECORD_LEAGUE_ID`/`RECORD_LEVEL_ID` and
+  rebuilding L3. CLI: `diamond records [--scope][--discipline]
+  [--category][--limit]`. Rate stats (AVG/OBP/SLG/ERA/FIP) deferred —
+  they need PA / IP gates and are better surfaced via the advanced
+  stats library when needed. Path (b) (messages.csv news-feed parsing)
+  remains punted; (a) covers the use case cleanly.
+- [x] **Award winners leaderboards** — done 2026-05-06. Two L3 tables:
+  `f_award_career_player` (career award totals per player×award, 7,063
+  rows) and `f_award_franchise` (franchise totals with parent_team_id
+  rollup, 1,856 rows). CLI: `diamond awards [--player <id>] [--team
+  <id>] [--award <id>]`. Note: `f_award_event` only contains awards
+  from in-save dumps (2026+), so career-MVP leaderboards count
+  same-save wins only — pre-save real-life MVPs from Aaron Judge,
+  Mike Trout, etc. are surfaced via OOTP's historical seed data
+  rather than `players_awards.csv`, and showed up correctly in the
+  spot-check (Ohtani 7 MVPs, Judge 6, Trout 3).
+- [x] **Hall of Fame tracker** — done 2026-05-06. CLI `diamond hof`
+  (lists current inductees) + `diamond hof --candidates` (top-25
+  career-MLB-WAR players not yet inducted, with hardware lines).
+  No new L3 table — surfaces directly off `players_current`
+  (`hall_of_fame` + `inducted` cols) joined to `f_award_career_player`.
+  In a fresh save these cols are 0 across the board until enough
+  in-game years pass; `--candidates` is the useful-now mode.
 
 ### Closed as non-derivable
 

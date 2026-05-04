@@ -517,6 +517,69 @@ def smoke_l3(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
         "[green]✓[/green] f_draft_class outcomes consistent with ever_made_mlb"
     )
 
+    # f_record_player: rank values must be a contiguous 1..N per category;
+    # values must be monotonically non-increasing as rank goes up.
+    n_rank_violation = con.execute("""
+        WITH grouped AS (
+            SELECT scope, discipline, category,
+                   COUNT(*) AS n,
+                   MAX(rank) AS max_rank,
+                   MIN(rank) AS min_rank
+            FROM f_record_player
+            GROUP BY scope, discipline, category
+        )
+        SELECT COUNT(*) FROM grouped
+        WHERE max_rank != n OR min_rank != 1
+    """).fetchone()[0]
+    if n_rank_violation:
+        console.print(
+            f"[red]FAIL:[/red] {n_rank_violation} f_record_player categories have "
+            f"non-contiguous rank sequences"
+        )
+        return False
+    console.print("[green]✓[/green] f_record_player rank sequences contiguous")
+
+    n_value_violation = con.execute("""
+        WITH ordered AS (
+            SELECT scope, discipline, category, rank, value,
+                   LAG(value) OVER (
+                       PARTITION BY scope, discipline, category ORDER BY rank
+                   ) AS prev_value
+            FROM f_record_player
+        )
+        SELECT COUNT(*) FROM ordered
+        WHERE prev_value IS NOT NULL AND value > prev_value
+    """).fetchone()[0]
+    if n_value_violation:
+        console.print(
+            f"[red]FAIL:[/red] f_record_player has {n_value_violation} rows where "
+            f"value increases as rank goes up"
+        )
+        return False
+    console.print("[green]✓[/green] f_record_player values monotonically descend by rank")
+
+    # f_award_career_player: every row must have n_won > 0 (no empty rows)
+    n_zero_awards = con.execute("""
+        SELECT COUNT(*) FROM f_award_career_player WHERE n_won <= 0
+    """).fetchone()[0]
+    if n_zero_awards:
+        console.print(
+            f"[red]FAIL:[/red] {n_zero_awards} f_award_career_player rows have n_won <= 0"
+        )
+        return False
+    console.print("[green]✓[/green] all f_award_career_player rows have n_won > 0")
+
+    # f_award_franchise: same n_won > 0 invariant
+    n_zero_franchise = con.execute("""
+        SELECT COUNT(*) FROM f_award_franchise WHERE n_won <= 0
+    """).fetchone()[0]
+    if n_zero_franchise:
+        console.print(
+            f"[red]FAIL:[/red] {n_zero_franchise} f_award_franchise rows have n_won <= 0"
+        )
+        return False
+    console.print("[green]✓[/green] all f_award_franchise rows have n_won > 0")
+
     # Idempotency
     rows_2 = build_l3(con, verbose=False)
     if rows != rows_2:

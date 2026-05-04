@@ -2,19 +2,23 @@
 
 Currently exposes:
 
-  - f_trade_participant   long-format trade roster, 1 row per (trade × player)
-  - player_movements      timeline of every team change, attributed to trades
-                          where applicable
-  - f_draft_class         one row per drafted player, joining current status
-                          + made-MLB outcome + cumulative MLB career stats
+  - f_trade_participant       long-format trade roster, 1 row per (trade × player)
+  - player_movements          timeline of every team change, attributed to trades
+                              where applicable
+  - f_draft_class             one row per drafted player, joining current status
+                              + made-MLB outcome + cumulative MLB career stats
+  - f_record_player           top-25 leaderboard rows per (scope × discipline ×
+                              category) across all-time MLB single-season + career
+                              counting stats
+  - f_award_career_player     career award totals per player (1 row per player×award)
+  - f_award_franchise         franchise award totals per (team × award)
+                              (team_id captured at the time of winning)
 
 Future L3 builders that will live here:
 
   - park_factors                    — halved-park-factor materialization
   - f_player_season_advanced_*      — wOBA / wRC+ / FIP / SIERA per season
   - streak_history                  — decoded streak rows with names
-  - f_record_*                      — career / season / franchise records
-  - f_award_career / f_award_franchise
 
 Build pattern: L3 tables are full DROP/CREATE on every ingest (cheap; the
 warehouse fits in memory). They depend on L1 / L2 already being current.
@@ -24,6 +28,10 @@ Build order matters:
     LEFT JOINs to it for trade attribution)
   - `f_draft_class` builds AFTER `player_movements` (it consumes the
     `to_level_id=1` movements to derive `first_mlb_date`)
+
+Records / awards / HoF: pure derivations off L2 facts + L1 reference tables.
+Records and awards live as L3 tables; HoF surfaces directly from
+`players_current` and joins to `f_award_event` at query time.
 """
 
 from __future__ import annotations
@@ -507,6 +515,304 @@ def _build_f_draft_class(con: duckdb.DuckDBPyConnection) -> int:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# f_record_player — top-25 leaderboards per category
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# (scope, discipline, category, value_sql, source_cte, sort_dir) — sort_dir is
+# always DESC for v1 since we only model "more is better" counting stats.
+# Scope to MLB (league_id=203, level_id=1, split_id=1).
+RECORD_CATEGORIES: list[tuple[str, str, str, str, str]] = [
+    # ──────────────── single-season batting ─────────────────
+    ("season", "batting", "HR",  "hr",  "season_bat"),
+    ("season", "batting", "RBI", "rbi", "season_bat"),
+    ("season", "batting", "R",   "r",   "season_bat"),
+    ("season", "batting", "H",   "h",   "season_bat"),
+    ("season", "batting", "BB",  "bb",  "season_bat"),
+    ("season", "batting", "SB",  "sb",  "season_bat"),
+    ("season", "batting", "2B",  "d",   "season_bat"),
+    ("season", "batting", "3B",  "t",   "season_bat"),
+    ("season", "batting", "PA",  "pa",  "season_bat"),
+    ("season", "batting", "WAR", "war", "season_bat"),
+    # ──────────────── career batting ────────────────────────
+    ("career", "batting", "HR",  "hr",  "career_bat"),
+    ("career", "batting", "RBI", "rbi", "career_bat"),
+    ("career", "batting", "R",   "r",   "career_bat"),
+    ("career", "batting", "H",   "h",   "career_bat"),
+    ("career", "batting", "BB",  "bb",  "career_bat"),
+    ("career", "batting", "SB",  "sb",  "career_bat"),
+    ("career", "batting", "PA",  "pa",  "career_bat"),
+    ("career", "batting", "WAR", "war", "career_bat"),
+    # ──────────────── single-season pitching ────────────────
+    ("season", "pitching", "W",   "w",    "season_pit"),
+    ("season", "pitching", "S",   "s",    "season_pit"),
+    ("season", "pitching", "K",   "k",    "season_pit"),
+    ("season", "pitching", "IP",  "outs", "season_pit"),  # value=outs; CLI converts
+    ("season", "pitching", "SHO", "sho",  "season_pit"),
+    ("season", "pitching", "CG",  "cg",   "season_pit"),
+    ("season", "pitching", "QS",  "qs",   "season_pit"),
+    ("season", "pitching", "WAR", "war",  "season_pit"),
+    # ──────────────── career pitching ───────────────────────
+    ("career", "pitching", "W",   "w",    "career_pit"),
+    ("career", "pitching", "S",   "s",    "career_pit"),
+    ("career", "pitching", "K",   "k",    "career_pit"),
+    ("career", "pitching", "IP",  "outs", "career_pit"),
+    ("career", "pitching", "SHO", "sho",  "career_pit"),
+    ("career", "pitching", "CG",  "cg",   "career_pit"),
+    ("career", "pitching", "WAR", "war",  "career_pit"),
+]
+
+# Top-N per (scope, discipline, category). 25 is plenty for surfacing on a UI.
+RECORD_TOP_N = 25
+
+# League / level scope — MLB only for v1. Foreign + minor-league records are
+# left as a future extension (the same CTAS shape works with different
+# WHERE clauses).
+RECORD_LEAGUE_ID = 203
+RECORD_LEVEL_ID = 1
+
+
+def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
+    """Top-25 per category leaderboard table — single-season + career,
+    batting + pitching. MLB-only (league_id=203, level_id=1).
+
+    Long format keeps the UI / CLI layer simple: one filter per
+    (scope, discipline, category) returns the leaderboard ready to
+    render. Counting stats only for v1; rate stats (AVG/OBP/SLG/ERA/
+    FIP/etc.) need PA / IP gates and live one layer up — they can be
+    derived from `f_player_season_batting/pitching` in advanced.py
+    when needed.
+
+    Schema:
+        scope        VARCHAR  'season' or 'career'
+        discipline   VARCHAR  'batting' or 'pitching'
+        category     VARCHAR  e.g. 'HR', 'IP'
+        rank         INTEGER  1 = best
+        value        DOUBLE   stat value (outs for IP — CLI converts)
+        player_id    BIGINT
+        year         INTEGER  NULL for career
+        team_id      BIGINT   NULL for career; the team they were on
+                              when they set the season mark (one team
+                              per record, MAX in case of mid-year trade)
+
+    PK = (scope, discipline, category, rank).
+    """
+    # Build the union-all of all (scope×discipline×category) records.
+    # Each entry produces a SELECT yielding (scope, discipline, category,
+    # value, player_id, year, team_id).
+    parts: list[str] = []
+    for scope, disc, cat, value_col, src_cte in RECORD_CATEGORIES:
+        if scope == "season":
+            parts.append(f"""
+                SELECT
+                    '{scope}'      AS scope,
+                    '{disc}'       AS discipline,
+                    '{cat}'        AS category,
+                    CAST({value_col} AS DOUBLE) AS value,
+                    player_id,
+                    CAST(year AS INTEGER) AS year,
+                    team_id
+                FROM {src_cte}
+            """)
+        else:  # career
+            parts.append(f"""
+                SELECT
+                    '{scope}'      AS scope,
+                    '{disc}'       AS discipline,
+                    '{cat}'        AS category,
+                    CAST({value_col} AS DOUBLE) AS value,
+                    player_id,
+                    CAST(NULL AS INTEGER) AS year,
+                    CAST(NULL AS BIGINT)  AS team_id
+                FROM {src_cte}
+            """)
+    union_sql = "\n            UNION ALL".join(parts)
+
+    con.execute(f"""
+        CREATE OR REPLACE TABLE f_record_player AS
+        WITH season_bat AS (
+            SELECT
+                player_id,
+                year,
+                -- One team per (player, year) for the record's team_id.
+                -- Mid-season trades produce multiple teams; pick whichever
+                -- saw the most stats by max-arg.
+                ARG_MAX(team_id, pa) AS team_id,
+                SUM(hr)  AS hr,
+                SUM(rbi) AS rbi,
+                SUM(r)   AS r,
+                SUM(h)   AS h,
+                SUM(bb)  AS bb,
+                SUM(sb)  AS sb,
+                SUM(d)   AS d,
+                SUM(t)   AS t,
+                SUM(pa)  AS pa,
+                SUM(war) AS war
+            FROM f_player_season_batting
+            WHERE league_id = {RECORD_LEAGUE_ID}
+              AND level_id  = {RECORD_LEVEL_ID}
+              AND split_id  = 1
+            GROUP BY player_id, year
+        ),
+        season_pit AS (
+            SELECT
+                player_id,
+                year,
+                ARG_MAX(team_id, outs) AS team_id,
+                SUM(w)    AS w,
+                SUM(s)    AS s,
+                SUM(k)    AS k,
+                SUM(outs) AS outs,
+                SUM(sho)  AS sho,
+                SUM(cg)   AS cg,
+                SUM(qs)   AS qs,
+                SUM(war)  AS war
+            FROM f_player_season_pitching
+            WHERE league_id = {RECORD_LEAGUE_ID}
+              AND level_id  = {RECORD_LEVEL_ID}
+              AND split_id  = 1
+            GROUP BY player_id, year
+        ),
+        career_bat AS (
+            SELECT
+                player_id,
+                SUM(hr)  AS hr,
+                SUM(rbi) AS rbi,
+                SUM(r)   AS r,
+                SUM(h)   AS h,
+                SUM(bb)  AS bb,
+                SUM(sb)  AS sb,
+                SUM(pa)  AS pa,
+                SUM(war) AS war
+            FROM players_career_batting_event
+            WHERE level_id = {RECORD_LEVEL_ID} AND split_id = 1
+            GROUP BY player_id
+        ),
+        career_pit AS (
+            SELECT
+                player_id,
+                SUM(w)    AS w,
+                SUM(s)    AS s,
+                SUM(k)    AS k,
+                SUM(outs) AS outs,
+                SUM(sho)  AS sho,
+                SUM(cg)   AS cg,
+                SUM(war)  AS war
+            FROM players_career_pitching_event
+            WHERE level_id = {RECORD_LEVEL_ID} AND split_id = 1
+            GROUP BY player_id
+        ),
+        all_records AS ({union_sql}),
+        ranked AS (
+            SELECT
+                scope, discipline, category,
+                CAST(ROW_NUMBER() OVER (
+                    PARTITION BY scope, discipline, category
+                    ORDER BY value DESC, player_id ASC
+                ) AS INTEGER) AS rank,
+                value, player_id, year, team_id
+            FROM all_records
+            WHERE value IS NOT NULL AND value > 0
+        )
+        SELECT * FROM ranked WHERE rank <= {RECORD_TOP_N}
+    """)
+    con.execute(
+        "ALTER TABLE f_record_player ADD PRIMARY KEY (scope, discipline, category, rank)"
+    )
+    return con.execute("SELECT COUNT(*) FROM f_record_player").fetchone()[0]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# f_award_career_player + f_award_franchise
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _build_f_award_career_player(con: duckdb.DuckDBPyConnection) -> int:
+    """Career award totals per player.
+
+    One row per (player, league, award_id). Captures count + first /
+    last year won, plus the team they were on at first / last win
+    (useful for "Mookie Betts won 3 MVPs as a Sox" framings).
+
+    Schema:
+        player_id    BIGINT
+        league_id    BIGINT
+        award_id     BIGINT       constants.AwardId enum
+        n_won        INTEGER
+        first_year   INTEGER
+        last_year    INTEGER
+        first_team_id BIGINT      team at first win
+        last_team_id BIGINT       team at last win
+
+    PK = (player_id, league_id, award_id).
+    """
+    con.execute("""
+        CREATE OR REPLACE TABLE f_award_career_player AS
+        SELECT
+            player_id,
+            league_id,
+            award_id,
+            CAST(COUNT(*) AS INTEGER)     AS n_won,
+            CAST(MIN(year) AS INTEGER)    AS first_year,
+            CAST(MAX(year) AS INTEGER)    AS last_year,
+            ARG_MIN(team_id, year)        AS first_team_id,
+            ARG_MAX(team_id, year)        AS last_team_id
+        FROM f_award_event
+        GROUP BY player_id, league_id, award_id
+    """)
+    con.execute(
+        "ALTER TABLE f_award_career_player "
+        "ADD PRIMARY KEY (player_id, league_id, award_id)"
+    )
+    return con.execute("SELECT COUNT(*) FROM f_award_career_player").fetchone()[0]
+
+
+def _build_f_award_franchise(con: duckdb.DuckDBPyConnection) -> int:
+    """Franchise award totals — for each (team_at_time_of_winning, award),
+    how many times has the franchise won?
+
+    Differs from `f_award_career_player` in two ways:
+      - Aggregates by team rather than player
+      - Rolls farm-team team_ids up to their MLB-org parent (so an MVP
+        with a Worcester team_id rolls to the Red Sox = team 4)
+
+    Schema:
+        team_id      BIGINT     MLB-org team_id (parent_team_id rollup)
+        league_id    BIGINT
+        award_id     BIGINT
+        n_won        INTEGER
+        first_year   INTEGER
+        last_year    INTEGER
+
+    PK = (team_id, league_id, award_id).
+    """
+    con.execute("""
+        CREATE OR REPLACE TABLE f_award_franchise AS
+        WITH team_orgs AS (
+            SELECT team_id,
+                   COALESCE(NULLIF(parent_team_id, 0), team_id) AS org_id
+            FROM teams
+        )
+        SELECT
+            org.org_id   AS team_id,
+            ae.league_id,
+            ae.award_id,
+            CAST(COUNT(*) AS INTEGER)  AS n_won,
+            CAST(MIN(ae.year) AS INTEGER) AS first_year,
+            CAST(MAX(ae.year) AS INTEGER) AS last_year
+        FROM f_award_event ae
+        LEFT JOIN team_orgs org ON org.team_id = ae.team_id
+        WHERE org.org_id IS NOT NULL
+        GROUP BY org.org_id, ae.league_id, ae.award_id
+    """)
+    con.execute(
+        "ALTER TABLE f_award_franchise "
+        "ADD PRIMARY KEY (team_id, league_id, award_id)"
+    )
+    return con.execute("SELECT COUNT(*) FROM f_award_franchise").fetchone()[0]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Public entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -552,6 +858,30 @@ def build_l3(
         console.print(
             f"  [green]✓[/green] f_draft_class                   "
             f"[dim]{n:>10,} rows  PK=(player_id)[/dim]"
+        )
+
+    n = _build_f_record_player(con)
+    rows["f_record_player"] = n
+    if verbose:
+        console.print(
+            f"  [green]✓[/green] f_record_player                 "
+            f"[dim]{n:>10,} rows  PK=(scope, discipline, category, rank)[/dim]"
+        )
+
+    n = _build_f_award_career_player(con)
+    rows["f_award_career_player"] = n
+    if verbose:
+        console.print(
+            f"  [green]✓[/green] f_award_career_player           "
+            f"[dim]{n:>10,} rows  PK=(player_id, league_id, award_id)[/dim]"
+        )
+
+    n = _build_f_award_franchise(con)
+    rows["f_award_franchise"] = n
+    if verbose:
+        console.print(
+            f"  [green]✓[/green] f_award_franchise               "
+            f"[dim]{n:>10,} rows  PK=(team_id, league_id, award_id)[/dim]"
         )
 
     return rows

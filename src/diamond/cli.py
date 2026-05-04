@@ -21,7 +21,10 @@ from diamond.audit import decode as decode_mod
 from diamond.audit import decode_codes as decode_codes_mod
 from diamond.audit import reconcile as reconcile_mod
 from diamond.config import BUILDING_THE_GREEN_MONSTER
+from diamond import awards as awards_mod
 from diamond import draft as draft_mod
+from diamond import hof as hof_mod
+from diamond import records as records_mod
 from diamond.schema import build_warehouse, open_warehouse_db, rebuild_l1_l2
 from rich.console import Console
 
@@ -196,6 +199,103 @@ def draft(
         diamond draft 2026 --team 4       # Sox 2026 class only
     """
     draft_mod.run(year=year, team_id=team, output_path=output)
+
+
+@app.command()
+def records(
+    scope: str = typer.Option(
+        "career",
+        help="'career' or 'season'.",
+    ),
+    discipline: str = typer.Option(
+        "batting",
+        help="'batting' or 'pitching'.",
+    ),
+    category: str | None = typer.Option(
+        None,
+        help="A single category to render (e.g., 'HR', 'WAR', 'IP'). "
+        "Default: render every category for the scope+discipline.",
+    ),
+    limit: int = typer.Option(10, help="Top-N per category (max 25)."),
+    output: Path = typer.Option(
+        None,
+        help="Markdown output path. Defaults to audit_output/records_<scope>_<discipline>.md",
+    ),
+) -> None:
+    """All-time MLB leaderboards (single-season + career) — counting stats.
+
+    Reads from the L3 `f_record_player` table.
+
+    Examples:
+        diamond records                                  # career batting, all cats
+        diamond records --scope season --category HR     # single-season HR top 10
+        diamond records --discipline pitching --scope career --limit 25
+    """
+    records_mod.run(
+        scope=scope, discipline=discipline,
+        category=category, limit=limit, output_path=output,
+    )
+
+
+@app.command()
+def awards(
+    award: int | None = typer.Option(
+        None,
+        help="Award id to render (see diamond.constants.AwardId). "
+        "5=MVP, 4=CY, 6=ROY, 7=GG, 11=SS, 9=ASG, 14=WS roster.",
+    ),
+    player: int | None = typer.Option(
+        None,
+        help="Player id to render — shows their full career awards.",
+    ),
+    team: int | None = typer.Option(
+        None,
+        help="Team id to render franchise totals (org-rolled-up via parent_team_id).",
+    ),
+    league: int = typer.Option(203, help="League id (default MLB=203)."),
+    limit: int = typer.Option(15, help="Top-N players per award."),
+    output: Path = typer.Option(
+        None,
+        help="Markdown output path. Defaults to audit_output/awards.md",
+    ),
+) -> None:
+    """Awards leaderboards — career totals per player, per franchise.
+
+    Three modes (priority order):
+      diamond awards --player <id>          # one player's full résumé
+      diamond awards --team <id>            # franchise totals (org-rolled-up)
+      diamond awards --award <id>           # top-N players for that award
+      diamond awards                        # catalog: top-N for every award
+    """
+    awards_mod.run(
+        award_id=award,
+        player_id=player,
+        team_id=team,
+        league_id=league,
+        limit=limit,
+        output_path=output,
+    )
+
+
+@app.command()
+def hof(
+    candidates: bool = typer.Option(
+        False, "--candidates",
+        help="Show top-N career-WAR players who haven't been inducted yet.",
+    ),
+    limit: int = typer.Option(25, help="Top-N for --candidates mode."),
+    output: Path = typer.Option(
+        None,
+        help="Markdown output path. Defaults to audit_output/hof.md (or hof_candidates.md).",
+    ),
+) -> None:
+    """Hall of Fame tracker — current inductees + future candidates.
+
+    By default lists every HoF/inducted player with stats + hardware.
+    With --candidates, ranks the top career-MLB-WAR players who haven't
+    yet been inducted (rough HoF shortlist).
+    """
+    hof_mod.run(candidates=candidates, limit=limit, output_path=output)
 
 
 @app.command()
