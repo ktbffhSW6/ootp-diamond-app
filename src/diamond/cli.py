@@ -26,6 +26,7 @@ from diamond import draft as draft_mod
 from diamond import history as history_mod
 from diamond import hof as hof_mod
 from diamond import records as records_mod
+from diamond import streaks as streaks_mod
 from diamond.schema import build_warehouse, open_warehouse_db, rebuild_l1_l2
 from rich.console import Console
 
@@ -375,6 +376,42 @@ def hof(
         diamond hof --candidates     # save shortlist (top-WAR not inducted)
     """
     hof_mod.run(candidates=candidates, era=era, limit=limit, output_path=output)
+
+
+@app.command()
+def streaks(
+    all_time: bool = typer.Option(
+        False, "--all-time",
+        help="Show top-N all-time streaks (active + finished). "
+        "Default is --active only.",
+    ),
+    category: int | None = typer.Option(
+        None,
+        help="Single streak_id to render (see diamond.constants.StreakId). "
+        "0=Hitting, 5=Win, 9=GamesPlayed, 12=Saves, 19=K, 21=Appearance, etc. "
+        "Default: render every category.",
+    ),
+    limit: int = typer.Option(10, help="Top-N per category (max 50)."),
+    output: Path = typer.Option(
+        None,
+        help="Markdown output path. Defaults to audit_output/streaks_<scope>.md",
+    ),
+) -> None:
+    """Streak leaderboards (active or all-time, per category).
+
+    Reads from L3 `f_player_streak`. Labels come from the `StreakId`
+    IntEnum and are best-guess pending OOTP UI cross-reference.
+
+    Examples:
+        diamond streaks                            # active streaks, every category
+        diamond streaks --all-time                 # all-time, every category
+        diamond streaks --category 0 --all-time    # all-time hitting streak only
+        diamond streaks --category 4               # active scoreless-innings streaks
+    """
+    scope = "all_time" if all_time else "active"
+    streaks_mod.run(
+        scope=scope, category=category, limit=limit, output_path=output,
+    )
 
 
 @app.command()

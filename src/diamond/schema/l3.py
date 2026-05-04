@@ -1536,6 +1536,145 @@ def _build_f_award_franchise(con: duckdb.DuckDBPyConnection) -> int:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# f_player_streak — top streak leaderboards per category × scope
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# How many top rows to keep per (streak_id × scope). Streaks are individually
+# rare so a top-50 keeps the entire interesting tail without bloating the table.
+STREAK_TOP_N = 50
+
+
+def _build_f_player_streak(con: duckdb.DuckDBPyConnection) -> int:
+    """Top-N streak leaderboards per (streak_id × scope).
+
+    Two scopes are stored:
+      - `active`    — has_ended = 0 (streaks alive in the latest dump)
+      - `all_time`  — every streak observed in the latest dump's
+                      `players_streak.csv`, including finished ones.
+                      OOTP retains finished streaks indefinitely in this
+                      file, so this captures every streak that ever
+                      finished or is still alive in the save's history.
+
+    Each row carries the StreakId enum's display label. Names are the
+    best-guess derived from max-value range + holder type per
+    `diamond.constants.StreakId`; cross-reference OOTP UI to confirm.
+
+    Schema:
+        streak_id        BIGINT    OOTP integer code
+        streak_label     VARCHAR   StreakId enum display label
+        scope            VARCHAR   'active' | 'all_time'
+        rank_in_scope    INTEGER   1 = longest within (streak_id × scope)
+        player_id        BIGINT    OOTP player_id
+        display_name     VARCHAR   first + last name from players_current
+        value            INTEGER   streak length
+        has_ended        BOOLEAN
+        started          DATE
+        ended            VARCHAR   raw ended string from CSV (may be NULL
+                                   or 'YYYY-M-D' format; not normalized)
+        league_id        BIGINT
+        team_abbr        VARCHAR   current team abbr from players_current
+                                   (may be stale for finished streaks)
+
+    PK = (streak_id, scope, rank_in_scope).
+
+    Tie-breaker: when multiple players are tied at the top of a category
+    (common — every category has natural ties at low integer values),
+    rank_in_scope orders by (value DESC, started ASC, player_id ASC) so
+    the earliest-started streak sits ahead, then a stable id-based break.
+    """
+    # Pull the streak label map from the IntEnum. Hard-coded here rather
+    # than importing constants.StreakId to keep this module dependency-free
+    # for rebuild-from-warehouse use cases — this dict mirrors the enum.
+    streak_labels = {
+        0:  "Hitting Streak",
+        1:  "Multi-Hit Game Streak",
+        2:  "3+ Hit Game Streak",
+        3:  "HR Game Streak",
+        4:  "Scoreless Innings Streak",
+        5:  "Win Streak",
+        6:  "QS Streak",
+        7:  "No-HR-Allowed Streak",
+        8:  "No-Walk-Allowed Streak",
+        9:  "Games Played Streak",
+        10: "Extra-Base Hit Streak",
+        11: "Pitcher Mixed (id=11)",
+        12: "Saves Streak",
+        13: "RBI Streak",
+        14: "Run Streak",
+        15: "On-Base Streak",
+        16: "Loss Streak",
+        17: "Batter Rare (id=17)",
+        18: "Batter Rare (id=18)",
+        19: "K Streak",
+        21: "Appearance Streak",
+    }
+    label_case = " ".join(
+        f"WHEN {k} THEN '{v}'" for k, v in streak_labels.items()
+    )
+
+    con.execute(f"""
+        CREATE OR REPLACE TABLE f_player_streak AS
+        WITH labeled AS (
+            SELECT
+                se.streak_id,
+                CASE se.streak_id {label_case}
+                    ELSE 'Unknown id=' || CAST(se.streak_id AS VARCHAR)
+                END AS streak_label,
+                se.player_id,
+                pc.first_name || ' ' || pc.last_name AS display_name,
+                CAST(se.value AS INTEGER) AS value,
+                CAST(se.has_ended AS BOOLEAN) AS has_ended,
+                se.started,
+                se.ended,
+                se.league_id,
+                (SELECT abbr FROM teams t
+                  WHERE t.team_id = pc.team_id) AS team_abbr
+            FROM streak_event se
+            LEFT JOIN players_current pc ON pc.player_id = se.player_id
+            WHERE se.value > 0
+        ),
+        active AS (
+            SELECT 'active' AS scope, *,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY streak_id
+                       ORDER BY value DESC, started ASC, player_id ASC
+                   ) AS rank_in_scope
+            FROM labeled
+            WHERE has_ended = FALSE
+        ),
+        all_time AS (
+            SELECT 'all_time' AS scope, *,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY streak_id
+                       ORDER BY value DESC, started ASC, player_id ASC
+                   ) AS rank_in_scope
+            FROM labeled
+        )
+        SELECT
+            streak_id, streak_label, scope,
+            CAST(rank_in_scope AS INTEGER) AS rank_in_scope,
+            player_id, display_name, value, has_ended,
+            started, ended, league_id, team_abbr
+        FROM active
+        WHERE rank_in_scope <= {STREAK_TOP_N}
+        UNION ALL
+        SELECT
+            streak_id, streak_label, scope,
+            CAST(rank_in_scope AS INTEGER) AS rank_in_scope,
+            player_id, display_name, value, has_ended,
+            started, ended, league_id, team_abbr
+        FROM all_time
+        WHERE rank_in_scope <= {STREAK_TOP_N}
+    """)
+    con.execute(
+        "ALTER TABLE f_player_streak "
+        "ADD PRIMARY KEY (streak_id, scope, rank_in_scope)"
+    )
+    return con.execute("SELECT COUNT(*) FROM f_player_streak").fetchone()[0]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Public entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1605,6 +1744,14 @@ def build_l3(
         console.print(
             f"  [green]✓[/green] f_award_franchise               "
             f"[dim]{n:>10,} rows  PK=(team_id, league_id, award_id)[/dim]"
+        )
+
+    n = _build_f_player_streak(con)
+    rows["f_player_streak"] = n
+    if verbose:
+        console.print(
+            f"  [green]✓[/green] f_player_streak                 "
+            f"[dim]{n:>10,} rows  PK=(streak_id, scope, rank_in_scope)[/dim]"
         )
 
     return rows

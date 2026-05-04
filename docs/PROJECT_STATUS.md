@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-07 (in-game year 2029→2030) — **Phase 2 + analytical layer + history backfill all closed; analytical surfaces clean**. Phase 2 (warehouse + ingest) shipped 05-05; the L3 analytical layer + real-MLB-history backfill shipped 05-06; final analytical-data cleanup shipped 05-07 — added `direction` column + pitching Statcast records to `f_record_player` (ASC ranking for "lowest barrel% allowed" leaderboards), unified Lahman + MLB Stats API into a single 'merged' source on `f_award_career_player` with bbref_id dedup (Bonds 7 MVPs sits alongside Ohtani 7 with no Trout-style double-counting), and added save-side EV records computed from `f_pa_event` with a documented calibration gap (~5 mph lower than Statcast). Bonds 73 leads single-season HR records, Bonds 762 leads career, Pujols 686 (Lahman 656 + BREF 30 merged) sits at #5 career. **Phase 3 (UI implementation) is the next phase** — start point per UI_DESIGN.md is D13 reference scope expansion (~30 lines) followed by D15 stat dictionary Python module.
+**Last updated**: 2026-05-07 (in-game year 2029→2030) — **All Phase 2 + analytical-layer items closed; backlog clean for Phase 3.** Phase 2 (warehouse + ingest) shipped 05-05; L3 analytical surfaces (records / awards / HOF / draft / trades / movements) + real-MLB-history backfill shipped 05-06; analytical-data cleanup AM 05-07 added `direction` column + pitching Statcast + 'merged' awards source + save-side EV calibration; analytical-layer refinements PM 05-07 closed every remaining open feature/refinement item: streaks decoder + `f_player_streak` L3 + `diamond streaks` CLI; Custom oWAR + pitching WAR (FIP-based, replacement × 1.13); park-factor integration on OPS+ (halved factor) and ERA+ (80% factor); RE24 refined to full Tango `(RE_after - RE_before + rbi)` via LEAD window function. **Phase 3 (UI implementation) is the next phase** — start point per UI_DESIGN.md is D13 reference scope expansion (~30 lines) followed by D15 stat dictionary Python module.
 
 ---
 
@@ -125,7 +125,7 @@ Latest reports (regenerable, gitignored): `audit_output/{decoder,codes_decoder,r
 Phase 2 (schema + ingest) closed 2026-05-05; the analytical layer + real-MLB
 history backfill closed same-day 2026-05-06. Major shipped artifacts:
 
-**L3 derived tables** (6):
+**L3 derived tables** (7):
 - `f_trade_participant` — 1,275 rows; 1 per (trade × player)
 - `player_movements` — 95,643 rows; refined `movement_type` (promotion / demotion /
   intra_org_lateral / waiver_or_other / trade) + `trade_id` attribution
@@ -141,6 +141,8 @@ history backfill closed same-day 2026-05-06. Major shipped artifacts:
   collapsed via bbref_id; merged filtered to non-save bbref_ids to avoid
   active-player double-count via OOTP historical-seed import).
 - `f_award_franchise` — 1,856 rows
+- `f_player_streak` — 2,098 rows; top-50 per (streak_id × scope), where
+  scope ∈ {active, all_time}. `streak_label` from `StreakId` IntEnum.
 
 **Real MLB history backfill** (one-time, capped at save_start_year - 1 = 2025):
 - Lahman 1871-2019 (8 tables via cdalzell mirror)
@@ -153,8 +155,9 @@ history backfill closed same-day 2026-05-06. Major shipped artifacts:
 - Audit: `decode`, `decode-codes`, `reconcile`, `coverage`, `advanced`
 - Ingest: `ingest [<dump>] [--all] [--rebuild-only] [--force] [--no-rebuild]`
 - Analytics: `draft <year> [--team]`, `records [--era] [--scope] [--category]`,
-  `awards [--era] [--player] [--lahman-id] [--team] [--award]`,
-  `hof [--era] [--candidates]`
+  `awards [--era] [--player] [--bbref-id] [--team] [--award]`,
+  `hof [--era] [--candidates]`,
+  `streaks [--all-time] [--category]`
 - Setup: `fetch-history` (one-time real-history backfill, idempotent)
 
 ## What's next — Phase 3 (UI implementation)

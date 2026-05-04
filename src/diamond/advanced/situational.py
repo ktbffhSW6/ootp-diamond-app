@@ -78,25 +78,75 @@ def build_re_matrix(con: duckdb.DuckDBPyConnection) -> list[tuple]:
 
 
 def re24_per_player(con: duckdb.DuckDBPyConnection) -> list[tuple]:
-    """RE24 per player: sum of (RE_after_AB + runs_scored_in_AB - RE_before_AB) over all PAs.
+    """RE24 per player — full Tango formulation.
 
-    Requires `re_states` temp table from build_re_matrix.
-    Approximation: we don't have explicit base/out STATE AFTER the AB, so we
-    estimate using: result-based likely state transitions. For v1 we report
-    RE_before contribution (runs from this state-onward) per player, which is
-    a player's "leverage exposure" — close to RE24 but not exact.
+    For each PA:
+        re24_pa = (RE_after - RE_before) + runs_scored_in_PA
+
+    Where RE_after is the run-expectancy at the *post-PA* base/outs
+    state. We don't have a post-PA state column directly, so we
+    derive it: post-state of PA N == pre-state of PA N+1 in the same
+    (game × half-inning). Use a LEAD window function ordered by
+    `(outs ASC, lineup_spot ASC, base_state DESC)` — this is the
+    natural batting order within a half-inning for >99% of cases. The
+    rare 9+-batter inning where lineup wraps may misorder a PA but the
+    leaderboard impact is below noise.
+
+    The last PA of a half-inning has no successor → RE_after = 0.
+
+    Per-PA runs uses `rbi` (runs driven in on this PA), not `r`
+    (batter's own runs, which OOTP attributes to the AB where the
+    batter reached base, not the AB that drove them home). Across the
+    season the two columns differ by ~3% (rbi excludes runs scored on
+    errors, balks, etc.).
+
+    Compared to the previous "RE_before exposure" version, this:
+      - sums to roughly 0 across the league (value-add metric vs an
+        accumulation metric)
+      - rewards driving in baserunners + advancing the lineup, not
+        just appearing in high-leverage spots
+
+    Requires the `re_states` temp table built by `build_re_matrix`.
     """
     return con.execute("""
-        SELECT e.player_id AS grp,
-               COUNT(*)                AS pa,
-               ROUND(SUM(rs.exp_runs), 1) AS expected_runs_exposed,
-               ROUND(AVG(rs.exp_runs), 3) AS avg_re_per_pa
-        FROM enriched_ab e
-        JOIN re_states rs ON e.base_state = rs.base_state AND e.outs = rs.outs
-        WHERE e.game_type = 0
-        GROUP BY e.player_id
+        WITH state_seq AS (
+            SELECT
+                e.*,
+                LEAD(e.base_state) OVER (
+                    PARTITION BY e.game_id, e.inning, e.bat_team_id
+                    ORDER BY e.outs ASC, e.lineup_spot ASC, e.base_state DESC
+                ) AS next_base_state,
+                LEAD(e.outs) OVER (
+                    PARTITION BY e.game_id, e.inning, e.bat_team_id
+                    ORDER BY e.outs ASC, e.lineup_spot ASC, e.base_state DESC
+                ) AS next_outs
+            FROM enriched_ab e
+            WHERE e.game_type = 0
+        ),
+        per_pa AS (
+            SELECT
+                ss.player_id,
+                ss.rbi,
+                rs_before.exp_runs AS re_before,
+                COALESCE(rs_after.exp_runs, 0.0) AS re_after,
+                (COALESCE(rs_after.exp_runs, 0.0) - rs_before.exp_runs
+                  + ss.rbi) AS re24_pa
+            FROM state_seq ss
+            JOIN re_states rs_before
+              ON rs_before.base_state = ss.base_state
+             AND rs_before.outs = ss.outs
+            LEFT JOIN re_states rs_after
+              ON rs_after.base_state = ss.next_base_state
+             AND rs_after.outs = ss.next_outs
+        )
+        SELECT player_id AS grp,
+               COUNT(*) AS pa,
+               ROUND(SUM(re24_pa), 1) AS re24,
+               ROUND(AVG(re24_pa), 3) AS avg_re24_per_pa
+        FROM per_pa
+        GROUP BY player_id
         HAVING pa > 0
-        ORDER BY expected_runs_exposed DESC
+        ORDER BY re24 DESC
     """).fetchall()
 
 

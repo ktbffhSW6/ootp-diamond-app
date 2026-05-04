@@ -671,6 +671,56 @@ def smoke_l3(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
         return False
     console.print("[green]✓[/green] all f_award_franchise rows have n_won > 0")
 
+    # f_player_streak: scope ∈ {'active', 'all_time'}; rank_in_scope contiguous
+    # 1..N per (streak_id × scope); value non-increasing as rank goes up.
+    n_bad_scope = con.execute("""
+        SELECT COUNT(*) FROM f_player_streak
+        WHERE scope NOT IN ('active', 'all_time')
+    """).fetchone()[0]
+    if n_bad_scope:
+        console.print(
+            f"[red]FAIL:[/red] {n_bad_scope} f_player_streak rows have unknown scope"
+        )
+        return False
+    console.print("[green]✓[/green] f_player_streak scope values valid")
+
+    n_streak_rank_bad = con.execute("""
+        WITH grouped AS (
+            SELECT streak_id, scope,
+                   COUNT(*) AS n,
+                   MAX(rank_in_scope) AS max_rank,
+                   MIN(rank_in_scope) AS min_rank
+            FROM f_player_streak
+            GROUP BY streak_id, scope
+        )
+        SELECT COUNT(*) FROM grouped
+        WHERE max_rank != n OR min_rank != 1
+    """).fetchone()[0]
+    if n_streak_rank_bad:
+        console.print(
+            f"[red]FAIL:[/red] {n_streak_rank_bad} f_player_streak (streak_id, scope) "
+            f"groups have non-contiguous rank_in_scope sequences"
+        )
+        return False
+    console.print("[green]✓[/green] f_player_streak rank_in_scope contiguous per (streak_id, scope)")
+
+    n_streak_mono = con.execute("""
+        WITH ordered AS (
+            SELECT streak_id, scope, rank_in_scope, value,
+                   LAG(value) OVER (PARTITION BY streak_id, scope ORDER BY rank_in_scope) AS prev
+            FROM f_player_streak
+        )
+        SELECT COUNT(*) FROM ordered
+        WHERE prev IS NOT NULL AND value > prev
+    """).fetchone()[0]
+    if n_streak_mono:
+        console.print(
+            f"[red]FAIL:[/red] f_player_streak has {n_streak_mono} rows where value "
+            f"increases as rank_in_scope goes up"
+        )
+        return False
+    console.print("[green]✓[/green] f_player_streak values monotonically descend by rank_in_scope")
+
     # Idempotency
     rows_2 = build_l3(con, verbose=False)
     if rows != rows_2:

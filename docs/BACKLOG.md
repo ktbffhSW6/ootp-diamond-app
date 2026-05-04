@@ -110,13 +110,30 @@ and count-state splits).
 
 ### Refinements
 
-- [ ] **Park-factor integration** for OPS+/ERA+ in advanced library — currently
-  park-neutral. `parks.csv` has avg, avg_l, avg_r, hr, hr_l, hr_r per park.
-- [ ] **Custom WAR** — combines wRAA + dWAR vs replacement-level baseline
-  (typically -2.0 wRAA per 600 PA).
-- [ ] **Refine RE24** — current impl reports "expected runs exposed"; full RE24
-  needs `(RE_after - RE_before + runs_scored)` which requires inferring post-AB
-  base state from the result code.
+- [x] **Park-factor integration** for OPS+/ERA+ — done 2026-05-07.
+  `sabermetric.ops_plus_per_player` now applies the halved park
+  factor `(1 + (parks.avg - 1) / 2)`; `era_plus_per_pitcher` applies
+  the 80% factor `(1 + (parks.avg - 1) * 0.8)`. Both match the
+  audit-decoded OOTP convention (Crochet ERA+ 127 vs IE 127 for Fenway
+  in `reconcile.py`). Home park comes from `players → teams → parks`;
+  mid-season trades attribute to the latest team.
+- [x] **Custom WAR** — done 2026-05-07.
+  `sabermetric.o_war_per_player` (wRAA + replacement-level adjustment
+  / runs_per_win) gives Fangraphs-scale offensive WAR (Henderson 8.7,
+  Kurtz 8.7, Judge 7.7 in 2029). `sabermetric.pit_war_per_pitcher`
+  (FIP-based, replacement = lgFIP × 1.13) gives pitching WAR (Skubal
+  4.1, McLean 4.1). Replacement constants:
+  REPL_WRAA_PER_PA=20/600, RUNS_PER_WIN=10, REPL_FIP_MULT=1.13.
+  Defensive contribution NOT folded in — would need RF/9 / framing
+  conversion to runs-above-average (separate task).
+- [x] **Refine RE24** — done 2026-05-07. `situational.re24_per_player`
+  now returns full Tango formulation `(RE_after - RE_before) + rbi`
+  via `LEAD()` window function on `(outs ASC, lineup_spot ASC,
+  base_state DESC)` within (game × inning × bat_team_id). Last PA
+  of half-inning gets RE_after=0. Per-PA runs uses `rbi` (driven in
+  on this play) rather than `r` (batter's own scoring, which OOTP
+  attributes to the AB where the batter reached base). Vavra 170.4
+  RE24 leads the latest dump.
 - [ ] **Spray-chart visualization** — use hit_xy + hit_loc for on-field scatter
   plots per player.
 
@@ -134,10 +151,16 @@ and count-state splits).
   `to_team_id = draft_team_id` (always MLB-level), so first-MLB
   detection has to exclude it (otherwise every draftee falsely flags
   ever_made_mlb on draft day).
-- [ ] **Streaks decoder** — `players_streak` has 21 codes profiled (11 batter,
-  9 pitcher, 1 mixed) but display labels are best-guess. Cross-reference OOTP
-  UI screenshots / in-game help to lock names, then expose as
-  "longest active streak per category."
+- [x] **Streaks decoder** — done 2026-05-07. New L3 table
+  `f_player_streak` (top-50 per streak_id × scope, ~2,100 rows) +
+  CLI `diamond streaks [--all-time] [--category <id>]`. Two scopes:
+  `active` (alive in latest dump) and `all_time` (every streak ever
+  observed in the latest dump's `players_streak.csv`, since OOTP
+  retains finished streaks indefinitely). Display labels come from
+  the `StreakId` IntEnum and remain best-guess pending OOTP UI
+  cross-reference; the integer code is authoritative. Charlie
+  Szykowny holds the save's all-time hitting-streak record at 56
+  (tying DiMaggio's real-life mark).
 - [x] **Record breakers** — done 2026-05-06. New L3 table
   `f_record_player` (825 rows) with all-time MLB top-25 leaderboards
   per (scope × discipline × category) — single-season + career, batting +

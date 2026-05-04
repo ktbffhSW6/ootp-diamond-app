@@ -40,6 +40,7 @@ def _connect(save: SaveConfig, dump: str) -> duckdb.DuckDBPyConnection:
         "games":        "games.csv",
         "players":      "players.csv",
         "teams":        "teams.csv",
+        "parks":        "parks.csv",   # for park-factor integration
     }
     csv_dir = save.csv_dir(dump)
     for view, fname in csvs.items():
@@ -190,6 +191,8 @@ def run(
     psn       = sabermetric.power_speed_number(con, lc)
     speed_sc  = sabermetric.speed_score(con, lc)
     iso       = sabermetric.iso_d_p(con, lc)
+    o_war     = sabermetric.o_war_per_player(con, lc)
+    pit_war   = sabermetric.pit_war_per_pitcher(con, lc)
 
     console.print("  - computing Tier 4 (defensive)...")
     rf        = defensive.range_factor(con, year, league_id)
@@ -208,6 +211,7 @@ def run(
     for source in [hh_buckets, sweet, barrel, squared, ev_buckets, spray, pit_qual,
                    risp, two_out, pinch, late_clo, by_lev, re24,
                    woba, ops_plus, era_plus, fip, psn, speed_sc, iso,
+                   o_war, pit_war,
                    rf, framing, of_assist, two_k, fp_bb, tp_k]:
         for row in source:
             if row[0] is not None:
@@ -266,8 +270,8 @@ def run(
         "Late & Close (Close=1 AND inning>=7) (top 10 by PA)",
         late_clo, ["Player", "Split", "PA", "AB", "H", "HR", "BB", "K", "AVG", "OBP", "SLG"], names))
     md.extend(_top_n_table(
-        "RE24 exposure — total expected-runs faced across all PAs (top 10)",
-        re24, ["Player", "PA", "Exp-Runs-Exposed", "Avg-RE/PA"], names))
+        "RE24 — full Tango (RE_after - RE_before + runs) (top 10)",
+        re24, ["Player", "PA", "RE24", "Avg-RE24/PA"], names))
 
     md.append("## Tier 3 — Sabermetric (with league constants)")
     md.append("")
@@ -276,11 +280,11 @@ def run(
         _qual(woba, 1, MIN_PA),
         ["Player", "PA", "wOBA", "wRAA", "wRC", "wRC+"], names))
     md.extend(_top_n_table(
-        f"OPS+ (park-neutral) — top 10 (min {MIN_PA} PA)",
+        f"OPS+ (park-adjusted, halved factor) — top 10 (min {MIN_PA} PA)",
         _qual(ops_plus, 1, MIN_PA),
         ["Player", "PA", "OBP", "SLG", "OPS+"], names))
     md.extend(_top_n_table(
-        "ERA+ — top 10 (10+ IP)",
+        "ERA+ (park-adjusted, 80% factor) — top 10 (10+ IP)",
         era_plus, ["Pitcher", "IP", "ERA", "ERA+"], names))
     md.extend(_top_n_table(
         "FIP — top 10 lowest (10+ IP)",
@@ -295,6 +299,13 @@ def run(
         "isoP / isoD — top 10 by isoP (min 200 PA)",
         sorted([r for r in iso if (r[1] or 0) >= 200], key=lambda r: -(r[5] or 0)),
         ["Player", "PA", "AVG", "SLG", "OBP", "isoP", "isoD"], names))
+    md.extend(_top_n_table(
+        f"Custom oWAR — wRAA + replacement adjustment / runs-per-win (min {MIN_PA} PA)",
+        _qual(o_war, 1, MIN_PA),
+        ["Player", "PA", "wOBA", "wRAA", "oWAR"], names))
+    md.extend(_top_n_table(
+        "Custom Pitching WAR — FIP-based, replacement = lgFIP × 1.13 (min 30 IP outs)",
+        pit_war, ["Pitcher", "IP", "FIP", "WAR"], names))
 
     md.append("## Tier 4 — Defensive")
     md.append("")
