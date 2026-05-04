@@ -4,13 +4,13 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-07 (in-game year 2029→2030) — **Phase 3 UI infrastructure complete; tech stack locked.** All Phase 2 + analytical layer closed earlier today; D13 (two-tier player scope) + D15 (stat dictionary thin v1) + D16 (tech stack pick) all shipped same-day. **D13**: `SaveConfig.reference_scope_enabled` + CLI flags + `_diamond_settings` persistence; expands `_scoped_players` from 15,992 → 35,261 via "≥1 MLB appearance" (PA OR IP) cohort. **D15**: `src/diamond/dictionary/` module with `Stat` dataclass + 39 entries; `diamond glossary` CLI; smoke Phase G validates dictionary integrity. **D16**: **FastAPI + Next.js (App Router)** with Pydantic-derived TS types. Tailwind + shadcn/ui + Vega-Embed + Plotly WebGL + KaTeX + TanStack Table. **Next: scaffold the API + web app** (`src/diamond/api/` + `web/`) → first page is the player page (Bref-shaped layout, Savant-styled visuals, AI assistant pinned). Per UI_DESIGN.md build order: player page → demotion/promotion → leaderboards → universes/charts → AI overlay → cockpit → reviews → setup wizard → sync triggers.
+**Last updated**: 2026-05-07 (in-game year 2029→2030) — **Phase 3 scaffold complete and verified end-to-end. Diamond now exists as a UI, not just a CLI.** All Phase 2 + analytical layer closed earlier today; D13 (scope) + D15 (dictionary) + D16 (stack) all shipped same-day; **the two-process scaffold landed and was smoke-tested live in the browser**. Pydantic schemas → JSON → auto-generated TS types → Next.js server components → KaTeX-rendered formulas all flow cleanly. The glossary list + detail pages render against the live D15 dictionary; `pnpm build` succeeds clean (1 static + 2 dynamic routes); `make types` regenerates `web/lib/types/api.ts` with Pydantic docstrings carried as JSDoc. Frontend installed: Node 24 + pnpm 10 on the dev machine. **Next: player page** — first real feature, Bref-shaped layout with sticky tabs + Savant-styled percentile bars + AI assistant pinned in right rail.
 
 ---
 
 ## One-line summary
 
-Phases 1-2 closed; analytical CLI surface complete (`diamond draft / records / awards / hof / fetch-history`); real MLB history through 2025 backfilled and integrated into records + awards + HOF leaderboards. Phase 3 (UI) is the active phase, not yet started.
+Phases 1-2 closed; analytical CLI surface complete; real MLB history through 2025 backfilled; Phase 3 UI scaffold (FastAPI + Next.js) live with the glossary route as proof-of-life. Player page is the next move.
 
 ## What works today
 
@@ -165,21 +165,32 @@ history backfill closed same-day 2026-05-06. Major shipped artifacts:
 Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
 
 1. ✅ **D13 reference scope expansion** — done 2026-05-07.
-2. ✅ **D15 stat dictionary** thin v1 — done 2026-05-07. 39 entries +
-   CLI + smoke.
+2. ✅ **D15 stat dictionary** thin v1 — done 2026-05-07. 39 entries.
 3. ✅ **D16 tech stack pick** — done 2026-05-07. FastAPI + Next.js
    (App Router) with Pydantic-derived TS types.
-4. ✅ **API + web scaffold** — done 2026-05-07. `src/diamond/api/`
-   (FastAPI app + glossary route + Pydantic schemas + health probe);
-   `web/` (Next.js 15 App Router + Tailwind + KaTeX + glossary list
-   + detail pages); `scripts/generate_types.py` Pydantic→TS pipeline;
-   `Makefile` with `make api / web / types / smoke` targets;
-   `docs/DEV.md` setup guide. Backend smoke-tested live (`/api/health`,
-   `/api/glossary`, `/api/glossary/wOBA`, 404 path). **Frontend
-   awaits Node 20+ + pnpm install** — see DEV.md.
-5. **Player page** — first user-facing feature; Bref-shaped layout +
-   Savant-styled percentile bars + AI assistant pinned in right rail.
-   Consumes `STATS[id]` from D15 for every column header / tooltip.
+4. ✅ **API + web scaffold** — done 2026-05-07, **verified live**:
+   - Backend (`src/diamond/api/`) — FastAPI app + glossary + health
+     routes + Pydantic schemas. `/api/health`, `/api/glossary`,
+     `/api/glossary/{id}`, 404 path all live.
+   - Frontend (`web/`) — Next.js 15 App Router + Tailwind + KaTeX
+     + react-katex. Glossary list + detail pages render server-side
+     against the live API; `pnpm build` succeeds clean.
+   - Type-gen (`scripts/generate_types.py`) — Pydantic → TS pipeline
+     working; `make types` overwrites `web/lib/types/api.ts` with
+     auto-generated content carrying Pydantic docstrings as JSDoc.
+   - Dev workflow (`Makefile` + `docs/DEV.md`) — `make api`, `make
+     web`, `make types`, `make smoke` documented. Two-terminal flow.
+   - Frontend dev deps installed on this machine: Node 24, pnpm 10,
+     web/node_modules complete.
+5. **Player page** — first user-facing feature. Bref-shaped layout
+   (sticky tabs: Stats / Charts / Game log / Comparisons / Scouting
+   / Contract) + Savant-styled percentile bars + AI assistant pinned
+   in right rail. URL pattern `/player/<id>` and
+   `/player/<id>/<season>`. Backend needs new
+   `GET /api/players/<id>` + `/api/players/<id>/season/<year>` routes
+   pulling from `players_current` + `f_player_season_*` +
+   `f_award_career_player`. Every column header / tooltip reads from
+   `STATS[id]` per D15 maintenance contract.
 6. Then per UI_DESIGN.md: demotion/promotion → custom leaderboards →
    universes + chart-builder → AI overlay → cockpit → reviews →
    setup wizard → sync triggers.

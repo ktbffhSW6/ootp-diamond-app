@@ -133,7 +133,10 @@ ootp-diamond-app/
 
 1. **Schema** — define the Pydantic response model in
    `src/diamond/api/schemas/<resource>.py`. Re-export from
-   `src/diamond/api/schemas/__init__.py`.
+   `src/diamond/api/schemas/__init__.py`. **Every type that crosses
+   the wire must live in `schemas/`** — `pydantic-to-typescript` only
+   scans that package, so types defined inline in `routes/` won't
+   make it to the frontend.
 2. **Route** — create `src/diamond/api/routes/<resource>.py` with a
    `router: APIRouter` and your handler functions.
 3. **Wire** — add `app.include_router(<resource>.router, prefix="/api", tags=["..."])`
@@ -141,6 +144,11 @@ ootp-diamond-app/
 4. **Types** — run `make types` to regenerate `web/lib/types/api.ts`.
 5. **Frontend** — add a typed fetch helper in `web/lib/api.ts`, then
    consume it from a server component in `web/app/<resource>/page.tsx`.
+6. **Mark the page dynamic** — add `export const dynamic = "force-dynamic"`
+   to the page. Diamond is local-first; without this, Next.js's
+   default static prerender at `next build` time will call the API
+   while uvicorn isn't running and your build will fail with
+   `ECONNREFUSED`. Every data-fetching page in Diamond gets this.
 
 The glossary endpoint is the canonical reference implementation —
 copy its shape when adding new resources.

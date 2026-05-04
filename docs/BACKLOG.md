@@ -316,6 +316,17 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
   id uniqueness. Long-tail entries (~110 more) land as UI screens
   reach for them per the maintenance contract — strict rule: any new
   UI label MUST come from the dictionary.
+- [x] **Tech stack pick** (per D16) — locked 2026-05-07. FastAPI +
+  Next.js (App Router) with Pydantic-derived TS types. Tailwind +
+  KaTeX + react-katex base; shadcn/ui + Vega-Embed + Plotly +
+  TanStack Table deferred until features need them.
+- [x] **API + web scaffold** — done 2026-05-07, **verified live**.
+  `src/diamond/api/` (FastAPI app with health + glossary routes,
+  Pydantic schemas), `web/` (Next.js 15 App Router + Tailwind +
+  KaTeX, glossary list + detail pages), `scripts/generate_types.py`
+  (Pydantic → TS pipeline), `Makefile`, `docs/DEV.md` setup guide.
+  End-to-end browser flow validated: home → /glossary → /glossary/wOBA
+  with KaTeX-rendered MathML + related-stat chips + Fangraphs link.
 - [ ] **Player page** — Bref-shaped layout, Savant-styled visuals, AI assistant.
 - [ ] **Promotion/demotion decision tool** — flagship "GM sidekick" feature.
 - [ ] **Custom leaderboards** — Fangraphs-style sortable filterable tables.

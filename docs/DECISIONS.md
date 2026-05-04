@@ -280,3 +280,34 @@ Each entry carries: `id`, `display_name`, `short_label`, `category`, `formula_te
   - *Theming*: defer until UI matures (not in MVP scope).
   - *Anomaly thresholds, AI prompt library, onboarding analytics*: stay open in UI_DESIGN.md.
 - **Universe export format** (per UI_DESIGN.md's community-share aspiration): JSON, schema versioned. Lock when chart builder lands.
+
+**Implementation status (2026-05-07)** — scaffold landed and verified end-to-end:
+
+- **Backend** (`src/diamond/api/`):
+  - `app.py` — FastAPI app factory with CORS allowlist for `localhost:3000`. Includes `/api/health` and `/api/glossary` route modules with `/api` prefix.
+  - `schemas/` — `GlossaryEntry`, `GlossaryListResponse`, `HealthResponse` Pydantic v2 models. The schemas package is the canonical source of truth for the API contract; `pydantic-to-typescript` only scans this package.
+  - `routes/glossary.py` — `GET /api/glossary` (list) + `GET /api/glossary/{id}` (single, 404 on miss). Reads from `diamond.dictionary.STATS`.
+  - `routes/health.py` — liveness probe.
+- **Frontend** (`web/`):
+  - Next.js 15.5 App Router + React 19 + TypeScript strict.
+  - Tailwind 3.4 + autoprefixer (shadcn/ui deferred until needed).
+  - KaTeX 0.16 + react-katex 3.x (with `@types/react-katex` since upstream ships none).
+  - `app/glossary/page.tsx` (list, grouped by category) + `app/glossary/[id]/page.tsx` (detail with KaTeX block formula + related-id chips + external glossary links).
+  - `components/FormulaBlock.tsx` — KaTeX wrapper with parse-fail fallback.
+  - `lib/api.ts` — typed fetch helpers reading `NEXT_PUBLIC_API_URL` (default `http://localhost:8000`).
+  - **Force-dynamic pattern**: every page that fetches the API gets `export const dynamic = "force-dynamic"`. Diamond is local-first; static prerender at `next build` time would call the API while uvicorn isn't running. Worth noting in the "Adding a new API route" recipe in DEV.md.
+- **Type-gen** (`scripts/generate_types.py`):
+  - Wraps `pydantic-to-typescript`; locates `json2ts` CLI on PATH or in `web/node_modules/.bin/`.
+  - UTF-8 stdout reconfigure on Windows (matches the CLI / smoke pattern).
+  - Emits `web/lib/types/api.ts` with a Diamond-specific "do not edit" header pointing back at this decision.
+  - Auto-gen carries Pydantic docstrings as JSDoc on the TS interfaces — bonus side-effect.
+- **Dev workflow** (`Makefile` + `docs/DEV.md`): `make api`, `make web`, `make types`, `make smoke`. Two-terminal flow documented; no `make dev` parallel target on Windows since separate logs are easier to read.
+- **Verified live** (2026-05-07):
+  - `make types` regenerates clean.
+  - `pnpm typecheck` passes.
+  - `pnpm build` succeeds with 1 static + 2 dynamic routes.
+  - End-to-end browser flow: home → /glossary → /glossary/wOBA renders KaTeX-rendered MathML formula, related-stat chips, Fangraphs external link.
+- **Open follow-ups for the next route**:
+  - shadcn/ui not initialized yet — drop in via `pnpm dlx shadcn@latest init` when the player page needs Card / Tabs / etc.
+  - Vega-Embed and Plotly not installed yet — add when chart builder lands.
+  - TanStack Table not installed yet — add when leaderboards land.
