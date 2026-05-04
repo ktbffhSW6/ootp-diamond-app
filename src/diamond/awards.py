@@ -68,18 +68,22 @@ def _fetch_player_leaderboard(
     award_id: int,
     league_id: int,
     limit: int,
+    era: str = "all",
 ) -> list[dict]:
+    where_era = ""
+    if era == "save":
+        where_era = "AND acp.source = 'save'"
+    elif era == "lahman":
+        where_era = "AND acp.source = 'lahman'"
     rel = con.execute(
-        """
-        SELECT acp.player_id, acp.n_won, acp.first_year, acp.last_year,
-               acp.last_team_id,
-               p.first_name, p.last_name,
-               t.abbr AS last_team_abbr
+        f"""
+        SELECT acp.source, acp.player_id, acp.lahman_id, acp.display_name,
+               acp.n_won, acp.first_year, acp.last_year,
+               acp.last_team_id, acp.last_team_abbr
         FROM f_award_career_player acp
-        LEFT JOIN players_current p ON p.player_id = acp.player_id
-        LEFT JOIN teams t           ON t.team_id   = acp.last_team_id
         WHERE acp.award_id = ?
           AND acp.league_id = ?
+          {where_era}
         ORDER BY acp.n_won DESC, acp.last_year DESC
         LIMIT ?
         """,
@@ -94,12 +98,28 @@ def _fetch_player_career(
 ) -> list[dict]:
     rel = con.execute(
         """
-        SELECT award_id, n_won, first_year, last_year
+        SELECT award_id, n_won, first_year, last_year, source
         FROM f_award_career_player
-        WHERE player_id = ? AND league_id = ?
+        WHERE source = 'save' AND player_id = ? AND league_id = ?
         ORDER BY n_won DESC, last_year DESC, award_id
         """,
         [player_id, league_id],
+    )
+    cols = [d[0] for d in rel.description]
+    return [dict(zip(cols, r)) for r in rel.fetchall()]
+
+
+def _fetch_player_career_lahman(
+    con: duckdb.DuckDBPyConnection, lahman_id: str, league_id: int
+) -> list[dict]:
+    rel = con.execute(
+        """
+        SELECT award_id, n_won, first_year, last_year, source
+        FROM f_award_career_player
+        WHERE source = 'lahman' AND lahman_id = ? AND league_id = ?
+        ORDER BY n_won DESC, last_year DESC, award_id
+        """,
+        [lahman_id, league_id],
     )
     cols = [d[0] for d in rel.description]
     return [dict(zip(cols, r)) for r in rel.fetchall()]
@@ -137,10 +157,13 @@ def _team_name(con: duckdb.DuckDBPyConnection, team_id: int) -> str:
 
 
 def _render_player_leaderboard(
-    rows: list[dict], award_id: int, league_id: int
+    rows: list[dict], award_id: int, league_id: int, era: str
 ) -> None:
     label = _award_label(award_id)
-    console.rule(f"[bold cyan]Career leaders — {label}  (league {league_id})")
+    era_label = {"all": "all eras", "save": "save only", "lahman": "real history"}[era]
+    console.rule(
+        f"[bold cyan]Career leaders — {label}  (league {league_id}) [{era_label}]"
+    )
     if not rows:
         console.print("[yellow]No winners on record.[/yellow]")
         return
@@ -149,16 +172,19 @@ def _render_player_leaderboard(
     t.add_column("n", justify="right")
     t.add_column("years")
     t.add_column("last team")
+    if era == "all":
+        t.add_column("source")
     for r in rows:
-        name = (
-            f"{r['first_name']} {r['last_name']}"
-            if r["first_name"] else f"#{r['player_id']}"
-        )
+        name = r["display_name"] or "—"
         years = (
             f"{r['first_year']}–{r['last_year']}"
             if r["first_year"] != r["last_year"] else str(r["first_year"])
         )
-        t.add_row(name, str(r["n_won"]), years, r["last_team_abbr"] or "")
+        cells = [name, str(r["n_won"]), years, r["last_team_abbr"] or ""]
+        if era == "all":
+            color = "magenta" if r["source"] == "lahman" else "cyan"
+            cells.append(f"[{color}]{r['source']}[/{color}]")
+        t.add_row(*cells)
     console.print(t)
 
 
@@ -205,28 +231,32 @@ def _render_franchise(
 
 
 def _write_markdown_leaderboard(
-    rows: list[dict], award_id: int, league_id: int, output_path: Path
+    rows: list[dict], award_id: int, league_id: int, output_path: Path,
+    era: str = "all",
 ) -> None:
     label = _award_label(award_id)
+    era_label = {"all": "all eras", "save": "save only", "lahman": "real history"}[era]
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    md = [f"# Career leaders — {label}  (league {league_id})", ""]
+    md = [f"# Career leaders — {label}  (league {league_id}) [{era_label}]", ""]
     if not rows:
         md.append("_No winners on record._")
     else:
-        md.append("| player | n | years | last team |")
-        md.append("| --- | ---: | --- | --- |")
+        cols = ["player", "n", "years", "last team"]
+        seps = ["---", "---:", "---", "---"]
+        if era == "all":
+            cols.append("source"); seps.append("---")
+        md.append("| " + " | ".join(cols) + " |")
+        md.append("| " + " | ".join(seps) + " |")
         for r in rows:
-            name = (
-                f"{r['first_name']} {r['last_name']}"
-                if r["first_name"] else f"#{r['player_id']}"
-            )
+            name = r["display_name"] or "—"
             years = (
                 f"{r['first_year']}–{r['last_year']}"
                 if r["first_year"] != r["last_year"] else str(r["first_year"])
             )
-            md.append(
-                f"| {name} | {r['n_won']} | {years} | {r['last_team_abbr'] or ''} |"
-            )
+            cells = [name, str(r["n_won"]), years, r["last_team_abbr"] or ""]
+            if era == "all":
+                cells.append(r["source"])
+            md.append("| " + " | ".join(cells) + " |")
     output_path.write_text("\n".join(md), encoding="utf-8")
 
 
@@ -234,17 +264,23 @@ def run(
     save: SaveConfig = BUILDING_THE_GREEN_MONSTER,
     award_id: int | None = None,
     player_id: int | None = None,
+    lahman_id: str | None = None,
     team_id: int | None = None,
     league_id: int = 203,
+    era: str = "all",
     limit: int = 15,
     output_path: Path | None = None,
 ) -> Path:
-    """Three modes, in priority order:
-      - player_id provided  → render that player's full career-awards table
-      - team_id provided    → render franchise totals
-      - award_id provided   → render top-N players for that award
+    """Four modes, in priority order:
+      - player_id provided    → render OOTP player's full career-awards table
+      - lahman_id provided    → render Lahman player's full career-awards table
+                                (use this to drill into Bonds, Trout, etc.)
+      - team_id provided      → render franchise totals
+      - award_id provided     → render top-N players for that award (era-filtered)
       - none → render top-N for *every* award (the default catalog view)
     """
+    if era not in ("all", "save", "lahman"):
+        raise ValueError(f"era must be 'all', 'save', or 'lahman', got {era!r}")
     output_path = output_path or Path("audit_output") / "awards.md"
     con = _connect(save)
     try:
@@ -288,10 +324,46 @@ def run(
                     md.append(f"| {_award_label(r['award_id'])} | {r['n_won']} | {years} |")
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text("\n".join(md), encoding="utf-8")
+        elif lahman_id is not None:
+            rows = _fetch_player_career_lahman(con, lahman_id, league_id)
+            r0 = con.execute(
+                "SELECT nameFirst || ' ' || nameLast FROM history_lahman_people WHERE playerID = ?",
+                [lahman_id],
+            ).fetchone()
+            name = r0[0] if r0 else f"lahman_id={lahman_id}"
+            console.rule(
+                f"[bold cyan]Career awards — {name}  (lahman_id={lahman_id})"
+            )
+            if not rows:
+                console.print("[yellow]No awards on record.[/yellow]")
+            else:
+                t = Table(show_header=True, header_style="bold")
+                t.add_column("award"); t.add_column("n", justify="right"); t.add_column("years")
+                for r in rows:
+                    years = (
+                        f"{r['first_year']}–{r['last_year']}"
+                        if r["first_year"] != r["last_year"] else str(r["first_year"])
+                    )
+                    t.add_row(_award_label(r["award_id"]), str(r["n_won"]), years)
+                console.print(t)
+            md = [f"# Career awards — {name}  (league {league_id})", ""]
+            if not rows:
+                md.append("_No awards on record._")
+            else:
+                md.append("| award | n | years |")
+                md.append("| --- | ---: | --- |")
+                for r in rows:
+                    years = (
+                        f"{r['first_year']}–{r['last_year']}"
+                        if r["first_year"] != r["last_year"] else str(r["first_year"])
+                    )
+                    md.append(f"| {_award_label(r['award_id'])} | {r['n_won']} | {years} |")
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text("\n".join(md), encoding="utf-8")
         elif award_id is not None:
-            rows = _fetch_player_leaderboard(con, award_id, league_id, limit)
-            _render_player_leaderboard(rows, award_id, league_id)
-            _write_markdown_leaderboard(rows, award_id, league_id, output_path)
+            rows = _fetch_player_leaderboard(con, award_id, league_id, limit, era=era)
+            _render_player_leaderboard(rows, award_id, league_id, era)
+            _write_markdown_leaderboard(rows, award_id, league_id, output_path, era=era)
         else:
             # Catalog view — leaderboard for every award_id observed
             seen = [
@@ -305,31 +377,36 @@ def run(
                     [league_id],
                 ).fetchall()
             ]
-            md = [f"# Career awards leaderboard catalog  (league {league_id})", ""]
+            era_label = {"all": "all eras", "save": "save only", "lahman": "real history"}[era]
+            md = [
+                f"# Career awards leaderboard catalog  (league {league_id}) [{era_label}]",
+                "",
+            ]
             for aid in seen:
-                rows = _fetch_player_leaderboard(con, aid, league_id, limit)
-                _render_player_leaderboard(rows, aid, league_id)
+                rows = _fetch_player_leaderboard(con, aid, league_id, limit, era=era)
+                _render_player_leaderboard(rows, aid, league_id, era)
                 md.append(f"## {_award_label(aid)}")
                 md.append("")
                 if not rows:
                     md.append("_No winners on record._")
                     md.append("")
                     continue
-                md.append("| player | n | years | last team |")
-                md.append("| --- | ---: | --- | --- |")
+                cols = ["player", "n", "years", "last team"]
+                seps = ["---", "---:", "---", "---"]
+                if era == "all":
+                    cols.append("source"); seps.append("---")
+                md.append("| " + " | ".join(cols) + " |")
+                md.append("| " + " | ".join(seps) + " |")
                 for r in rows:
-                    name = (
-                        f"{r['first_name']} {r['last_name']}"
-                        if r["first_name"] else f"#{r['player_id']}"
-                    )
+                    name = r["display_name"] or "—"
                     years = (
                         f"{r['first_year']}–{r['last_year']}"
                         if r["first_year"] != r["last_year"] else str(r["first_year"])
                     )
-                    md.append(
-                        f"| {name} | {r['n_won']} | {years} | "
-                        f"{r['last_team_abbr'] or ''} |"
-                    )
+                    cells = [name, str(r["n_won"]), years, r["last_team_abbr"] or ""]
+                    if era == "all":
+                        cells.append(r["source"])
+                    md.append("| " + " | ".join(cells) + " |")
                 md.append("")
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text("\n".join(md), encoding="utf-8")

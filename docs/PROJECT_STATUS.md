@@ -21,7 +21,8 @@ warehouse and build the ingest pipeline.
   `src/diamond/`; editable install via `pip install -e .[dev]`.
 - **CLI**: `diamond decode`, `diamond decode-codes`, `diamond reconcile`,
   `diamond coverage`, `diamond advanced`, `diamond ingest`,
-  `diamond draft`, `diamond records`, `diamond awards`, `diamond hof`.
+  `diamond draft`, `diamond records`, `diamond awards`, `diamond hof`,
+  `diamond fetch-history` (Lahman + Statcast one-time backfill).
   All audit/report commands write markdown to `audit_output/` (gitignored).
 - **Reconciliation harness** ([src/diamond/audit/reconcile.py](src/diamond/audit/reconcile.py))
   — per-column comparison of all 21 `import_export` Red Sox roster CSVs against
@@ -60,6 +61,10 @@ warehouse and build the ingest pipeline.
   - L3: 6 derived (`f_trade_participant`, `player_movements` w/ `trade_id`,
     `f_draft_class`, `f_record_player`, `f_award_career_player`,
     `f_award_franchise`)
+  - History backfill (one-time): 8 `history_lahman_*` tables +
+    2 `history_statcast_*` tables. f_record_player and
+    f_award_career_player UNION save + lahman with source-tagged rows
+    + `--era` CLI flag.
 - **Empirical scripts retained** in `scripts/` — `xstats_eda.py` and
   `xstats_3d.py` are the evidence behind the structural-limit D-tier verdict
   on xBA/xSLG/xwOBA. Rerun rather than re-investigate.

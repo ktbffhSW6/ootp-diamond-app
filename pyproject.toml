@@ -13,6 +13,11 @@ dependencies = [
     "typer>=0.12.0",
     "rich>=13.0.0",
     "pydantic>=2.0.0",
+    # pybaseball wraps Lahman + Baseball Savant (Statcast) + FanGraphs.
+    # Used by `diamond fetch-history` to populate the history_lahman_*
+    # and history_statcast_* L0-shaped tables. pulls in pandas/numpy as
+    # transitive deps.
+    "pybaseball>=2.2.7",
 ]
 
 [project.optional-dependencies]

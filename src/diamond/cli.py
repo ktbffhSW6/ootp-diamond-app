@@ -23,6 +23,7 @@ from diamond.audit import reconcile as reconcile_mod
 from diamond.config import BUILDING_THE_GREEN_MONSTER
 from diamond import awards as awards_mod
 from diamond import draft as draft_mod
+from diamond import history as history_mod
 from diamond import hof as hof_mod
 from diamond import records as records_mod
 from diamond.schema import build_warehouse, open_warehouse_db, rebuild_l1_l2
@@ -201,6 +202,50 @@ def draft(
     draft_mod.run(year=year, team_id=team, output_path=output)
 
 
+@app.command("fetch-history")
+def fetch_history(
+    skip_lahman: bool = typer.Option(
+        False, "--skip-lahman", help="Skip Lahman download (Statcast only)."
+    ),
+    skip_statcast: bool = typer.Option(
+        False, "--skip-statcast", help="Skip Statcast pull (Lahman only)."
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Re-download Lahman zip even if cached."
+    ),
+    first_year: int = typer.Option(
+        2015, help="First Statcast year to pull (Statcast era starts 2015)."
+    ),
+    cap_year: int | None = typer.Option(
+        None,
+        "--cap-year",
+        help="Last historical year to keep. Defaults to save_start_year - 1 "
+        "so the OOTP universe owns save_start_year onward.",
+    ),
+) -> None:
+    """One-time backfill — Lahman + Statcast through save_start_year - 1.
+
+    Diamond's job is to track your OOTP universe. Real-life MLB history
+    (Lahman + Statcast) is loaded ONCE so there are real records to
+    break (Bonds 73, McGwire 70, Stanton 122mph EV). From save start
+    onward, OOTP's simulation is canonical — we don't re-pull real
+    2026/2027/etc. stats.
+
+    Runs idempotently if you do re-run, but the canonical workflow is
+    once-and-done. After this lands, run
+    `diamond ingest --rebuild-only` so L3 leaderboards pick up the
+    new rows.
+    """
+    history_mod.run(
+        skip_lahman=skip_lahman,
+        skip_statcast=skip_statcast,
+        force_download=force,
+        statcast_first_year=first_year,
+        statcast_last_year=cap_year,
+        history_cap_year=cap_year,
+    )
+
+
 @app.command()
 def records(
     scope: str = typer.Option(
@@ -216,24 +261,33 @@ def records(
         help="A single category to render (e.g., 'HR', 'WAR', 'IP'). "
         "Default: render every category for the scope+discipline.",
     ),
-    limit: int = typer.Option(10, help="Top-N per category (max 25)."),
+    era: str = typer.Option(
+        "all",
+        help="'all' (default — unified), 'save' (OOTP only), or 'lahman' "
+        "(real-life MLB history). Run `diamond fetch-history` to populate "
+        "the Lahman side.",
+    ),
+    limit: int = typer.Option(10, help="Top-N per category (max 50)."),
     output: Path = typer.Option(
         None,
-        help="Markdown output path. Defaults to audit_output/records_<scope>_<discipline>.md",
+        help="Markdown output path. Defaults to audit_output/records_<era>_<scope>_<discipline>.md",
     ),
 ) -> None:
-    """All-time MLB leaderboards (single-season + career) — counting stats.
+    """MLB leaderboards (single-season + career) — counting stats.
 
-    Reads from the L3 `f_record_player` table.
+    Reads from the L3 `f_record_player` table. Two sources are unioned:
+    `save` (your OOTP save) and `lahman` (real-life MLB 1871-present, via
+    `diamond fetch-history`).
 
     Examples:
-        diamond records                                  # career batting, all cats
-        diamond records --scope season --category HR     # single-season HR top 10
-        diamond records --discipline pitching --scope career --limit 25
+        diamond records                                  # career batting, all eras
+        diamond records --scope season --category HR     # season HR, all eras
+        diamond records --era save --category HR         # your sim only
+        diamond records --era lahman --scope career      # real-life leaderboards
     """
     records_mod.run(
         scope=scope, discipline=discipline,
-        category=category, limit=limit, output_path=output,
+        category=category, era=era, limit=limit, output_path=output,
     )
 
 
@@ -246,13 +300,22 @@ def awards(
     ),
     player: int | None = typer.Option(
         None,
-        help="Player id to render — shows their full career awards.",
+        help="OOTP player_id — shows their full career awards.",
+    ),
+    lahman_id: str | None = typer.Option(
+        None,
+        help="Lahman playerID (e.g., 'bondsba01') — shows real-life player career.",
     ),
     team: int | None = typer.Option(
         None,
         help="Team id to render franchise totals (org-rolled-up via parent_team_id).",
     ),
     league: int = typer.Option(203, help="League id (default MLB=203)."),
+    era: str = typer.Option(
+        "all",
+        help="'all' (default), 'save' (OOTP only), 'lahman' (real-life). "
+        "Affects leaderboard + catalog modes.",
+    ),
     limit: int = typer.Option(15, help="Top-N players per award."),
     output: Path = typer.Option(
         None,
@@ -261,17 +324,20 @@ def awards(
 ) -> None:
     """Awards leaderboards — career totals per player, per franchise.
 
-    Three modes (priority order):
-      diamond awards --player <id>          # one player's full résumé
-      diamond awards --team <id>            # franchise totals (org-rolled-up)
-      diamond awards --award <id>           # top-N players for that award
-      diamond awards                        # catalog: top-N for every award
+    Modes (priority order):
+      diamond awards --player <id>           # OOTP player's full résumé
+      diamond awards --lahman-id <playerID>  # real-life player (Bonds, etc.)
+      diamond awards --team <id>             # franchise totals
+      diamond awards --award <id>            # top-N for that award (era-filtered)
+      diamond awards                         # catalog: every award
     """
     awards_mod.run(
         award_id=award,
         player_id=player,
+        lahman_id=lahman_id,
         team_id=team,
         league_id=league,
+        era=era,
         limit=limit,
         output_path=output,
     )
@@ -283,19 +349,25 @@ def hof(
         False, "--candidates",
         help="Show top-N career-WAR players who haven't been inducted yet.",
     ),
+    era: str = typer.Option(
+        "all",
+        help="'all' (save + lahman), 'save' (OOTP only), 'lahman' (real Cooperstown). "
+        "Only affects default mode; --candidates is always save-side.",
+    ),
     limit: int = typer.Option(25, help="Top-N for --candidates mode."),
     output: Path = typer.Option(
         None,
         help="Markdown output path. Defaults to audit_output/hof.md (or hof_candidates.md).",
     ),
 ) -> None:
-    """Hall of Fame tracker — current inductees + future candidates.
+    """Hall of Fame tracker — save HoFers + Cooperstown + future candidates.
 
-    By default lists every HoF/inducted player with stats + hardware.
-    With --candidates, ranks the top career-MLB-WAR players who haven't
-    yet been inducted (rough HoF shortlist).
+    Examples:
+        diamond hof                  # save HoFers + real Cooperstown
+        diamond hof --era lahman     # real Cooperstown only
+        diamond hof --candidates     # save shortlist (top-WAR not inducted)
     """
-    hof_mod.run(candidates=candidates, limit=limit, output_path=output)
+    hof_mod.run(candidates=candidates, era=era, limit=limit, output_path=output)
 
 
 @app.command()

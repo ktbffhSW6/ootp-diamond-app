@@ -166,7 +166,41 @@ and count-state splits).
   No new L3 table — surfaces directly off `players_current`
   (`hall_of_fame` + `inducted` cols) joined to `f_award_career_player`.
   In a fresh save these cols are 0 across the board until enough
-  in-game years pass; `--candidates` is the useful-now mode.
+  in-game years pass; `--candidates` is the useful-now mode. Updated
+  2026-05-06 to also surface real Cooperstown via Lahman (340+ inductees).
+- [x] **Backfill MLB historical data (Lahman + Statcast)** — done
+  2026-05-06. New `diamond fetch-history` CLI loads `history_lahman_*`
+  (8 tables, ~140k rows for batting/pitching/awards/HoF/all-star/teams)
+  and `history_statcast_*` (~11k rows for season-aggregated EV/barrel
+  leaderboards). One-time backfill capped at `save_start_year - 1` so
+  OOTP's universe owns save start onward. f_record_player and
+  f_award_career_player gained a `source` column ('save' | 'lahman'),
+  with --era flag on the records/awards/hof CLIs. Bonds 73 (2001) now
+  shows as the all-time MLB single-season HR record; Mantle/Schmidt/Pujols/A-Rod
+  surface in MVP leaderboards alongside Ohtani / Judge.
+- [ ] **Fill 2020-2024 Lahman gap via Baseball-Reference** — the
+  cdalzell/Lahman mirror caps at 2019, so retirees from 2020-2024
+  (Pujols 703 HR, Cabrera 511, Wainwright, Votto) show partial
+  Lahman careers (Pujols at 656). Players still active at save
+  start get their full real careers via OOTP's import, so this gap
+  only affects 2020-2024 retirees. `pybaseball.batting_stats_bref` /
+  `pitching_stats_bref` works for those years (FanGraphs returns 403).
+  Pull as `history_bref_*` tables, UNION into f_record_player /
+  f_award_career_player same as Lahman.
+- [ ] **Add Statcast record categories** — the historical
+  `history_statcast_*` tables are loaded but `f_record_player`
+  doesn't yet UNION them. Add categories: max EV, avg EV, hard-hit%,
+  barrel%, sweet-spot%, max distance, max sprint speed, etc. For
+  cross-source comparability, OOTP-save EV (per-PA `players_at_bat_batting_stats`)
+  is calibrated similarly enough to real Statcast that we can join
+  them in records, with a clear `source` distinction. Already-built
+  `f_record_player` schema accommodates this with no changes.
+- [ ] **OOTP ↔ Lahman player linkage** — OOTP's `players.historical_id`
+  column would let us link save Aaron Judge (player_id=23867) to
+  Lahman Aaron Judge (playerID="judgeaa01") for true career-spanning
+  leaderboards. Not yet wired up. With linkage, "career HR including
+  pre-save real-life + sim continuation" becomes possible. Currently
+  the two appear as separate rows in `--era all` views.
 
 ### Closed as non-derivable
 

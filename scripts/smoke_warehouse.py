@@ -517,33 +517,36 @@ def smoke_l3(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
         "[green]✓[/green] f_draft_class outcomes consistent with ever_made_mlb"
     )
 
-    # f_record_player: rank values must be a contiguous 1..N per category;
-    # values must be monotonically non-increasing as rank goes up.
+    # f_record_player: ranks are contiguous 1..N per (category × source);
+    # values must be monotonically non-increasing as rank_in_source goes up.
     n_rank_violation = con.execute("""
         WITH grouped AS (
-            SELECT scope, discipline, category,
+            SELECT scope, discipline, category, source,
                    COUNT(*) AS n,
-                   MAX(rank) AS max_rank,
-                   MIN(rank) AS min_rank
+                   MAX(rank_in_source) AS max_rank,
+                   MIN(rank_in_source) AS min_rank
             FROM f_record_player
-            GROUP BY scope, discipline, category
+            GROUP BY scope, discipline, category, source
         )
         SELECT COUNT(*) FROM grouped
         WHERE max_rank != n OR min_rank != 1
     """).fetchone()[0]
     if n_rank_violation:
         console.print(
-            f"[red]FAIL:[/red] {n_rank_violation} f_record_player categories have "
-            f"non-contiguous rank sequences"
+            f"[red]FAIL:[/red] {n_rank_violation} f_record_player (category, source) "
+            f"groups have non-contiguous rank_in_source sequences"
         )
         return False
-    console.print("[green]✓[/green] f_record_player rank sequences contiguous")
+    console.print(
+        "[green]✓[/green] f_record_player rank_in_source contiguous per (category, source)"
+    )
 
     n_value_violation = con.execute("""
         WITH ordered AS (
-            SELECT scope, discipline, category, rank, value,
+            SELECT scope, discipline, category, source, rank_in_source, value,
                    LAG(value) OVER (
-                       PARTITION BY scope, discipline, category ORDER BY rank
+                       PARTITION BY scope, discipline, category, source
+                       ORDER BY rank_in_source
                    ) AS prev_value
             FROM f_record_player
         )
@@ -553,10 +556,23 @@ def smoke_l3(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
     if n_value_violation:
         console.print(
             f"[red]FAIL:[/red] f_record_player has {n_value_violation} rows where "
-            f"value increases as rank goes up"
+            f"value increases as rank_in_source goes up"
         )
         return False
-    console.print("[green]✓[/green] f_record_player values monotonically descend by rank")
+    console.print(
+        "[green]✓[/green] f_record_player values monotonically descend by rank_in_source"
+    )
+
+    # source must be one of {'save', 'lahman'}
+    n_bad_source = con.execute("""
+        SELECT COUNT(*) FROM f_record_player WHERE source NOT IN ('save', 'lahman')
+    """).fetchone()[0]
+    if n_bad_source:
+        console.print(
+            f"[red]FAIL:[/red] f_record_player has {n_bad_source} rows with unknown source"
+        )
+        return False
+    console.print("[green]✓[/green] f_record_player source values valid")
 
     # f_award_career_player: every row must have n_won > 0 (no empty rows)
     n_zero_awards = con.execute("""

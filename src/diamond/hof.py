@@ -1,20 +1,21 @@
 """Hall of Fame tracker — `diamond hof` CLI.
 
-Surfaces directly off `players_current` (`hall_of_fame` and `inducted`
-boolean columns) joined to `f_award_career_player` for the awards-based
-"path to induction" line. No new L3 table needed for v1.
+Two HoF sources:
 
-In a fresh save, both columns will be 0 across the board until enough
-in-game years have passed for OOTP to start inducting players. The
-CLI reports the empty case clearly and shows the WAR / awards leaders
-who are *plausible* future candidates, ranked by career MLB WAR.
+  - **Save HoF**: `players_current.hall_of_fame` / `players_current.inducted`
+    booleans, populated by OOTP as players retire and clear the waiting
+    period. Empty in fresh saves until ~5 years of sim have passed.
+  - **Lahman HoF**: real-life Cooperstown inductees (1936–save_start-1)
+    from `history_lahman_hof`, voted in by BBWAA / Veterans Committee /
+    Negro Leagues / Old Timers. ~340 inductees.
 
-Three modes:
-  - default                → list every HoFer with stats + path
-  - --candidates           → top-25 retired (or active) players by
-                             career MLB WAR who haven't been inducted
-                             yet — rough HoF shortlist
-  - --player <player_id>   → drill into one player's HoF resume
+Modes:
+  - `diamond hof`                    → save HoFers + Lahman inductees,
+                                       both with stats + hardware
+  - `diamond hof --era save`         → save HoFers only (currently empty)
+  - `diamond hof --era lahman`       → real Cooperstown only
+  - `diamond hof --candidates`       → top career-WAR players (in OOTP
+                                       save) not yet inducted — shortlist
 """
 
 from __future__ import annotations
@@ -49,6 +50,62 @@ def _connect(save: SaveConfig) -> duckdb.DuckDBPyConnection:
 HOF_WAR_FLOOR = 50.0
 HOF_BAT_PA_FLOOR = 6000
 HOF_PIT_OUTS_FLOOR = 6000  # ~2,000 IP
+
+
+def _fetch_lahman_inducted(con: duckdb.DuckDBPyConnection, limit: int) -> list[dict]:
+    """Real Cooperstown inductees from Lahman, with career stats joined.
+
+    Lahman HoF tracks every ballot vote — we filter to `inducted = 'Y'`
+    and group by (playerID, category) to get one row per inducted person
+    (a few players are inducted as both Player and Manager — rare).
+    """
+    rel = con.execute(
+        f"""
+        WITH inducted AS (
+            SELECT playerID,
+                   ANY_VALUE(yearid) AS year_inducted,
+                   ANY_VALUE(votedBy) AS voted_by,
+                   ANY_VALUE(category) AS category
+            FROM history_lahman_hof
+            WHERE inducted = 'Y'
+            GROUP BY playerID
+        ),
+        cb AS (
+            SELECT playerID,
+                   SUM(AB) AS ab, SUM(H) AS h, SUM(HR) AS hr, SUM(RBI) AS rbi
+            FROM history_lahman_batting
+            WHERE lgID IN ('AL', 'NL')
+            GROUP BY playerID
+        ),
+        cp AS (
+            SELECT playerID,
+                   SUM(W) AS w, SUM(SO) AS so, SUM(SV) AS sv,
+                   SUM(IPouts) AS ipouts
+            FROM history_lahman_pitching
+            WHERE lgID IN ('AL', 'NL')
+            GROUP BY playerID
+        )
+        SELECT
+            i.playerID, i.year_inducted, i.voted_by, i.category,
+            p.nameFirst || ' ' || p.nameLast AS name,
+            COALESCE(cb.ab, 0)  AS ab,
+            COALESCE(cb.h, 0)   AS h,
+            COALESCE(cb.hr, 0)  AS hr,
+            COALESCE(cb.rbi, 0) AS rbi,
+            COALESCE(cp.w, 0)   AS w,
+            COALESCE(cp.so, 0)  AS so,
+            COALESCE(cp.sv, 0)  AS sv,
+            COALESCE(cp.ipouts, 0) AS ipouts
+        FROM inducted i
+        LEFT JOIN history_lahman_people p ON p.playerID = i.playerID
+        LEFT JOIN cb ON cb.playerID = i.playerID
+        LEFT JOIN cp ON cp.playerID = i.playerID
+        ORDER BY i.year_inducted DESC, name
+        LIMIT {limit}
+        """
+    )
+    cols = [d[0] for d in rel.description]
+    return [dict(zip(cols, r)) for r in rel.fetchall()]
 
 
 def _fetch_inducted(con: duckdb.DuckDBPyConnection) -> list[dict]:
@@ -332,12 +389,50 @@ def _write_markdown(
     output_path.write_text("\n".join(md), encoding="utf-8")
 
 
+def _render_lahman_inducted(rows: list[dict]) -> None:
+    console.rule(f"[bold cyan]Real-life Cooperstown — {len(rows)} most recent inductees")
+    if not rows:
+        console.print("[yellow]No Lahman HoF data loaded — run `diamond fetch-history`.[/yellow]")
+        return
+    t = Table(show_header=True, header_style="bold")
+    t.add_column("year", justify="right")
+    t.add_column("name")
+    t.add_column("category")
+    t.add_column("voted by")
+    t.add_column("hitting", overflow="fold")
+    t.add_column("pitching", overflow="fold")
+    for r in rows:
+        hitting = ""
+        if r["ab"] and int(r["ab"]) > 0:
+            hitting = f"{int(r['h'])} H, {int(r['hr'])} HR, {int(r['rbi'])} RBI"
+        pitching = ""
+        if r["ipouts"] and int(r["ipouts"]) > 0:
+            ipouts = int(r["ipouts"])
+            ip = f"{ipouts // 3}.{ipouts % 3}"
+            pitching = f"{ip} IP, {int(r['w'])}W, {int(r['so'])}K, {int(r['sv'])}S"
+        t.add_row(
+            str(r["year_inducted"]), r["name"] or "—",
+            r["category"] or "", r["voted_by"] or "",
+            hitting, pitching,
+        )
+    console.print(t)
+
+
 def run(
     save: SaveConfig = BUILDING_THE_GREEN_MONSTER,
     candidates: bool = False,
+    era: str = "all",
     limit: int = 25,
     output_path: Path | None = None,
 ) -> Path:
+    """Render HoF view (default) or candidate shortlist (--candidates).
+
+    Args:
+        era: 'all' (save + lahman), 'save' (OOTP only), 'lahman' (real Cooperstown).
+             Only affects the default mode; `--candidates` is always save-side.
+    """
+    if era not in ("all", "save", "lahman"):
+        raise ValueError(f"era must be 'all', 'save', or 'lahman', got {era!r}")
     output_path = output_path or Path("audit_output") / (
         "hof_candidates.md" if candidates else "hof.md"
     )
@@ -347,10 +442,60 @@ def run(
             rows = _fetch_candidates(con, limit)
             _render_candidates(rows, limit)
             _write_markdown(rows, output_path, "candidates", limit)
-        else:
-            rows = _fetch_inducted(con)
-            _render_inducted(rows)
-            _write_markdown(rows, output_path, "inducted", limit)
+            console.print(f"\n[green]Report written:[/green] {output_path}")
+            return output_path
+
+        # Default mode — render save HoF and/or Lahman HoF per era flag.
+        save_rows = _fetch_inducted(con) if era in ("all", "save") else []
+        if era in ("all", "save"):
+            _render_inducted(save_rows)
+        lahman_present = bool(con.execute("""
+            SELECT COUNT(*) FROM information_schema.tables
+            WHERE table_name = 'history_lahman_hof'
+        """).fetchone()[0])
+        lahman_rows: list[dict] = []
+        if era in ("all", "lahman") and lahman_present:
+            lahman_rows = _fetch_lahman_inducted(con, limit)
+            _render_lahman_inducted(lahman_rows)
+
+        # Markdown — combined output
+        md: list[str] = []
+        if era in ("all", "save"):
+            md.append(f"# Hall of Fame — save  ({len(save_rows)} member(s))")
+            md.append("")
+            if not save_rows:
+                md.append("_No HoFers in this save yet._")
+            else:
+                md.append("| player | status | MLB WAR |")
+                md.append("| --- | --- | ---: |")
+                for r in save_rows:
+                    name = f"{r['first_name']} {r['last_name']}"
+                    status = "inducted" if r["inducted"] else "HoF (pending)"
+                    md.append(f"| {name} | {status} | {r['career_mlb_war']:.1f} |")
+            md.append("")
+        if era in ("all", "lahman") and lahman_present:
+            md.append(f"# Real-life Cooperstown — {len(lahman_rows)} recent inductees")
+            md.append("")
+            md.append("| year | name | category | voted by | hitting | pitching |")
+            md.append("| ---: | --- | --- | --- | --- | --- |")
+            for r in lahman_rows:
+                hitting = (
+                    f"{int(r['h'])} H, {int(r['hr'])} HR, {int(r['rbi'])} RBI"
+                    if int(r['ab'] or 0) > 0 else ""
+                )
+                if int(r["ipouts"] or 0) > 0:
+                    ipouts = int(r["ipouts"])
+                    pitching = f"{ipouts // 3}.{ipouts % 3} IP, {int(r['w'])}W"
+                else:
+                    pitching = ""
+                md.append(
+                    f"| {r['year_inducted']} | {r['name'] or ''} | "
+                    f"{r['category'] or ''} | {r['voted_by'] or ''} | "
+                    f"{hitting} | {pitching} |"
+                )
+            md.append("")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("\n".join(md), encoding="utf-8")
         console.print(f"\n[green]Report written:[/green] {output_path}")
     finally:
         con.close()

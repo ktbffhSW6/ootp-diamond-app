@@ -801,6 +801,76 @@ it IS the parent (MLB level).
 attribution. Most are waiver claims; some may be paid transfers or
 MiLB Rule 5 selections that OOTP doesn't surface as trades.
 
+## Real MLB history backfill — Lahman + Statcast (2026-05-06)
+
+The OOTP simulation is the canonical "MLB" from save start onward, but
+without real historical data the all-time records leaderboard is just
+a few decades of OOTP-imported careers (Bonds, Ruth, McGwire absent).
+We backfill once at app setup with two open data sources:
+
+  - **Lahman** (1871–save_start-1): classic counting + rate stats per
+    (player, year, team-stint) plus awards, HoF voting, all-stars, teams.
+    One zip download (~9.5 MB) from `cdalzell/Lahman` (mirror of the
+    SeanLahman archive — the original `chadwickbureau/baseballdatabank`
+    GitHub repo is gone as of 2026).
+  - **Statcast** (2015–save_start-1): season-aggregated EV / barrel /
+    hard-hit / sweet-spot leaderboards via `pybaseball.statcast_*_exitvelo_barrels`.
+    Per-PA Statcast is intentionally out of scope for v1 — season-grain
+    is the right shape for record leaderboards.
+
+CLI: `diamond fetch-history`. Idempotent (cached zip, INSERT OR REPLACE
+table builds), but designed to be run **once** as a setup step. We
+deliberately don't refresh annually — once the historical floor is
+set, OOTP's universe owns everything from save_start_year onward.
+
+**Save-start derivation** (`diamond.history._save_start_year`): parsed
+from the earliest dump folder name. The current Sox save's earliest
+dump is `dump_2026_03`, so save_start_year = 2026 and we cap historical
+backfill at 2025.
+
+**Lahman mirror's age**: `cdalzell/Lahman` was last updated through
+2019 — meaning real-life retirees from 2020-2024 (Pujols 703 HR,
+Cabrera 511 HR, Wainwright, Votto, etc.) show stats only through 2019
+in the Lahman tables. Players still active at OOTP save start (Judge,
+Trout, Freeman) have full real careers via OOTP's import, so this
+gap mostly affects players who retired between 2020-2024. Backlog
+item: fill 2020-2024 via `pybaseball.batting_stats_bref` /
+`pitching_stats_bref` (Baseball-Reference scraping works; FanGraphs
+returns 403 to pybaseball as of 2026).
+
+**`f_record_player` and `f_award_career_player` UNION**: the L3 record
++ awards tables source-tag every row (`source = 'save'` | `'lahman'`).
+The `--era` CLI flag filters: `--era save` for OOTP-only, `--era lahman`
+for real-life-only, `--era all` (default) for the combined leaderboard.
+Within-source ranks are stored; the CLI re-ranks across sources
+dynamically when displaying combined.
+
+**Lahman award-string → AwardId mapping** (in `_build_f_award_career_player`):
+  - Most Valuable Player → MVP (5)
+  - Cy Young Award → CY_YOUNG (4)
+  - Rookie of the Year → ROOKIE_OF_THE_YEAR (6)
+  - Gold Glove → GOLD_GLOVE (7)
+  - Silver Slugger → SILVER_SLUGGER (11)
+  - World Series MVP → POSTSEASON_SERIES_MVP (15)
+  - Reliever of the Year Award + Rolaids Relief Man Award → RELIEVER_OF_THE_YEAR (13)
+  - All-Star (from `history_lahman_allstar` table) → ALL_STAR (9)
+
+Lahman awards we don't model (TSN All-Star, Hank Aaron Award, Lou Gehrig
+Memorial, Roberto Clemente, Hutch, Branch Rickey, Triple Crown,
+Comeback Player, Outstanding DH) get dropped at L3 build — we don't
+synthesize new AwardId values just for Lahman categories.
+
+**Player identity bridge**: not yet wired up. OOTP-save Aaron Judge
+(player_id=23867) and Lahman Aaron Judge (playerID="judgeaa01") show
+as separate rows in records / awards. OOTP's `players.historical_id`
+column would let us link them, but that's a future feature. For now,
+records using `--era all` may show a player's real-life pre-save
+career and OOTP-save career as two adjacent rows when ranks are close.
+
+**WAR + QS are save-only** — Lahman doesn't carry them (WAR is a
+derived stat from FG/B-R, not in the Lahman base). `--era lahman
+--category WAR` returns empty.
+
 ## f_draft_class — player retention + the `drafted` first-MLB gotcha (2026-05-06)
 
 **Player retention probe**: of the 2,344 distinct draftees across

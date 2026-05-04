@@ -519,135 +519,240 @@ def _build_f_draft_class(con: duckdb.DuckDBPyConnection) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-# (scope, discipline, category, value_sql, source_cte, sort_dir) — sort_dir is
-# always DESC for v1 since we only model "more is better" counting stats.
-# Scope to MLB (league_id=203, level_id=1, split_id=1).
-RECORD_CATEGORIES: list[tuple[str, str, str, str, str]] = [
+# (scope, discipline, category, save_value_col, save_cte, lahman_value_col)
+# Lahman col missing → only save data contributes (e.g. WAR — not in Lahman).
+# Sort direction is always DESC for v1 (counting stats only, "more is better").
+# Scope to MLB (league_id=203, level_id=1, split_id=1) for save data, and
+# Lahman lgID IN ('AL', 'NL') for the historical side.
+RECORD_CATEGORIES: list[tuple[str, str, str, str, str, str | None]] = [
     # ──────────────── single-season batting ─────────────────
-    ("season", "batting", "HR",  "hr",  "season_bat"),
-    ("season", "batting", "RBI", "rbi", "season_bat"),
-    ("season", "batting", "R",   "r",   "season_bat"),
-    ("season", "batting", "H",   "h",   "season_bat"),
-    ("season", "batting", "BB",  "bb",  "season_bat"),
-    ("season", "batting", "SB",  "sb",  "season_bat"),
-    ("season", "batting", "2B",  "d",   "season_bat"),
-    ("season", "batting", "3B",  "t",   "season_bat"),
-    ("season", "batting", "PA",  "pa",  "season_bat"),
-    ("season", "batting", "WAR", "war", "season_bat"),
+    ("season", "batting", "HR",  "hr",  "season_bat", "hr"),
+    ("season", "batting", "RBI", "rbi", "season_bat", "rbi"),
+    ("season", "batting", "R",   "r",   "season_bat", "r"),
+    ("season", "batting", "H",   "h",   "season_bat", "h"),
+    ("season", "batting", "BB",  "bb",  "season_bat", "bb"),
+    ("season", "batting", "SB",  "sb",  "season_bat", "sb"),
+    ("season", "batting", "2B",  "d",   "season_bat", "d"),
+    ("season", "batting", "3B",  "t",   "season_bat", "t"),
+    ("season", "batting", "PA",  "pa",  "season_bat", "pa"),
+    ("season", "batting", "WAR", "war", "season_bat", None),     # Lahman has no WAR
     # ──────────────── career batting ────────────────────────
-    ("career", "batting", "HR",  "hr",  "career_bat"),
-    ("career", "batting", "RBI", "rbi", "career_bat"),
-    ("career", "batting", "R",   "r",   "career_bat"),
-    ("career", "batting", "H",   "h",   "career_bat"),
-    ("career", "batting", "BB",  "bb",  "career_bat"),
-    ("career", "batting", "SB",  "sb",  "career_bat"),
-    ("career", "batting", "PA",  "pa",  "career_bat"),
-    ("career", "batting", "WAR", "war", "career_bat"),
+    ("career", "batting", "HR",  "hr",  "career_bat", "hr"),
+    ("career", "batting", "RBI", "rbi", "career_bat", "rbi"),
+    ("career", "batting", "R",   "r",   "career_bat", "r"),
+    ("career", "batting", "H",   "h",   "career_bat", "h"),
+    ("career", "batting", "BB",  "bb",  "career_bat", "bb"),
+    ("career", "batting", "SB",  "sb",  "career_bat", "sb"),
+    ("career", "batting", "PA",  "pa",  "career_bat", "pa"),
+    ("career", "batting", "WAR", "war", "career_bat", None),
     # ──────────────── single-season pitching ────────────────
-    ("season", "pitching", "W",   "w",    "season_pit"),
-    ("season", "pitching", "S",   "s",    "season_pit"),
-    ("season", "pitching", "K",   "k",    "season_pit"),
-    ("season", "pitching", "IP",  "outs", "season_pit"),  # value=outs; CLI converts
-    ("season", "pitching", "SHO", "sho",  "season_pit"),
-    ("season", "pitching", "CG",  "cg",   "season_pit"),
-    ("season", "pitching", "QS",  "qs",   "season_pit"),
-    ("season", "pitching", "WAR", "war",  "season_pit"),
+    ("season", "pitching", "W",   "w",    "season_pit", "w"),
+    ("season", "pitching", "S",   "s",    "season_pit", "sv"),
+    ("season", "pitching", "K",   "k",    "season_pit", "so"),
+    ("season", "pitching", "IP",  "outs", "season_pit", "ipouts"),
+    ("season", "pitching", "SHO", "sho",  "season_pit", "sho"),
+    ("season", "pitching", "CG",  "cg",   "season_pit", "cg"),
+    ("season", "pitching", "QS",  "qs",   "season_pit", None),    # Lahman has no QS
+    ("season", "pitching", "WAR", "war",  "season_pit", None),
     # ──────────────── career pitching ───────────────────────
-    ("career", "pitching", "W",   "w",    "career_pit"),
-    ("career", "pitching", "S",   "s",    "career_pit"),
-    ("career", "pitching", "K",   "k",    "career_pit"),
-    ("career", "pitching", "IP",  "outs", "career_pit"),
-    ("career", "pitching", "SHO", "sho",  "career_pit"),
-    ("career", "pitching", "CG",  "cg",   "career_pit"),
-    ("career", "pitching", "WAR", "war",  "career_pit"),
+    ("career", "pitching", "W",   "w",    "career_pit", "w"),
+    ("career", "pitching", "S",   "s",    "career_pit", "sv"),
+    ("career", "pitching", "K",   "k",    "career_pit", "so"),
+    ("career", "pitching", "IP",  "outs", "career_pit", "ipouts"),
+    ("career", "pitching", "SHO", "sho",  "career_pit", "sho"),
+    ("career", "pitching", "CG",  "cg",   "career_pit", "cg"),
+    ("career", "pitching", "WAR", "war",  "career_pit", None),
 ]
 
-# Top-N per (scope, discipline, category). 25 is plenty for surfacing on a UI.
-RECORD_TOP_N = 25
+# Top-N per (scope, discipline, category, source). UI never wants more than
+# this; Lahman alone has thousands of qualifying career-rows per category.
+RECORD_TOP_N = 50
 
-# League / level scope — MLB only for v1. Foreign + minor-league records are
-# left as a future extension (the same CTAS shape works with different
-# WHERE clauses).
+# Save scope — MLB (league_id=203, level_id=1, split_id=1).
 RECORD_LEAGUE_ID = 203
 RECORD_LEVEL_ID = 1
 
 
 def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
-    """Top-25 per category leaderboard table — single-season + career,
-    batting + pitching. MLB-only (league_id=203, level_id=1).
+    """Top-50 per (category, source) leaderboard table — single-season +
+    career, batting + pitching. Sources: 'save' (the user's OOTP save,
+    MLB-only) and 'lahman' (real-life MLB 1871–present).
 
-    Long format keeps the UI / CLI layer simple: one filter per
-    (scope, discipline, category) returns the leaderboard ready to
-    render. Counting stats only for v1; rate stats (AVG/OBP/SLG/ERA/
-    FIP/etc.) need PA / IP gates and live one layer up — they can be
-    derived from `f_player_season_batting/pitching` in advanced.py
-    when needed.
+    A `--era` flag on the CLI filters by source; the default unifies
+    both into a combined leaderboard. Each row carries `display_name`
+    (UI-ready) plus identity (`player_id` for save rows, `lahman_id`
+    for Lahman rows) so player-page joins work cleanly per source.
+
+    Stored ranks are within-source — i.e. the row with the most career
+    HR in Lahman gets rank_in_source=1 among lahman rows, and the same
+    for save. The CLI computes a unified rank when rendering all-era.
+    Storing within-source ranks keeps the table cheap and lets the
+    user pick "save only" / "lahman only" / "all eras" without
+    re-querying source data.
 
     Schema:
-        scope        VARCHAR  'season' or 'career'
-        discipline   VARCHAR  'batting' or 'pitching'
-        category     VARCHAR  e.g. 'HR', 'IP'
-        rank         INTEGER  1 = best
-        value        DOUBLE   stat value (outs for IP — CLI converts)
-        player_id    BIGINT
-        year         INTEGER  NULL for career
-        team_id      BIGINT   NULL for career; the team they were on
-                              when they set the season mark (one team
-                              per record, MAX in case of mid-year trade)
+        scope            VARCHAR  'season' or 'career'
+        discipline       VARCHAR  'batting' or 'pitching'
+        category         VARCHAR  e.g. 'HR', 'IP'
+        source           VARCHAR  'save' or 'lahman'
+        rank_in_source   INTEGER  1 = best within source (1..50)
+        value            DOUBLE   stat value (outs for IP — CLI converts)
+        display_name     VARCHAR  UI-ready full name
+        player_id        BIGINT   OOTP player_id (save rows only; NULL for lahman)
+        lahman_id        VARCHAR  Lahman playerID (lahman rows only; NULL for save)
+        year             INTEGER  NULL for career rows
+        team_id          BIGINT   OOTP team_id (save only)
+        team_abbr        VARCHAR  3-letter team abbr; populated for both sources
 
-    PK = (scope, discipline, category, rank).
+    PK = (scope, discipline, category, source, rank_in_source).
+
+    Note: WAR and QS are save-only (Lahman doesn't carry them). For
+    these categories `--era lahman` returns empty; `--era all` shows
+    the save data alone.
     """
-    # Build the union-all of all (scope×discipline×category) records.
-    # Each entry produces a SELECT yielding (scope, discipline, category,
-    # value, player_id, year, team_id).
-    parts: list[str] = []
-    for scope, disc, cat, value_col, src_cte in RECORD_CATEGORIES:
+    save_parts: list[str] = []
+    lahman_parts: list[str] = []
+    for scope, disc, cat, save_col, save_cte, lahman_col in RECORD_CATEGORIES:
+        # ─ save side ─────────────────────────────────────────
         if scope == "season":
-            parts.append(f"""
+            save_parts.append(f"""
                 SELECT
-                    '{scope}'      AS scope,
-                    '{disc}'       AS discipline,
-                    '{cat}'        AS category,
-                    CAST({value_col} AS DOUBLE) AS value,
+                    '{scope}' AS scope, '{disc}' AS discipline, '{cat}' AS category,
+                    'save' AS source,
+                    CAST({save_col} AS DOUBLE) AS value,
                     player_id,
+                    CAST(NULL AS VARCHAR) AS lahman_id,
                     CAST(year AS INTEGER) AS year,
-                    team_id
-                FROM {src_cte}
+                    team_id,
+                    CAST(NULL AS VARCHAR) AS team_abbr,
+                    CAST(NULL AS VARCHAR) AS display_name
+                FROM {save_cte}
             """)
-        else:  # career
-            parts.append(f"""
+        else:
+            save_parts.append(f"""
                 SELECT
-                    '{scope}'      AS scope,
-                    '{disc}'       AS discipline,
-                    '{cat}'        AS category,
-                    CAST({value_col} AS DOUBLE) AS value,
+                    '{scope}' AS scope, '{disc}' AS discipline, '{cat}' AS category,
+                    'save' AS source,
+                    CAST({save_col} AS DOUBLE) AS value,
                     player_id,
+                    CAST(NULL AS VARCHAR) AS lahman_id,
                     CAST(NULL AS INTEGER) AS year,
-                    CAST(NULL AS BIGINT)  AS team_id
-                FROM {src_cte}
+                    CAST(NULL AS BIGINT)  AS team_id,
+                    CAST(NULL AS VARCHAR) AS team_abbr,
+                    CAST(NULL AS VARCHAR) AS display_name
+                FROM {save_cte}
             """)
-    union_sql = "\n            UNION ALL".join(parts)
+        # ─ lahman side ───────────────────────────────────────
+        if lahman_col is None:
+            continue  # category not derivable from Lahman
+        lahman_cte = "lahman_season_bat" if (scope == "season" and disc == "batting") else \
+                     "lahman_season_pit" if (scope == "season" and disc == "pitching") else \
+                     "lahman_career_bat" if (scope == "career" and disc == "batting") else \
+                     "lahman_career_pit"
+        if scope == "season":
+            lahman_parts.append(f"""
+                SELECT
+                    '{scope}' AS scope, '{disc}' AS discipline, '{cat}' AS category,
+                    'lahman' AS source,
+                    CAST({lahman_col} AS DOUBLE) AS value,
+                    CAST(NULL AS BIGINT) AS player_id,
+                    playerID AS lahman_id,
+                    CAST(yearID AS INTEGER) AS year,
+                    CAST(NULL AS BIGINT) AS team_id,
+                    teamID AS team_abbr,
+                    NULL AS display_name
+                FROM {lahman_cte}
+            """)
+        else:
+            lahman_parts.append(f"""
+                SELECT
+                    '{scope}' AS scope, '{disc}' AS discipline, '{cat}' AS category,
+                    'lahman' AS source,
+                    CAST({lahman_col} AS DOUBLE) AS value,
+                    CAST(NULL AS BIGINT) AS player_id,
+                    playerID AS lahman_id,
+                    CAST(NULL AS INTEGER) AS year,
+                    CAST(NULL AS BIGINT) AS team_id,
+                    CAST(NULL AS VARCHAR) AS team_abbr,
+                    NULL AS display_name
+                FROM {lahman_cte}
+            """)
+    union_sql = "\n            UNION ALL".join(save_parts + lahman_parts)
+
+    # Detect whether Lahman is available — graceful fallback if user hasn't
+    # run `diamond fetch-history` yet. We only build save-side records in
+    # that case.
+    lahman_present = (
+        len(con.execute("""
+            SELECT table_name FROM information_schema.tables
+            WHERE table_name IN (
+                'history_lahman_batting', 'history_lahman_pitching',
+                'history_lahman_people'
+            )
+        """).fetchall()) == 3
+    )
+
+    if lahman_present:
+        lahman_ctes = f"""
+            lahman_season_bat AS (
+                SELECT playerID, yearID,
+                       ANY_VALUE(teamID) AS teamID,
+                       SUM(HR)  AS hr, SUM(RBI) AS rbi, SUM(R) AS r,
+                       SUM(H)   AS h,  SUM(BB)  AS bb,  SUM(SB) AS sb,
+                       SUM("2B") AS d, SUM("3B") AS t,
+                       SUM(AB) + COALESCE(SUM(BB), 0) + COALESCE(SUM(HBP), 0)
+                              + COALESCE(SUM(SF), 0)  + COALESCE(SUM(SH), 0) AS pa
+                FROM history_lahman_batting
+                WHERE lgID IN ('AL', 'NL')
+                GROUP BY playerID, yearID
+            ),
+            lahman_career_bat AS (
+                SELECT playerID,
+                       SUM(HR)  AS hr, SUM(RBI) AS rbi, SUM(R) AS r,
+                       SUM(H)   AS h,  SUM(BB)  AS bb,  SUM(SB) AS sb,
+                       SUM("2B") AS d, SUM("3B") AS t,
+                       SUM(AB) + COALESCE(SUM(BB), 0) + COALESCE(SUM(HBP), 0)
+                              + COALESCE(SUM(SF), 0)  + COALESCE(SUM(SH), 0) AS pa
+                FROM history_lahman_batting
+                WHERE lgID IN ('AL', 'NL')
+                GROUP BY playerID
+            ),
+            lahman_season_pit AS (
+                SELECT playerID, yearID,
+                       ANY_VALUE(teamID) AS teamID,
+                       SUM(W) AS w, SUM(L) AS l, SUM(SV) AS sv, SUM(SO) AS so,
+                       SUM(IPouts) AS ipouts,
+                       SUM(SHO) AS sho, SUM(CG) AS cg
+                FROM history_lahman_pitching
+                WHERE lgID IN ('AL', 'NL')
+                GROUP BY playerID, yearID
+            ),
+            lahman_career_pit AS (
+                SELECT playerID,
+                       SUM(W) AS w, SUM(L) AS l, SUM(SV) AS sv, SUM(SO) AS so,
+                       SUM(IPouts) AS ipouts,
+                       SUM(SHO) AS sho, SUM(CG) AS cg
+                FROM history_lahman_pitching
+                WHERE lgID IN ('AL', 'NL')
+                GROUP BY playerID
+            ),"""
+    else:
+        # No Lahman tables yet — build save-only by suppressing the lahman_*
+        # CTEs from the union (the lahman_parts list keys off `lahman_present`
+        # below).
+        lahman_ctes = ""
+        # Strip lahman parts from union
+        union_sql = "\n            UNION ALL".join(save_parts)
 
     con.execute(f"""
         CREATE OR REPLACE TABLE f_record_player AS
         WITH season_bat AS (
             SELECT
-                player_id,
-                year,
-                -- One team per (player, year) for the record's team_id.
-                -- Mid-season trades produce multiple teams; pick whichever
-                -- saw the most stats by max-arg.
+                player_id, year,
                 ARG_MAX(team_id, pa) AS team_id,
-                SUM(hr)  AS hr,
-                SUM(rbi) AS rbi,
-                SUM(r)   AS r,
-                SUM(h)   AS h,
-                SUM(bb)  AS bb,
-                SUM(sb)  AS sb,
-                SUM(d)   AS d,
-                SUM(t)   AS t,
-                SUM(pa)  AS pa,
-                SUM(war) AS war
+                SUM(hr) AS hr, SUM(rbi) AS rbi, SUM(r) AS r, SUM(h) AS h,
+                SUM(bb) AS bb, SUM(sb) AS sb, SUM(d) AS d, SUM(t) AS t,
+                SUM(pa) AS pa, SUM(war) AS war
             FROM f_player_season_batting
             WHERE league_id = {RECORD_LEAGUE_ID}
               AND level_id  = {RECORD_LEVEL_ID}
@@ -656,17 +761,10 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
         ),
         season_pit AS (
             SELECT
-                player_id,
-                year,
+                player_id, year,
                 ARG_MAX(team_id, outs) AS team_id,
-                SUM(w)    AS w,
-                SUM(s)    AS s,
-                SUM(k)    AS k,
-                SUM(outs) AS outs,
-                SUM(sho)  AS sho,
-                SUM(cg)   AS cg,
-                SUM(qs)   AS qs,
-                SUM(war)  AS war
+                SUM(w) AS w, SUM(s) AS s, SUM(k) AS k, SUM(outs) AS outs,
+                SUM(sho) AS sho, SUM(cg) AS cg, SUM(qs) AS qs, SUM(war) AS war
             FROM f_player_season_pitching
             WHERE league_id = {RECORD_LEAGUE_ID}
               AND level_id  = {RECORD_LEVEL_ID}
@@ -674,50 +772,57 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
             GROUP BY player_id, year
         ),
         career_bat AS (
-            SELECT
-                player_id,
-                SUM(hr)  AS hr,
-                SUM(rbi) AS rbi,
-                SUM(r)   AS r,
-                SUM(h)   AS h,
-                SUM(bb)  AS bb,
-                SUM(sb)  AS sb,
-                SUM(pa)  AS pa,
-                SUM(war) AS war
+            SELECT player_id,
+                   SUM(hr) AS hr, SUM(rbi) AS rbi, SUM(r) AS r, SUM(h) AS h,
+                   SUM(bb) AS bb, SUM(sb) AS sb, SUM(pa) AS pa, SUM(war) AS war
             FROM players_career_batting_event
             WHERE level_id = {RECORD_LEVEL_ID} AND split_id = 1
             GROUP BY player_id
         ),
         career_pit AS (
-            SELECT
-                player_id,
-                SUM(w)    AS w,
-                SUM(s)    AS s,
-                SUM(k)    AS k,
-                SUM(outs) AS outs,
-                SUM(sho)  AS sho,
-                SUM(cg)   AS cg,
-                SUM(war)  AS war
+            SELECT player_id,
+                   SUM(w) AS w, SUM(s) AS s, SUM(k) AS k, SUM(outs) AS outs,
+                   SUM(sho) AS sho, SUM(cg) AS cg, SUM(war) AS war
             FROM players_career_pitching_event
             WHERE level_id = {RECORD_LEVEL_ID} AND split_id = 1
             GROUP BY player_id
         ),
+            {lahman_ctes}
         all_records AS ({union_sql}),
+        -- Resolve display_name + team_abbr per source
+        named AS (
+            SELECT
+                ar.scope, ar.discipline, ar.category, ar.source,
+                ar.value, ar.player_id, ar.lahman_id, ar.year, ar.team_id,
+                COALESCE(
+                    ar.team_abbr,
+                    (SELECT abbr FROM teams WHERE team_id = ar.team_id)
+                ) AS team_abbr,
+                COALESCE(
+                    ar.display_name,
+                    (SELECT first_name || ' ' || last_name
+                       FROM players_current WHERE player_id = ar.player_id),
+                    {("(SELECT nameFirst || ' ' || nameLast FROM history_lahman_people WHERE playerID = ar.lahman_id)" if lahman_present else "NULL")}
+                ) AS display_name
+            FROM all_records ar
+        ),
         ranked AS (
             SELECT
-                scope, discipline, category,
+                scope, discipline, category, source,
                 CAST(ROW_NUMBER() OVER (
-                    PARTITION BY scope, discipline, category
-                    ORDER BY value DESC, player_id ASC
-                ) AS INTEGER) AS rank,
-                value, player_id, year, team_id
-            FROM all_records
+                    PARTITION BY scope, discipline, category, source
+                    ORDER BY value DESC, COALESCE(lahman_id, CAST(player_id AS VARCHAR)) ASC
+                ) AS INTEGER) AS rank_in_source,
+                value, display_name, player_id, lahman_id,
+                year, team_id, team_abbr
+            FROM named
             WHERE value IS NOT NULL AND value > 0
         )
-        SELECT * FROM ranked WHERE rank <= {RECORD_TOP_N}
+        SELECT * FROM ranked WHERE rank_in_source <= {RECORD_TOP_N}
     """)
     con.execute(
-        "ALTER TABLE f_record_player ADD PRIMARY KEY (scope, discipline, category, rank)"
+        "ALTER TABLE f_record_player "
+        "ADD PRIMARY KEY (scope, discipline, category, source, rank_in_source)"
     )
     return con.execute("SELECT COUNT(*) FROM f_record_player").fetchone()[0]
 
@@ -728,41 +833,137 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
 
 
 def _build_f_award_career_player(con: duckdb.DuckDBPyConnection) -> int:
-    """Career award totals per player.
+    """Career award totals per player — save + lahman sources unioned.
 
-    One row per (player, league, award_id). Captures count + first /
-    last year won, plus the team they were on at first / last win
-    (useful for "Mookie Betts won 3 MVPs as a Sox" framings).
+    Each row is a per (source × identity × league × award) career-total
+    capturing n_won and first/last year. Save rows carry OOTP `player_id`;
+    Lahman rows carry the historical `playerID` string in `lahman_id`.
+
+    Lahman award strings are mapped to our `AwardId` enum where they
+    line up. Awards Lahman has but we don't model (e.g., "TSN All-Star",
+    "Hank Aaron Award") are dropped; we don't synthesize new IDs.
+    All-Stars come from the separate `history_lahman_allstar` table and
+    are mapped to `AwardId.ALL_STAR`.
+
+    For Lahman rows `league_id` is set to 203 (MLB) regardless of AL/NL —
+    we don't currently model AL vs NL as separate leagues since the user's
+    save uses unified MLB league_id=203.
 
     Schema:
-        player_id    BIGINT
-        league_id    BIGINT
-        award_id     BIGINT       constants.AwardId enum
-        n_won        INTEGER
-        first_year   INTEGER
-        last_year    INTEGER
-        first_team_id BIGINT      team at first win
-        last_team_id BIGINT       team at last win
+        source         VARCHAR  'save' | 'lahman'
+        player_id      BIGINT   OOTP player_id (save only)
+        lahman_id      VARCHAR  Lahman playerID (lahman only)
+        display_name   VARCHAR  UI-ready
+        league_id      BIGINT
+        award_id       BIGINT   AwardId enum
+        n_won          INTEGER
+        first_year     INTEGER
+        last_year      INTEGER
+        first_team_id  BIGINT   save only
+        last_team_id   BIGINT   save only
+        first_team_abbr VARCHAR
+        last_team_abbr  VARCHAR
 
-    PK = (player_id, league_id, award_id).
+    PK = (source, COALESCE(lahman_id, CAST(player_id AS VARCHAR)), league_id, award_id).
     """
-    con.execute("""
-        CREATE OR REPLACE TABLE f_award_career_player AS
+    lahman_present = bool(con.execute("""
+        SELECT COUNT(*) FROM information_schema.tables
+        WHERE table_name = 'history_lahman_awards'
+    """).fetchone()[0])
+
+    save_select = """
         SELECT
-            player_id,
-            league_id,
-            award_id,
-            CAST(COUNT(*) AS INTEGER)     AS n_won,
-            CAST(MIN(year) AS INTEGER)    AS first_year,
-            CAST(MAX(year) AS INTEGER)    AS last_year,
-            ARG_MIN(team_id, year)        AS first_team_id,
-            ARG_MAX(team_id, year)        AS last_team_id
-        FROM f_award_event
-        GROUP BY player_id, league_id, award_id
+            'save' AS source,
+            ae.player_id,
+            CAST(NULL AS VARCHAR) AS lahman_id,
+            (SELECT first_name || ' ' || last_name
+               FROM players_current WHERE player_id = ae.player_id) AS display_name,
+            ae.league_id,
+            ae.award_id,
+            CAST(COUNT(*) AS INTEGER) AS n_won,
+            CAST(MIN(ae.year) AS INTEGER) AS first_year,
+            CAST(MAX(ae.year) AS INTEGER) AS last_year,
+            ARG_MIN(ae.team_id, ae.year) AS first_team_id,
+            ARG_MAX(ae.team_id, ae.year) AS last_team_id,
+            (SELECT abbr FROM teams WHERE team_id = ARG_MIN(ae.team_id, ae.year)) AS first_team_abbr,
+            (SELECT abbr FROM teams WHERE team_id = ARG_MAX(ae.team_id, ae.year)) AS last_team_abbr
+        FROM f_award_event ae
+        GROUP BY ae.player_id, ae.league_id, ae.award_id
+    """
+
+    if lahman_present:
+        # Lahman award-string → AwardId int mapping is materialized via a
+        # CTE hoisted to the top of the CTAS so the subsequent SELECTs can
+        # both reference it. Award strings not in the IN-list are simply
+        # not modeled in our enum and get dropped (we don't synthesize
+        # new ids).
+        sql = f"""
+        CREATE OR REPLACE TABLE f_award_career_player AS
+        WITH lahman_mapped AS (
+            SELECT
+                a.playerID,
+                CAST(203 AS BIGINT) AS league_id,
+                CAST(CASE a.awardID
+                    WHEN 'Most Valuable Player'         THEN 5
+                    WHEN 'Cy Young Award'               THEN 4
+                    WHEN 'Rookie of the Year'           THEN 6
+                    WHEN 'Gold Glove'                   THEN 7
+                    WHEN 'Silver Slugger'               THEN 11
+                    WHEN 'World Series MVP'             THEN 15
+                    WHEN 'Reliever of the Year Award'   THEN 13
+                    WHEN 'Rolaids Relief Man Award'     THEN 13
+                END AS BIGINT) AS award_id,
+                a.yearID AS year
+            FROM history_lahman_awards a
+            WHERE a.awardID IN (
+                'Most Valuable Player','Cy Young Award','Rookie of the Year',
+                'Gold Glove','Silver Slugger','World Series MVP',
+                'Reliever of the Year Award','Rolaids Relief Man Award'
+            )
+            UNION ALL
+            -- All-Star comes from the separate AllstarFull table
+            SELECT playerID, CAST(203 AS BIGINT), CAST(9 AS BIGINT), yearID
+            FROM history_lahman_allstar
+        )
+        ({save_select})
+        UNION ALL
+        SELECT
+            'lahman' AS source,
+            CAST(NULL AS BIGINT) AS player_id,
+            lm.playerID AS lahman_id,
+            (SELECT nameFirst || ' ' || nameLast
+               FROM history_lahman_people WHERE playerID = lm.playerID) AS display_name,
+            lm.league_id,
+            lm.award_id,
+            CAST(COUNT(*) AS INTEGER) AS n_won,
+            CAST(MIN(lm.year) AS INTEGER) AS first_year,
+            CAST(MAX(lm.year) AS INTEGER) AS last_year,
+            CAST(NULL AS BIGINT) AS first_team_id,
+            CAST(NULL AS BIGINT) AS last_team_id,
+            CAST(NULL AS VARCHAR) AS first_team_abbr,
+            CAST(NULL AS VARCHAR) AS last_team_abbr
+        FROM lahman_mapped lm
+        WHERE lm.award_id IS NOT NULL
+        GROUP BY lm.playerID, lm.league_id, lm.award_id
+        """
+    else:
+        sql = f"CREATE OR REPLACE TABLE f_award_career_player AS {save_select}"
+
+    con.execute(sql)
+
+    # DuckDB PKs only accept column names (no expressions). Materialize a
+    # synthetic identity-key column once so we can enforce uniqueness.
+    con.execute("""
+        ALTER TABLE f_award_career_player
+        ADD COLUMN identity_key VARCHAR
+    """)
+    con.execute("""
+        UPDATE f_award_career_player
+        SET identity_key = COALESCE(lahman_id, CAST(player_id AS VARCHAR))
     """)
     con.execute(
         "ALTER TABLE f_award_career_player "
-        "ADD PRIMARY KEY (player_id, league_id, award_id)"
+        "ADD PRIMARY KEY (source, league_id, award_id, identity_key)"
     )
     return con.execute("SELECT COUNT(*) FROM f_award_career_player").fetchone()[0]
 
@@ -865,7 +1066,7 @@ def build_l3(
     if verbose:
         console.print(
             f"  [green]✓[/green] f_record_player                 "
-            f"[dim]{n:>10,} rows  PK=(scope, discipline, category, rank)[/dim]"
+            f"[dim]{n:>10,} rows  PK=(scope, discipline, category, source, rank_in_source)[/dim]"
         )
 
     n = _build_f_award_career_player(con)
