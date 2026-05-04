@@ -73,12 +73,34 @@ make web
 
 Equivalent: `cd web && pnpm dev`
 
-Open http://localhost:3000 — you'll land on the placeholder home page.
-Click "Glossary" to see the first end-to-end render: Next.js fetches
-`http://localhost:8000/api/glossary`, the FastAPI app converts the
-D15 dictionary's `STATS` dict to JSON, and the page renders all 39
-entries grouped by category. Click any entry for the KaTeX-rendered
-formula detail page.
+### Windows without `make`
+
+If you don't have `make` installed (it's not part of base Windows),
+use the batch shortcuts at the repo root instead:
+
+```cmd
+api.bat        :: same as `make api`
+web.bat        :: same as `make web`
+```
+
+Both `cd` to the right directory, set `PYTHONIOENCODING=utf-8`
+(needed for Rich box-drawing on the API side), and pause on error
+so the message is readable. Double-clicking either file from
+Explorer also works.
+
+Open http://localhost:3000 — you'll land on the home page with feature
+links. Two demo paths:
+
+- **Glossary** — Next.js fetches `/api/glossary`, the FastAPI app
+  converts the D15 dictionary's `STATS` dict to JSON, and the page
+  renders all 60 entries grouped by category. Click any entry for the
+  KaTeX-rendered formula detail page.
+- **Player page** (e.g. `/player/26166` for Gunnar Henderson) — bio
+  header + Bref-shaped Stats tab with batting/pitching/fielding/
+  advanced sections. Multi-stint years collapse to a clickable
+  TOT row that expands to per-(level, team) sub-rows. Advanced rows
+  pull from `f_player_season_advanced_*` (park-aware OPS+/ERA+/FIP/
+  wRC+/oWAR/pit_WAR per league-level).
 
 ## Type generation pipeline
 

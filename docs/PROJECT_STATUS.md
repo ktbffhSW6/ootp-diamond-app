@@ -10,7 +10,7 @@
 
 ## One-line summary
 
-Phases 1-2 closed; analytical CLI surface complete; real MLB history through 2025 backfilled; Phase 3 UI scaffold (FastAPI + Next.js) live with the glossary route as proof-of-life. Player page is the next move.
+Phases 1-2 closed; analytical CLI surface complete; real MLB history through 2025 backfilled; Phase 3 UI live — the FastAPI + Next.js scaffold renders the glossary and a Bref-shaped player page (Stats tab: batting + pitching + fielding + advanced — wOBA / wRC+ / OPS+ / FIP / ERA+ / WAR all park-aware and audit-cross-checked). Charts tab + demotion/promotion review are the candidate next moves.
 
 ## What works today
 

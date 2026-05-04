@@ -222,7 +222,7 @@ Each entry carries: `id`, `display_name`, `short_label`, `category`, `formula_te
 - `src/diamond/glossary.py` + `diamond glossary` CLI — terminal + markdown rendering. Three modes: list-all (default), `glossary <id>` for full detail, `--category <cat>` for compact one-category table. Validates the dictionary works end-to-end before any frontend exists.
 - Smoke test Phase G — required-fields-non-empty + categories valid + related ids resolve + ids unique.
 
-**Thin v1 cohort (39 entries shipped)**:
+**Thin v1 cohort (39 entries shipped 2026-05-07)**:
 - batting (15): AVG / OBP / SLG / OPS / ISO / BABIP / K%/BB% / PA / HR / RBI / R / BB / K / SB
 - advanced (8): wOBA / wRAA / wRC / wRC+ / OPS+ / ERA+ / FIP / SIERA
 - pitching (6): W / SV / IP / K / ERA / WHIP
@@ -230,7 +230,14 @@ Each entry carries: `id`, `display_name`, `short_label`, `category`, `formula_te
 - statcast (5): MAX_EV / AVG_EV / HARD_HIT_PCT / BARREL_PCT / SWEET_SPOT_PCT
 - fielding (2): RF/9 / Framing+
 
-**Long-tail entries** (~110 more) land here as UI screens reach for them. Strict rule: any new UI label, chart axis, or AI prompt MUST come from the dictionary — no hand-coded labels in feature code. Dictionary fills in over time but never lags behind what's exposed.
+**Player-page expansion (60 entries — landed alongside Stats tab 2026-05-07)**:
+- batting +5: G_batter / AB / H / D (2B) / T (3B)
+- pitching +8: L / G_pitcher / GS / ER / H_allowed / R_allowed / HR_allowed / BB_allowed
+- fielding +8: G_fielder / GS_fielder / INN / PO / A / E / DP / FPCT
+
+The expansion landed in lockstep with the player Stats tab so every column header rendered on `/player/[id]` had a backing entry from day one. Pitcher/batter homonyms (G, K, BB, HR) carry separate ids with `_pitcher` / `_batter` / `_allowed` suffixes — same `short_label`, different conceptual stat (e.g., `HR` is HRs hit, `HR_allowed` is HRs given up).
+
+**Long-tail entries** (~90 more) land here as UI screens reach for them. Strict rule: any new UI label, chart axis, or AI prompt MUST come from the dictionary — no hand-coded labels in feature code. Dictionary fills in over time but never lags behind what's exposed.
 
 ## D16 — Tech stack: FastAPI + Next.js (App Router), Pydantic-derived TS types
 
