@@ -561,6 +561,163 @@ def fetch_and_load_bref(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# MLB Stats API — fills 2018+ awards + HOF gap (Lahman caps at 2017/2018)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# MLB Stats API award_id → diamond.constants.AwardId mapping. The API splits
+# AL/NL into separate ids; we collapse both to one diamond AwardId.
+_MLBAPI_AWARD_MAP: list[tuple[str, int]] = [
+    ("ALMVP", 5),  ("NLMVP", 5),     # MVP
+    ("ALCY",  4),  ("NLCY",  4),     # Cy Young
+    ("ALROY", 6),  ("NLROY", 6),     # Rookie of the Year
+    ("ALGG",  7),  ("NLGG",  7),     # Gold Glove
+    ("ALSS", 11),  ("NLSS", 11),     # Silver Slugger
+    ("ALREL",13),  ("NLREL",13),     # Reliever of the Year
+    ("WSMVP",15),                    # World Series MVP
+]
+
+# Awards Lahman covers through (cdalzell mirror caps here)
+_LAHMAN_AWARDS_MAX_YEAR = 2017
+# HOF Lahman covers through
+_LAHMAN_HOF_MAX_YEAR = 2018
+
+
+def _mlbapi_get(path: str, *, timeout: int = 15):
+    import requests
+    r = requests.get(f"https://statsapi.mlb.com/api/v1/{path}", timeout=timeout)
+    r.raise_for_status()
+    return r.json()
+
+
+def fetch_and_load_mlbapi(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    save: SaveConfig = BUILDING_THE_GREEN_MONSTER,
+    history_cap_year: int | None = None,
+    verbose: bool = True,
+) -> dict[str, int]:
+    """Pull recent awards + HOF from the MLB Stats API to fill the
+    Lahman gap (Lahman awards cap 2017, HOF cap 2018).
+
+    Two output tables, both source-tagged 'mlbapi':
+
+      history_mlbapi_awards
+        award_key VARCHAR  (MLB API key, e.g., 'ALMVP')
+        award_id  BIGINT   (diamond.constants.AwardId)
+        season    INTEGER
+        mlb_id    BIGINT   (MLBAM player id)
+        name      VARCHAR
+
+      history_mlbapi_hof
+        season    INTEGER  (year inducted)
+        mlb_id    BIGINT
+        name      VARCHAR
+
+    Capped at `save_start_year - 1` (or `history_cap_year` override).
+    Filters rows already covered by Lahman: awards yearID > 2017,
+    HOF yearid > 2018.
+
+    Player linkage to bbref_id via `history_player_id_map` (Chadwick
+    Register) — must be loaded for downstream UNION to work.
+    """
+    if history_cap_year is None:
+        history_cap_year = _save_start_year(save) - 1
+    if verbose:
+        console.rule(f"MLB Stats API  (gap-fill 2018–{history_cap_year})")
+
+    award_rows: list[dict] = []
+    for award_key, diamond_award_id in _MLBAPI_AWARD_MAP:
+        try:
+            data = _mlbapi_get(f"awards/{award_key}/recipients")
+        except Exception as e:
+            if verbose:
+                console.print(f"  [yellow]⚠[/yellow] {award_key}: {e}")
+            continue
+        n_year_rows = 0
+        for a in data.get("awards", []):
+            year = int(a.get("season") or 0)
+            # Gap-fill: skip years already in Lahman
+            if year <= _LAHMAN_AWARDS_MAX_YEAR:
+                continue
+            if year > history_cap_year:
+                continue
+            p = a.get("player") or {}
+            mlb_id = p.get("id")
+            if not mlb_id:
+                continue
+            name = p.get("nameFirstLast") or p.get("fullName") or ""
+            award_rows.append({
+                "award_key": award_key,
+                "award_id":  diamond_award_id,
+                "season":    year,
+                "mlb_id":    int(mlb_id),
+                "name":      name,
+            })
+            n_year_rows += 1
+        if verbose:
+            console.print(f"  awards/{award_key}: [dim]{n_year_rows:,} rows[/dim]")
+
+    rows: dict[str, int] = {}
+    if award_rows:
+        import pandas as pd
+        df = pd.DataFrame(award_rows)
+        con.execute("DROP TABLE IF EXISTS history_mlbapi_awards")
+        con.register("_mlbapi_awards_tmp", df)
+        con.execute(
+            "CREATE TABLE history_mlbapi_awards AS SELECT * FROM _mlbapi_awards_tmp"
+        )
+        con.unregister("_mlbapi_awards_tmp")
+        n = con.execute("SELECT COUNT(*) FROM history_mlbapi_awards").fetchone()[0]
+        rows["history_mlbapi_awards"] = n
+        if verbose:
+            console.print(
+                f"  [green]✓[/green] history_mlbapi_awards            "
+                f"[dim]{n:>8,} rows[/dim]"
+            )
+
+    # HOF
+    hof_rows: list[dict] = []
+    try:
+        data = _mlbapi_get("awards/MLBHOF/recipients")
+    except Exception as e:
+        if verbose:
+            console.print(f"  [yellow]⚠[/yellow] MLBHOF: {e}")
+        data = {"awards": []}
+    for a in data.get("awards", []):
+        year = int(a.get("season") or 0)
+        if year <= _LAHMAN_HOF_MAX_YEAR:
+            continue
+        if year > history_cap_year:
+            continue
+        p = a.get("player") or {}
+        mlb_id = p.get("id")
+        if not mlb_id:
+            continue
+        name = p.get("nameFirstLast") or p.get("fullName") or ""
+        hof_rows.append({"season": year, "mlb_id": int(mlb_id), "name": name})
+
+    if hof_rows:
+        import pandas as pd
+        df = pd.DataFrame(hof_rows)
+        con.execute("DROP TABLE IF EXISTS history_mlbapi_hof")
+        con.register("_mlbapi_hof_tmp", df)
+        con.execute(
+            "CREATE TABLE history_mlbapi_hof AS SELECT * FROM _mlbapi_hof_tmp"
+        )
+        con.unregister("_mlbapi_hof_tmp")
+        n = con.execute("SELECT COUNT(*) FROM history_mlbapi_hof").fetchone()[0]
+        rows["history_mlbapi_hof"] = n
+        if verbose:
+            console.print(
+                f"  [green]✓[/green] history_mlbapi_hof               "
+                f"[dim]{n:>8,} rows[/dim]"
+            )
+
+    return rows
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Chadwick Register — bbref ↔ MLBAM ↔ Retro ↔ FanGraphs id crosswalk
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -655,6 +812,7 @@ def run(
     skip_statcast: bool = False,
     skip_bref: bool = False,
     skip_chadwick: bool = False,
+    skip_mlbapi: bool = False,
     force_download: bool = False,
     statcast_first_year: int = STATCAST_FIRST_YEAR,
     statcast_last_year: int | None = None,
@@ -713,6 +871,10 @@ def run(
             )
         if not skip_chadwick:
             rows.update(fetch_and_load_chadwick(con))
+        if not skip_mlbapi:
+            rows.update(
+                fetch_and_load_mlbapi(con, save=save, history_cap_year=cap)
+            )
     finally:
         con.close()
 

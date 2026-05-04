@@ -208,6 +208,7 @@ def fetch_history(
     skip_statcast: bool = typer.Option(False, "--skip-statcast", help="Skip Statcast pull."),
     skip_bref: bool = typer.Option(False, "--skip-bref", help="Skip Baseball-Reference pull."),
     skip_chadwick: bool = typer.Option(False, "--skip-chadwick", help="Skip Chadwick Register pull."),
+    skip_mlbapi: bool = typer.Option(False, "--skip-mlbapi", help="Skip MLB Stats API gap-fill (awards/HOF 2018+)."),
     force: bool = typer.Option(
         False, "--force", help="Re-download Lahman zip even if cached."
     ),
@@ -239,6 +240,7 @@ def fetch_history(
         skip_statcast=skip_statcast,
         skip_bref=skip_bref,
         skip_chadwick=skip_chadwick,
+        skip_mlbapi=skip_mlbapi,
         force_download=force,
         statcast_first_year=first_year,
         statcast_last_year=cap_year,

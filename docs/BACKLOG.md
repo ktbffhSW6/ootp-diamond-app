@@ -197,6 +197,18 @@ and count-state splits).
   is calibrated similarly enough to real Statcast that we can join
   them in records, with a clear `source` distinction. Already-built
   `f_record_player` schema accommodates this with no changes.
+- [x] **MLB Stats API gap-fill (awards + HOF 2018-2025)** — done
+  2026-05-06. Lahman caps awards at 2017 + HOF at 2018; the MLB Stats
+  API (`statsapi.mlb.com/api/v1/awards/<ID>/recipients`) fills the
+  gap. New `history_mlbapi_awards` (377 rows: MVP/CY/ROY/GG/SS/Reliever/
+  WSMVP for 2018-2025) and `history_mlbapi_hof` (28 rows: Jeter
+  '20, Walker '20, Big Papi '22, Rolen '23, Helton/Mauer/Beltré '24,
+  Wagner/Sabathia/Ichiro '25, Beltrán/A-Jones/Kent '26). UNION'd into
+  f_award_career_player with `source='mlbapi'`, dedup'd to bbref_ids
+  NOT in save (active players already have real awards via OOTP
+  import). HoF view now shows real Cooperstown through 2026 in
+  `diamond hof --era lahman`. Linked via Chadwick Register (mlb_id
+  → bbref_id).
 - [x] **Cross-source player linkage** — done 2026-05-06. Discovered
   OOTP `players_current.historical_id` IS bbref_id natively for
   real-life imported players (1,699 of 15,940 in current save —

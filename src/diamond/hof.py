@@ -53,55 +53,105 @@ HOF_PIT_OUTS_FLOOR = 6000  # ~2,000 IP
 
 
 def _fetch_lahman_inducted(con: duckdb.DuckDBPyConnection, limit: int) -> list[dict]:
-    """Real Cooperstown inductees from Lahman, with career stats joined.
+    """Real Cooperstown inductees, unioned across Lahman (1936–2018) +
+    MLB Stats API gap-fill (2019–save_start-1).
 
     Lahman HoF tracks every ballot vote — we filter to `inducted = 'Y'`
     and group by (playerID, category) to get one row per inducted person
     (a few players are inducted as both Player and Manager — rare).
+
+    MLB Stats API HOF rows fill the 2019+ gap (Jeter, Walker, Helton,
+    Mauer, Beltré, Wagner, Sabathia, Ichiro, etc.). We join via the
+    Chadwick crosswalk to attach Lahman batting/pitching career stats
+    to those rows where possible — recent inductees usually have
+    incomplete Lahman stats since cdalzell capped at 2019, but partial
+    stats are still informative.
     """
+    mlbapi_present = bool(con.execute("""
+        SELECT COUNT(*) FROM information_schema.tables
+        WHERE table_name = 'history_mlbapi_hof'
+    """).fetchone()[0]) and bool(con.execute("""
+        SELECT COUNT(*) FROM information_schema.tables
+        WHERE table_name = 'history_player_id_map'
+    """).fetchone()[0])
+
+    mlbapi_union = ""
+    if mlbapi_present:
+        mlbapi_union = """
+            UNION ALL
+            SELECT
+                pm.bbref_id AS playerID,
+                mh.season AS year_inducted,
+                'BBWAA' AS voted_by,
+                'Player' AS category,
+                mh.name AS name,
+                COALESCE(cb.ab, 0)  AS ab,
+                COALESCE(cb.h, 0)   AS h,
+                COALESCE(cb.hr, 0)  AS hr,
+                COALESCE(cb.rbi, 0) AS rbi,
+                COALESCE(cp.w, 0)   AS w,
+                COALESCE(cp.so, 0)  AS so,
+                COALESCE(cp.sv, 0)  AS sv,
+                COALESCE(cp.ipouts, 0) AS ipouts
+            FROM history_mlbapi_hof mh
+            LEFT JOIN history_player_id_map pm ON pm.mlb_id = mh.mlb_id
+            LEFT JOIN (
+                SELECT playerID, SUM(AB) AS ab, SUM(H) AS h, SUM(HR) AS hr,
+                       SUM(RBI) AS rbi
+                FROM history_lahman_batting
+                WHERE lgID IN ('AL','NL')
+                GROUP BY playerID
+            ) cb ON cb.playerID = pm.bbref_id
+            LEFT JOIN (
+                SELECT playerID, SUM(W) AS w, SUM(SO) AS so, SUM(SV) AS sv,
+                       SUM(IPouts) AS ipouts
+                FROM history_lahman_pitching
+                WHERE lgID IN ('AL','NL')
+                GROUP BY playerID
+            ) cp ON cp.playerID = pm.bbref_id
+        """
+
     rel = con.execute(
         f"""
-        WITH inducted AS (
-            SELECT playerID,
-                   ANY_VALUE(yearid) AS year_inducted,
-                   ANY_VALUE(votedBy) AS voted_by,
-                   ANY_VALUE(category) AS category
-            FROM history_lahman_hof
-            WHERE inducted = 'Y'
-            GROUP BY playerID
+        WITH lahman_inducted AS (
+            SELECT
+                i.playerID,
+                ANY_VALUE(i.yearid) AS year_inducted,
+                ANY_VALUE(i.votedBy) AS voted_by,
+                ANY_VALUE(i.category) AS category
+            FROM history_lahman_hof i
+            WHERE i.inducted = 'Y'
+            GROUP BY i.playerID
         ),
         cb AS (
-            SELECT playerID,
-                   SUM(AB) AS ab, SUM(H) AS h, SUM(HR) AS hr, SUM(RBI) AS rbi
+            SELECT playerID, SUM(AB) AS ab, SUM(H) AS h, SUM(HR) AS hr,
+                   SUM(RBI) AS rbi
             FROM history_lahman_batting
-            WHERE lgID IN ('AL', 'NL')
+            WHERE lgID IN ('AL','NL')
             GROUP BY playerID
         ),
         cp AS (
-            SELECT playerID,
-                   SUM(W) AS w, SUM(SO) AS so, SUM(SV) AS sv,
+            SELECT playerID, SUM(W) AS w, SUM(SO) AS so, SUM(SV) AS sv,
                    SUM(IPouts) AS ipouts
             FROM history_lahman_pitching
-            WHERE lgID IN ('AL', 'NL')
+            WHERE lgID IN ('AL','NL')
             GROUP BY playerID
+        ),
+        combined AS (
+            SELECT
+                i.playerID, i.year_inducted, i.voted_by, i.category,
+                p.nameFirst || ' ' || p.nameLast AS name,
+                COALESCE(cb.ab, 0) AS ab, COALESCE(cb.h, 0) AS h,
+                COALESCE(cb.hr, 0) AS hr, COALESCE(cb.rbi, 0) AS rbi,
+                COALESCE(cp.w, 0) AS w, COALESCE(cp.so, 0) AS so,
+                COALESCE(cp.sv, 0) AS sv, COALESCE(cp.ipouts, 0) AS ipouts
+            FROM lahman_inducted i
+            LEFT JOIN history_lahman_people p ON p.playerID = i.playerID
+            LEFT JOIN cb ON cb.playerID = i.playerID
+            LEFT JOIN cp ON cp.playerID = i.playerID
+            {mlbapi_union}
         )
-        SELECT
-            i.playerID, i.year_inducted, i.voted_by, i.category,
-            p.nameFirst || ' ' || p.nameLast AS name,
-            COALESCE(cb.ab, 0)  AS ab,
-            COALESCE(cb.h, 0)   AS h,
-            COALESCE(cb.hr, 0)  AS hr,
-            COALESCE(cb.rbi, 0) AS rbi,
-            COALESCE(cp.w, 0)   AS w,
-            COALESCE(cp.so, 0)  AS so,
-            COALESCE(cp.sv, 0)  AS sv,
-            COALESCE(cp.ipouts, 0) AS ipouts
-        FROM inducted i
-        LEFT JOIN history_lahman_people p ON p.playerID = i.playerID
-        LEFT JOIN cb ON cb.playerID = i.playerID
-        LEFT JOIN cp ON cp.playerID = i.playerID
-        ORDER BY i.year_inducted DESC, name
-        LIMIT {limit}
+        SELECT * FROM combined ORDER BY year_inducted DESC, name LIMIT {limit}
         """
     )
     cols = [d[0] for d in rel.description]

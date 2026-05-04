@@ -1107,6 +1107,14 @@ def _build_f_award_career_player(con: duckdb.DuckDBPyConnection) -> int:
         SELECT COUNT(*) FROM information_schema.tables
         WHERE table_name = 'history_lahman_awards'
     """).fetchone()[0])
+    mlbapi_present = bool(con.execute("""
+        SELECT COUNT(*) FROM information_schema.tables
+        WHERE table_name = 'history_mlbapi_awards'
+    """).fetchone()[0])
+    chadwick_for_awards = bool(con.execute("""
+        SELECT COUNT(*) FROM information_schema.tables
+        WHERE table_name = 'history_player_id_map'
+    """).fetchone()[0])
 
     save_select = """
         SELECT
@@ -1186,6 +1194,43 @@ def _build_f_award_career_player(con: duckdb.DuckDBPyConnection) -> int:
     else:
         sql = f"CREATE OR REPLACE TABLE f_award_career_player AS {save_select}"
 
+    # MLB Stats API gap-fill — awards 2018-(save_start-1). Joins to Chadwick
+    # Register for bbref_id; rows without a bbref linkage are dropped.
+    #
+    # Critical dedup: save's f_award_event already contains real-life pre-save
+    # awards for active players (OOTP imports them at save start). Adding
+    # mlbapi rows for the same bbref_id would double-count. So we filter
+    # mlbapi to bbref_ids NOT in save's historical_id space — i.e., real
+    # players who DIDN'T continue into the OOTP simulation. That's mostly
+    # 2018-2025 award winners who retired during the gap window.
+    if mlbapi_present and chadwick_for_awards:
+        mlbapi_select = """
+            UNION ALL
+            SELECT
+                'mlbapi' AS source,
+                CAST(NULL AS BIGINT) AS player_id,
+                pm.bbref_id AS external_id,
+                ANY_VALUE(ma.name) AS display_name,
+                CAST(203 AS BIGINT) AS league_id,
+                ma.award_id,
+                CAST(COUNT(*) AS INTEGER) AS n_won,
+                CAST(MIN(ma.season) AS INTEGER) AS first_year,
+                CAST(MAX(ma.season) AS INTEGER) AS last_year,
+                CAST(NULL AS BIGINT) AS first_team_id,
+                CAST(NULL AS BIGINT) AS last_team_id,
+                CAST(NULL AS VARCHAR) AS first_team_abbr,
+                CAST(NULL AS VARCHAR) AS last_team_abbr
+            FROM history_mlbapi_awards ma
+            JOIN history_player_id_map pm ON pm.mlb_id = ma.mlb_id
+            WHERE pm.bbref_id IS NOT NULL
+              AND pm.bbref_id NOT IN (
+                  SELECT historical_id FROM players_current
+                  WHERE historical_id IS NOT NULL
+              )
+            GROUP BY pm.bbref_id, ma.award_id
+        """
+        # Splice the UNION ALL onto the SQL we just built.
+        sql = sql.rstrip().rstrip(";") + "\n" + mlbapi_select
     con.execute(sql)
 
     # DuckDB PKs only accept column names (no expressions). Materialize a

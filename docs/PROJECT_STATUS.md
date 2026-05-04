@@ -63,6 +63,7 @@ warehouse and build the ingest pipeline.
     `f_award_franchise`)
   - History backfill (one-time): 8 `history_lahman_*` tables +
     2 `history_statcast_*` tables + 2 `history_bref_*` tables +
+    2 `history_mlbapi_*` tables (awards + HOF gap-fill 2018+) +
     `history_player_id_map` (Chadwick Register). f_record_player
     UNIONs five sources ('save' / 'lahman' / 'bref' / 'statcast' /
     'merged') with `--era` CLI filter. Career rows dedup across
@@ -70,7 +71,9 @@ warehouse and build the ingest pipeline.
     Lahman + BREF + Statcast merge into 'merged' source for
     pre-save retirees (Pujols Lahman 656 + BREF 30 = merged 686 HR).
     Statcast adds EV/barrel/hard-hit categories.
-    f_award_career_player UNIONs save + lahman.
+    f_award_career_player UNIONs save + lahman + mlbapi (with
+    same dedup-on-bbref_id-in-save filter for the gap-fill rows).
+    `diamond hof --era lahman` shows real Cooperstown through 2026.
 - **Empirical scripts retained** in `scripts/` — `xstats_eda.py` and
   `xstats_3d.py` are the evidence behind the structural-limit D-tier verdict
   on xBA/xSLG/xwOBA. Rerun rather than re-investigate.
