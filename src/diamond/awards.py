@@ -77,7 +77,7 @@ def _fetch_player_leaderboard(
         where_era = "AND acp.source = 'lahman'"
     rel = con.execute(
         f"""
-        SELECT acp.source, acp.player_id, acp.lahman_id, acp.display_name,
+        SELECT acp.source, acp.player_id, acp.external_id, acp.display_name,
                acp.n_won, acp.first_year, acp.last_year,
                acp.last_team_id, acp.last_team_abbr
         FROM f_award_career_player acp
@@ -116,7 +116,7 @@ def _fetch_player_career_lahman(
         """
         SELECT award_id, n_won, first_year, last_year, source
         FROM f_award_career_player
-        WHERE source = 'lahman' AND lahman_id = ? AND league_id = ?
+        WHERE source = 'lahman' AND external_id = ? AND league_id = ?
         ORDER BY n_won DESC, last_year DESC, award_id
         """,
         [lahman_id, league_id],

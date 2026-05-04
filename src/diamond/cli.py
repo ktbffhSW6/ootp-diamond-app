@@ -263,9 +263,10 @@ def records(
     ),
     era: str = typer.Option(
         "all",
-        help="'all' (default — unified), 'save' (OOTP only), or 'lahman' "
-        "(real-life MLB history). Run `diamond fetch-history` to populate "
-        "the Lahman side.",
+        help="'all' (default — unified), 'save' (OOTP only), 'lahman' "
+        "(real classic stats), or 'statcast' (real EV/barrel/hard-hit, "
+        "Statcast era 2015+). Run `diamond fetch-history` to populate "
+        "the Lahman + Statcast sides.",
     ),
     limit: int = typer.Option(10, help="Top-N per category (max 50)."),
     output: Path = typer.Option(

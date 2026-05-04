@@ -521,6 +521,8 @@ def _build_f_draft_class(con: duckdb.DuckDBPyConnection) -> int:
 
 # (scope, discipline, category, save_value_col, save_cte, lahman_value_col)
 # Lahman col missing → only save data contributes (e.g. WAR — not in Lahman).
+# Statcast categories live in STATCAST_CATEGORIES below — no save-side
+# equivalent for those (OOTP per-PA EV is on a different scale).
 # Sort direction is always DESC for v1 (counting stats only, "more is better").
 # Scope to MLB (league_id=203, level_id=1, split_id=1) for save data, and
 # Lahman lgID IN ('AL', 'NL') for the historical side.
@@ -564,6 +566,30 @@ RECORD_CATEGORIES: list[tuple[str, str, str, str, str, str | None]] = [
     ("career", "pitching", "WAR", "war",  "career_pit", None),
 ]
 
+
+# Statcast batting record categories — source = 'statcast'. Single-season
+# values come straight from `history_statcast_batting_season`. Career
+# values are per-player MAX (peak power / distance) over all seasons in
+# the historical window — not weighted-averaged rate stats, since rate
+# stats need PA gates that are awkward across multi-year careers.
+#
+# tuple shape: (scope, category, statcast_col, transform_sql)
+# transform_sql can be None for direct passthrough.
+STATCAST_BATTING_CATEGORIES: list[tuple[str, str, str, str]] = [
+    # ──────────── single-season batting (Statcast) ────────────
+    ("season", "MAX_EV",          "max_hit_speed",          "MAX(max_hit_speed)"),
+    ("season", "AVG_EV",          "avg_hit_speed",          "MAX(avg_hit_speed)"),
+    ("season", "HARD_HIT_PCT",    "ev95percent",            "MAX(ev95percent)"),
+    ("season", "BARREL_PCT",      "brl_percent",            "MAX(brl_percent)"),
+    ("season", "SWEET_SPOT_PCT",  "anglesweetspotpercent",  "MAX(anglesweetspotpercent)"),
+    ("season", "MAX_DIST",        "max_distance",           "MAX(max_distance)"),
+    # ──────────── career batting (Statcast — peak only) ───────
+    # Career rate-stat records (avg EV, hard-hit%, etc.) need PA-weighted
+    # aggregation; skipped for v1. Career MAX-aggregable stats are clean.
+    ("career", "MAX_EV",          "max_hit_speed",          "MAX(max_hit_speed)"),
+    ("career", "MAX_DIST",        "max_distance",           "MAX(max_distance)"),
+]
+
 # Top-N per (scope, discipline, category, source). UI never wants more than
 # this; Lahman alone has thousands of qualifying career-rows per category.
 RECORD_TOP_N = 50
@@ -579,9 +605,11 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
     MLB-only) and 'lahman' (real-life MLB 1871–present).
 
     A `--era` flag on the CLI filters by source; the default unifies
-    both into a combined leaderboard. Each row carries `display_name`
-    (UI-ready) plus identity (`player_id` for save rows, `lahman_id`
-    for Lahman rows) so player-page joins work cleanly per source.
+    all three into a combined leaderboard. Each row carries `display_name`
+    (UI-ready) plus identity: `player_id` for save rows, `external_id`
+    for non-save rows (Lahman bbrefID for source='lahman', MLBAM player_id
+    for source='statcast'). Source disambiguates which id namespace
+    `external_id` is in.
 
     Stored ranks are within-source — i.e. the row with the most career
     HR in Lahman gets rank_in_source=1 among lahman rows, and the same
@@ -593,22 +621,28 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
     Schema:
         scope            VARCHAR  'season' or 'career'
         discipline       VARCHAR  'batting' or 'pitching'
-        category         VARCHAR  e.g. 'HR', 'IP'
-        source           VARCHAR  'save' or 'lahman'
+        category         VARCHAR  e.g. 'HR', 'IP', 'MAX_EV'
+        source           VARCHAR  'save' | 'lahman' | 'statcast'
         rank_in_source   INTEGER  1 = best within source (1..50)
         value            DOUBLE   stat value (outs for IP — CLI converts)
         display_name     VARCHAR  UI-ready full name
-        player_id        BIGINT   OOTP player_id (save rows only; NULL for lahman)
-        lahman_id        VARCHAR  Lahman playerID (lahman rows only; NULL for save)
+        player_id        BIGINT   OOTP player_id (save rows only; NULL for non-save)
+        external_id      VARCHAR  Lahman bbrefID (source='lahman') OR MLBAM
+                                  player_id-as-string (source='statcast')
         year             INTEGER  NULL for career rows
         team_id          BIGINT   OOTP team_id (save only)
-        team_abbr        VARCHAR  3-letter team abbr; populated for both sources
+        team_abbr        VARCHAR  3-letter team abbr; populated for save+lahman
 
     PK = (scope, discipline, category, source, rank_in_source).
 
-    Note: WAR and QS are save-only (Lahman doesn't carry them). For
-    these categories `--era lahman` returns empty; `--era all` shows
-    the save data alone.
+    Notes:
+      - WAR and QS are save-only (Lahman doesn't carry them). `--era
+        lahman --category WAR` returns empty.
+      - Statcast categories (MAX_EV, AVG_EV, BARREL_PCT, HARD_HIT_PCT,
+        SWEET_SPOT_PCT, MAX_DIST) are batting-only and statcast-only.
+        Save's at-bat-level EV data exists but isn't yet joined here
+        (different calibration scale; future work). `--era statcast
+        --category HR` returns empty.
     """
     save_parts: list[str] = []
     lahman_parts: list[str] = []
@@ -621,7 +655,7 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
                     'save' AS source,
                     CAST({save_col} AS DOUBLE) AS value,
                     player_id,
-                    CAST(NULL AS VARCHAR) AS lahman_id,
+                    CAST(NULL AS VARCHAR) AS external_id,
                     CAST(year AS INTEGER) AS year,
                     team_id,
                     CAST(NULL AS VARCHAR) AS team_abbr,
@@ -635,7 +669,7 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
                     'save' AS source,
                     CAST({save_col} AS DOUBLE) AS value,
                     player_id,
-                    CAST(NULL AS VARCHAR) AS lahman_id,
+                    CAST(NULL AS VARCHAR) AS external_id,
                     CAST(NULL AS INTEGER) AS year,
                     CAST(NULL AS BIGINT)  AS team_id,
                     CAST(NULL AS VARCHAR) AS team_abbr,
@@ -656,7 +690,7 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
                     'lahman' AS source,
                     CAST({lahman_col} AS DOUBLE) AS value,
                     CAST(NULL AS BIGINT) AS player_id,
-                    playerID AS lahman_id,
+                    playerID AS external_id,
                     CAST(yearID AS INTEGER) AS year,
                     CAST(NULL AS BIGINT) AS team_id,
                     teamID AS team_abbr,
@@ -670,14 +704,52 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
                     'lahman' AS source,
                     CAST({lahman_col} AS DOUBLE) AS value,
                     CAST(NULL AS BIGINT) AS player_id,
-                    playerID AS lahman_id,
+                    playerID AS external_id,
                     CAST(NULL AS INTEGER) AS year,
                     CAST(NULL AS BIGINT) AS team_id,
                     CAST(NULL AS VARCHAR) AS team_abbr,
                     NULL AS display_name
                 FROM {lahman_cte}
             """)
-    union_sql = "\n            UNION ALL".join(save_parts + lahman_parts)
+    # Statcast batting record parts — only when both Statcast loaded and
+    # discipline is batting.
+    statcast_parts: list[str] = []
+    statcast_present = bool(con.execute("""
+        SELECT COUNT(*) FROM information_schema.tables
+        WHERE table_name = 'history_statcast_batting_season'
+    """).fetchone()[0])
+    if statcast_present:
+        for scope, cat, src_col, agg_sql in STATCAST_BATTING_CATEGORIES:
+            if scope == "season":
+                statcast_parts.append(f"""
+                    SELECT
+                        '{scope}' AS scope, 'batting' AS discipline, '{cat}' AS category,
+                        'statcast' AS source,
+                        CAST({src_col} AS DOUBLE) AS value,
+                        CAST(NULL AS BIGINT) AS player_id,
+                        CAST(player_id AS VARCHAR) AS external_id,
+                        CAST(year AS INTEGER) AS year,
+                        CAST(NULL AS BIGINT) AS team_id,
+                        CAST(NULL AS VARCHAR) AS team_abbr,
+                        NULL AS display_name
+                    FROM history_statcast_batting_season
+                """)
+            else:  # career
+                statcast_parts.append(f"""
+                    SELECT
+                        '{scope}' AS scope, 'batting' AS discipline, '{cat}' AS category,
+                        'statcast' AS source,
+                        CAST({agg_sql} AS DOUBLE) AS value,
+                        CAST(NULL AS BIGINT) AS player_id,
+                        CAST(player_id AS VARCHAR) AS external_id,
+                        CAST(NULL AS INTEGER) AS year,
+                        CAST(NULL AS BIGINT) AS team_id,
+                        CAST(NULL AS VARCHAR) AS team_abbr,
+                        NULL AS display_name
+                    FROM history_statcast_batting_season
+                    GROUP BY player_id
+                """)
+    union_sql = "\n            UNION ALL".join(save_parts + lahman_parts + statcast_parts)
 
     # Detect whether Lahman is available — graceful fallback if user hasn't
     # run `diamond fetch-history` yet. We only build save-side records in
@@ -737,12 +809,9 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
                 GROUP BY playerID
             ),"""
     else:
-        # No Lahman tables yet — build save-only by suppressing the lahman_*
-        # CTEs from the union (the lahman_parts list keys off `lahman_present`
-        # below).
+        # No Lahman tables yet — build save-only (statcast may still be present).
         lahman_ctes = ""
-        # Strip lahman parts from union
-        union_sql = "\n            UNION ALL".join(save_parts)
+        union_sql = "\n            UNION ALL".join(save_parts + statcast_parts)
 
     con.execute(f"""
         CREATE OR REPLACE TABLE f_record_player AS
@@ -789,11 +858,14 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
         ),
             {lahman_ctes}
         all_records AS ({union_sql}),
-        -- Resolve display_name + team_abbr per source
+        -- Resolve display_name + team_abbr per source. Source-disambiguated
+        -- name lookups: save → players_current; lahman → history_lahman_people;
+        -- statcast → history_statcast_batting_season (the "last_name, first_name"
+        -- combined col, splittable on ", ").
         named AS (
             SELECT
                 ar.scope, ar.discipline, ar.category, ar.source,
-                ar.value, ar.player_id, ar.lahman_id, ar.year, ar.team_id,
+                ar.value, ar.player_id, ar.external_id, ar.year, ar.team_id,
                 COALESCE(
                     ar.team_abbr,
                     (SELECT abbr FROM teams WHERE team_id = ar.team_id)
@@ -802,7 +874,16 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
                     ar.display_name,
                     (SELECT first_name || ' ' || last_name
                        FROM players_current WHERE player_id = ar.player_id),
-                    {("(SELECT nameFirst || ' ' || nameLast FROM history_lahman_people WHERE playerID = ar.lahman_id)" if lahman_present else "NULL")}
+                    {(
+                        "(SELECT nameFirst || ' ' || nameLast FROM history_lahman_people WHERE playerID = ar.external_id)"
+                        if lahman_present else "NULL"
+                    )},
+                    {(
+                        # Statcast names are 'last_name, first_name' combined; flip them.
+                        # Use a subquery against the table; pick MIN to dedup across years.
+                        "(SELECT MIN(SPLIT_PART(\"last_name, first_name\", ', ', 2) || ' ' || SPLIT_PART(\"last_name, first_name\", ', ', 1)) FROM history_statcast_batting_season WHERE CAST(player_id AS VARCHAR) = ar.external_id)"
+                        if statcast_present else "NULL"
+                    )}
                 ) AS display_name
             FROM all_records ar
         ),
@@ -811,9 +892,9 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
                 scope, discipline, category, source,
                 CAST(ROW_NUMBER() OVER (
                     PARTITION BY scope, discipline, category, source
-                    ORDER BY value DESC, COALESCE(lahman_id, CAST(player_id AS VARCHAR)) ASC
+                    ORDER BY value DESC, COALESCE(external_id, CAST(player_id AS VARCHAR)) ASC
                 ) AS INTEGER) AS rank_in_source,
-                value, display_name, player_id, lahman_id,
+                value, display_name, player_id, external_id,
                 year, team_id, team_abbr
             FROM named
             WHERE value IS NOT NULL AND value > 0
@@ -837,7 +918,7 @@ def _build_f_award_career_player(con: duckdb.DuckDBPyConnection) -> int:
 
     Each row is a per (source × identity × league × award) career-total
     capturing n_won and first/last year. Save rows carry OOTP `player_id`;
-    Lahman rows carry the historical `playerID` string in `lahman_id`.
+    Lahman rows carry the historical bbrefID in `external_id`.
 
     Lahman award strings are mapped to our `AwardId` enum where they
     line up. Awards Lahman has but we don't model (e.g., "TSN All-Star",
@@ -852,7 +933,7 @@ def _build_f_award_career_player(con: duckdb.DuckDBPyConnection) -> int:
     Schema:
         source         VARCHAR  'save' | 'lahman'
         player_id      BIGINT   OOTP player_id (save only)
-        lahman_id      VARCHAR  Lahman playerID (lahman only)
+        external_id    VARCHAR  Lahman bbrefID (lahman only)
         display_name   VARCHAR  UI-ready
         league_id      BIGINT
         award_id       BIGINT   AwardId enum
@@ -864,7 +945,9 @@ def _build_f_award_career_player(con: duckdb.DuckDBPyConnection) -> int:
         first_team_abbr VARCHAR
         last_team_abbr  VARCHAR
 
-    PK = (source, COALESCE(lahman_id, CAST(player_id AS VARCHAR)), league_id, award_id).
+    PK = (source, league_id, award_id, identity_key) — identity_key is
+    materialized as COALESCE(external_id, player_id::VARCHAR) post-CTAS
+    since DuckDB doesn't allow expressions in PK constraints.
     """
     lahman_present = bool(con.execute("""
         SELECT COUNT(*) FROM information_schema.tables
@@ -875,7 +958,7 @@ def _build_f_award_career_player(con: duckdb.DuckDBPyConnection) -> int:
         SELECT
             'save' AS source,
             ae.player_id,
-            CAST(NULL AS VARCHAR) AS lahman_id,
+            CAST(NULL AS VARCHAR) AS external_id,
             (SELECT first_name || ' ' || last_name
                FROM players_current WHERE player_id = ae.player_id) AS display_name,
             ae.league_id,
@@ -930,7 +1013,7 @@ def _build_f_award_career_player(con: duckdb.DuckDBPyConnection) -> int:
         SELECT
             'lahman' AS source,
             CAST(NULL AS BIGINT) AS player_id,
-            lm.playerID AS lahman_id,
+            lm.playerID AS external_id,
             (SELECT nameFirst || ' ' || nameLast
                FROM history_lahman_people WHERE playerID = lm.playerID) AS display_name,
             lm.league_id,
@@ -959,7 +1042,7 @@ def _build_f_award_career_player(con: duckdb.DuckDBPyConnection) -> int:
     """)
     con.execute("""
         UPDATE f_award_career_player
-        SET identity_key = COALESCE(lahman_id, CAST(player_id AS VARCHAR))
+        SET identity_key = COALESCE(external_id, CAST(player_id AS VARCHAR))
     """)
     con.execute(
         "ALTER TABLE f_award_career_player "

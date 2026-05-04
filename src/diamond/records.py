@@ -36,10 +36,25 @@ from diamond.config import BUILDING_THE_GREEN_MONSTER, SaveConfig
 console = Console()
 
 
-SEASON_BAT_CATEGORIES = ["HR", "RBI", "R", "H", "BB", "SB", "2B", "3B", "PA", "WAR"]
-CAREER_BAT_CATEGORIES = ["HR", "RBI", "R", "H", "BB", "SB", "PA", "WAR"]
+SEASON_BAT_CATEGORIES = [
+    "HR", "RBI", "R", "H", "BB", "SB", "2B", "3B", "PA", "WAR",
+    # Statcast batting season categories
+    "MAX_EV", "AVG_EV", "HARD_HIT_PCT", "BARREL_PCT", "SWEET_SPOT_PCT", "MAX_DIST",
+]
+CAREER_BAT_CATEGORIES = [
+    "HR", "RBI", "R", "H", "BB", "SB", "PA", "WAR",
+    # Statcast career — peak metrics only (rate-stat career rollups skipped)
+    "MAX_EV", "MAX_DIST",
+]
 SEASON_PIT_CATEGORIES = ["W", "S", "K", "IP", "SHO", "CG", "QS", "WAR"]
 CAREER_PIT_CATEGORIES = ["W", "S", "K", "IP", "SHO", "CG", "WAR"]
+
+# Categories that only have data in source='statcast' (i.e., empty in
+# 'save' or 'lahman'). The CLI uses this to give a clearer empty-state
+# hint when --era=save|lahman with a Statcast-only category.
+STATCAST_ONLY_CATEGORIES = {
+    "MAX_EV", "AVG_EV", "HARD_HIT_PCT", "BARREL_PCT", "SWEET_SPOT_PCT", "MAX_DIST",
+}
 
 
 def _connect(save: SaveConfig) -> duckdb.DuckDBPyConnection:
@@ -72,6 +87,12 @@ def _format_value(category: str, value: float) -> str:
         return f"{outs // 3}.{outs % 3}"
     if category == "WAR":
         return f"{value:.1f}"
+    if category in ("MAX_EV", "AVG_EV"):
+        return f"{value:.1f} mph"
+    if category in ("HARD_HIT_PCT", "BARREL_PCT", "SWEET_SPOT_PCT"):
+        return f"{value:.1f}%"
+    if category == "MAX_DIST":
+        return f"{int(value)} ft"
     return f"{int(value)}"
 
 
@@ -94,15 +115,19 @@ def _fetch_leaderboard(
         where_era = "AND source = 'save'"
     elif era == "lahman":
         where_era = "AND source = 'lahman'"
+    elif era == "statcast":
+        where_era = "AND source = 'statcast'"
     elif era != "all":
-        raise ValueError(f"era must be 'all' / 'save' / 'lahman', got {era!r}")
+        raise ValueError(
+            f"era must be 'all' / 'save' / 'lahman' / 'statcast', got {era!r}"
+        )
 
     rel = con.execute(
         f"""
         SELECT
             ROW_NUMBER() OVER (ORDER BY value DESC, display_name) AS rank,
             value, year, team_abbr, display_name, source,
-            player_id, lahman_id
+            player_id, external_id
         FROM f_record_player
         WHERE scope = ?
           AND discipline = ?
@@ -124,7 +149,10 @@ def _render_leaderboard(
     category: str,
     era: str,
 ) -> None:
-    era_label = {"all": "all eras", "save": "save only", "lahman": "real history"}[era]
+    era_label = {
+        "all": "all eras", "save": "save only",
+        "lahman": "real history", "statcast": "Statcast era",
+    }[era]
     title = f"MLB {scope} {discipline} — {category}  [{era_label}]"
     console.rule(f"[bold cyan]{title}")
     if not rows:
@@ -134,6 +162,14 @@ def _render_leaderboard(
         if era == "lahman" and category in ("WAR", "QS"):
             console.print(
                 "[dim](Lahman doesn't carry WAR or QS — try --era save or all.)[/dim]"
+            )
+        if era in ("save", "lahman") and category in STATCAST_ONLY_CATEGORIES:
+            console.print(
+                f"[dim]({category} is Statcast-only — try --era statcast or all.)[/dim]"
+            )
+        if era == "statcast" and category not in STATCAST_ONLY_CATEGORIES:
+            console.print(
+                f"[dim]({category} is a counting stat — try --era save / lahman / all.)[/dim]"
             )
         return
 
@@ -156,7 +192,9 @@ def _render_leaderboard(
             cells.append(r["team_abbr"] or "")
         cells.append(val)
         if era == "all":
-            color = "magenta" if r["source"] == "lahman" else "cyan"
+            color = {"save": "cyan", "lahman": "magenta", "statcast": "yellow"}.get(
+                r["source"], "white"
+            )
             cells.append(f"[{color}]{r['source']}[/{color}]")
         t.add_row(*cells)
 
@@ -182,8 +220,10 @@ def run(
         raise ValueError(f"scope must be 'season' or 'career', got {scope!r}")
     if discipline not in ("batting", "pitching"):
         raise ValueError(f"discipline must be 'batting' or 'pitching', got {discipline!r}")
-    if era not in ("all", "save", "lahman"):
-        raise ValueError(f"era must be 'all', 'save', or 'lahman', got {era!r}")
+    if era not in ("all", "save", "lahman", "statcast"):
+        raise ValueError(
+            f"era must be 'all' / 'save' / 'lahman' / 'statcast', got {era!r}"
+        )
 
     output_path = output_path or (
         Path("audit_output") / f"records_{era}_{scope}_{discipline}.md"
@@ -192,7 +232,10 @@ def run(
     try:
         cats = [category] if category is not None else _categories_for(scope, discipline)
 
-        era_label = {"all": "all eras", "save": "save only", "lahman": "real history"}[era]
+        era_label = {
+        "all": "all eras", "save": "save only",
+        "lahman": "real history", "statcast": "Statcast era",
+    }[era]
         all_md: list[str] = [
             f"# Records — MLB {scope} {discipline}  ({era_label})",
             "",
