@@ -4,16 +4,13 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-06 (in-game year 2029→2030) — **Phase 2 closed**. All 7 items complete: warehouse built, ingest pipeline live, full --all ingest verified (45 dumps, 5.1 GB), reconcile harness wired to L1, `player_movements` shipping with **trade attribution** (1,270 of 1,275 participants resolved via the new `f_trade_participant` table, 99.6%) and a **refined movement_type taxonomy** (promotion / demotion / intra_org_lateral / waiver_or_other / trade — replacing the catch-all `team_change`). UI/product design captured in [UI_DESIGN.md](UI_DESIGN.md) + decisions D13/D14/D15. Audit modules de-hardcoded the season year so reconcile/coverage/advanced auto-track the in-game calendar. **Phase 3 (UI implementation) is the next phase.**
+**Last updated**: 2026-05-06 (in-game year 2029→2030) — **Phase 2 + analytical layer + history backfill all closed**. Phase 2 (warehouse + ingest) shipped end-of-day 05-05; the analytical layer (draft analyzer, records, awards, HOF, trade attribution, refined movement_type) shipped 05-06; the real-MLB-history backfill (Lahman + BREF + Statcast + MLB Stats API + Chadwick Register crosswalk) shipped same-day. f_record_player UNIONs five sources with a bbref_id-based career dedup; real Cooperstown reads through the 2026 induction class; Bonds 73 leads single-season HR records, Bonds 762 leads career, Pujols 686 (Lahman 656 + BREF 30 merged) sits at #5 career. **Phase 3 (UI implementation) is the next phase** — start point per UI_DESIGN.md is D13 reference scope expansion (~30 lines) followed by D15 stat dictionary Python module.
 
 ---
 
 ## One-line summary
 
-Diamond is entering **Phase 2 — schema & ingest**. Audit phase closed: ~270 of
-~360 IE columns reconcile cleanly, all C-tier and G-tier eliminated, remaining
-gaps are structural (D5, xstats, multi-level players). Next: design the 5-layer
-warehouse and build the ingest pipeline.
+Phases 1-2 closed; analytical CLI surface complete (`diamond draft / records / awards / hof / fetch-history`); real MLB history through 2025 backfilled and integrated into records + awards + HOF leaderboards. Phase 3 (UI) is the active phase, not yet started.
 
 ## What works today
 
@@ -123,42 +120,62 @@ Major decodes shipped during audit (full formulas in [DATA_NOTES.md](DATA_NOTES.
 
 Latest reports (regenerable, gitignored): `audit_output/{decoder,codes_decoder,reconciliation,coverage,advanced_stats}_report.md`.
 
-## What's next — Phase 2
+## Phase 2 + analytical layer — closed 2026-05-06
 
-Per [BACKLOG.md](BACKLOG.md), in priority order:
+Phase 2 (schema + ingest) closed 2026-05-05; the analytical layer + real-MLB
+history backfill closed same-day 2026-05-06. Major shipped artifacts:
 
-1. ~~**Promote inline `league_constants` CTE to a module**~~ — done 2026-05-05.
-2. ~~**Design the 5-layer warehouse schema**~~ — done 2026-05-05.
-   See [SCHEMA.md](SCHEMA.md). All 10 open questions resolved with rationale.
-3. ~~**Write CREATE TABLE DDL** for L0 + L1 + L2~~ — done 2026-05-05.
-   `src/diamond/schema/` package holds all DDL across 5 phases.
-   `scripts/smoke_warehouse.py` validates the full pipeline.
-4. ~~**Build `diamond ingest <dump_date>` and `diamond ingest --all` CLI**~~ —
-   done 2026-05-05. Wires the schema builders to a per-save file DB at
-   `<save>/diamond/diamond.duckdb` per D2. Skip-if-success logic via the
-   `_diamond_ingests` admin table; flags for `--all`, `--rebuild-only`,
-   `--force`, `--no-rebuild`.
-5. ~~**Smoke test: ingest all 45 dumps end-to-end**~~ — done 2026-05-05.
-   44 ingested + 1 skipped, ~3.9 GB warehouse, fully populated.
-6. ~~**Wire `reconcile.py` as a post-ingest regression check** (Decision D8)~~ —
-   done 2026-05-05. `--source warehouse` flag added; output verified
-   byte-identical to CSV-source mode (D8 contract satisfied).
-7. ~~**Build derived `player_movements` table**~~ — done 2026-05-05.
-   `src/diamond/schema/l3.py` with snapshot-diff + draft sources.
-   95,643 movements built from 45 dumps. Trade attribution shipped
-   2026-05-06: `f_trade_participant` (1,275 rows, 1 per trade × player)
-   plus a `trade_id` column on `player_movements`. Match logic uses
-   org-rolled-up from/to teams (parent_team_id rollup) + ±60-day window.
-   Coverage 99.6% of trade participants; 100% of trades have ≥1 matched
-   player. The `<entity:type#id>` summary parser stays carry-forward
-   (lower priority now that the structured columns covered the use case).
+**L3 derived tables** (6):
+- `f_trade_participant` — 1,275 rows; 1 per (trade × player)
+- `player_movements` — 95,643 rows; refined `movement_type` (promotion / demotion /
+  intra_org_lateral / waiver_or_other / trade) + `trade_id` attribution
+- `f_draft_class` — 2,320 rows; outcome buckets (mlb_star/mlb_regular/mlb_callup/
+  in_draft_org/traded_away/released/retired)
+- `f_record_player` — 4,100 rows; UNIONs save + lahman + bref + statcast + merged
+  with `--era` CLI filter; bbref_id career dedup
+- `f_award_career_player` — 10,111 rows; UNIONs save + lahman + mlbapi
+- `f_award_franchise` — 1,856 rows
 
-**Phase 2 closed.** Phase 3 (UI implementation) is the next phase, per
-[UI_DESIGN.md](UI_DESIGN.md). Eleven items in build order: scope
-expansion → glossary → player page → demotion/promotion → leaderboards →
-universes+charts → AI overlay → cockpit → reviews → wizard → sync.
+**Real MLB history backfill** (one-time, capped at save_start_year - 1 = 2025):
+- Lahman 1871-2019 (8 tables via cdalzell mirror)
+- BREF 2020-2025 (2 tables via pybaseball — fills the Lahman cap)
+- Statcast 2015-2025 (2 tables via Savant — EV / barrel / hard-hit)
+- MLB Stats API 2018+ awards + 2019+ HOF (2 tables — fills Lahman award/HOF cap)
+- Chadwick Register (1 table — bbref ↔ MLBAM crosswalk for cross-source linkage)
 
-Open audit carry-forward items (non-blocking, can pick up opportunistically):
-multi-level OPS+/ERA+ park weighting, hit_loc-based spray, leader category
-codes 44 + 49, trade_history `<entity:type#id>` summary parsing,
-personality archetype "Type." All in BACKLOG.md.
+**CLI surface**:
+- Audit: `decode`, `decode-codes`, `reconcile`, `coverage`, `advanced`
+- Ingest: `ingest [<dump>] [--all] [--rebuild-only] [--force] [--no-rebuild]`
+- Analytics: `draft <year> [--team]`, `records [--era] [--scope] [--category]`,
+  `awards [--era] [--player] [--lahman-id] [--team] [--award]`,
+  `hof [--era] [--candidates]`
+- Setup: `fetch-history` (one-time real-history backfill, idempotent)
+
+## What's next — Phase 3 (UI implementation)
+
+Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
+
+1. **D13 reference scope expansion** (~30 min) — small extension of
+   `_scoped_players` to opt-in include the ≥1 MLB PA cohort for
+   "Mike Trout vs every HoF batter" comparisons. Pure Python, infra prep.
+2. **D15 stat dictionary** Python module (~1-2 hrs) — `diamond/dictionary/`
+   with formulas + KaTeX strings + display labels. Every UI screen will
+   depend on this; ships before any frontend.
+3. Then the rest per UI_DESIGN.md: player page → demotion/promotion → custom
+   leaderboards → universes+chart-builder → AI overlay → cockpit → reviews →
+   setup wizard → sync triggers.
+
+**Open audit carry-forwards** (non-blocking, picked up opportunistically):
+multi-level OPS+/ERA+ park weighting, hit_loc-based spray, LeaderCategory codes
+44 + 49, trade_history `<entity:type#id>` summary parsing, personality
+archetype "Type", All-Star teams 2020-2025 (Lahman caps at 2019, MLB API
+doesn't expose annual rosters cleanly). All in BACKLOG.md.
+
+**Smaller follow-ons in the analytical layer** (optional, wrap-up tasks):
+- Pitching Statcast records (`history_statcast_pitching_season` loaded but
+  not yet UNION'd into f_record_player — would surface "max EV allowed" /
+  hardest-hit-pitcher leaderboards)
+- Save-side EV records (OOTP per-PA EV joined into f_record_player as a
+  fifth source; needs calibration check vs real Statcast)
+- Awards UNION dedup polish (occasional duplicate rows for same player
+  across save + lahman+mlbapi when bbref_id linkage is partial)

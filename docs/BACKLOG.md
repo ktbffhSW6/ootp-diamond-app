@@ -185,18 +185,28 @@ and count-state splits).
   f_record_player as source='bref'. SHO + CG categories stay
   save+lahman-only because BREF season frames don't expose them.
   Awards UNION not added — BREF doesn't carry award data.
-  **Open**: BREF rows show as separate from Lahman rows for the
-  same player (Pujols Lahman=656 HR + Pujols BREF=30 HR) because
-  we don't have a bbrefID↔mlbID crosswalk yet. Player linkage is
-  the next item below.
-- [ ] **Add Statcast record categories** — the historical
-  `history_statcast_*` tables are loaded but `f_record_player`
-  doesn't yet UNION them. Add categories: max EV, avg EV, hard-hit%,
-  barrel%, sweet-spot%, max distance, max sprint speed, etc. For
-  cross-source comparability, OOTP-save EV (per-PA `players_at_bat_batting_stats`)
-  is calibrated similarly enough to real Statcast that we can join
-  them in records, with a clear `source` distinction. Already-built
-  `f_record_player` schema accommodates this with no changes.
+  Pujols Lahman 656 + BREF 30 now correctly merge to 686 HR via
+  the cross-source player linkage shipped same-day (see below).
+- [x] **Add Statcast record categories** — done 2026-05-06.
+  `f_record_player` UNIONs `history_statcast_batting_season` with
+  source='statcast' for season + career: MAX_EV, AVG_EV,
+  HARD_HIT_PCT, BARREL_PCT, SWEET_SPOT_PCT, MAX_DIST. Career rows
+  use MAX-aggregable stats only (rate-stat career rollups need
+  PA-weighted aggregation; deferred). Cruz 122.9 mph (2025) leads
+  all-time max EV; Judge 27.5% barrel% (2023) leads season barrel%.
+  Pitching Statcast (`history_statcast_pitching_season`) loaded but
+  not yet UNION'd — backlog item below.
+- [ ] **Pitching Statcast records** — `history_statcast_pitching_season`
+  loaded (6,060 pitcher-year rows, 2015-2025) but not yet joined
+  into `f_record_player`. Would surface "max EV allowed" /
+  hardest-hit-pitcher / lowest-barrel-allowed leaderboards.
+  Same UNION pattern as the batting Statcast categories.
+- [ ] **Save-side EV records** — OOTP per-PA
+  `players_at_bat_batting_stats` exposes `ev` and `la`. Could
+  contribute save-source MAX_EV / BARREL_PCT records alongside
+  Statcast era. Calibration check needed first vs real Statcast
+  to decide whether to merge into one leaderboard or keep
+  source-segregated.
 - [x] **MLB Stats API gap-fill (awards + HOF 2018-2025)** — done
   2026-05-06. Lahman caps awards at 2017 + HOF at 2018; the MLB Stats
   API (`statsapi.mlb.com/api/v1/awards/<ID>/recipients`) fills the
