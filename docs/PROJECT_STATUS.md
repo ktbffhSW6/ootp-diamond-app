@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-07 (in-game year 2029→2030) — **Phase 3 UI infrastructure shipping fast.** All Phase 2 + analytical layer closed earlier today; D13 (two-tier player scope) + D15 (stat dictionary thin v1) both shipped same-day. **D13**: `SaveConfig.reference_scope_enabled` + CLI flags + `_diamond_settings` persistence; expands `_scoped_players` from 15,992 → 35,261 on the live warehouse via "≥1 MLB appearance" (PA OR IP) cohort. **D15**: `src/diamond/dictionary/` module with `Stat` dataclass + 39 entries (slash + counting + advanced + value + statcast + fielding); `diamond glossary` CLI renders terminal + markdown views; smoke Phase G validates required-fields / categories / related-id resolution / id uniqueness. Long-tail dictionary entries land as UI screens reach for them. **Next per UI_DESIGN.md build order: tech stack pick** (FastAPI + Next.js leaning) → player page → demotion/promotion → leaderboards → universes/charts → AI overlay → cockpit → reviews → setup wizard → sync triggers.
+**Last updated**: 2026-05-07 (in-game year 2029→2030) — **Phase 3 UI infrastructure complete; tech stack locked.** All Phase 2 + analytical layer closed earlier today; D13 (two-tier player scope) + D15 (stat dictionary thin v1) + D16 (tech stack pick) all shipped same-day. **D13**: `SaveConfig.reference_scope_enabled` + CLI flags + `_diamond_settings` persistence; expands `_scoped_players` from 15,992 → 35,261 via "≥1 MLB appearance" (PA OR IP) cohort. **D15**: `src/diamond/dictionary/` module with `Stat` dataclass + 39 entries; `diamond glossary` CLI; smoke Phase G validates dictionary integrity. **D16**: **FastAPI + Next.js (App Router)** with Pydantic-derived TS types. Tailwind + shadcn/ui + Vega-Embed + Plotly WebGL + KaTeX + TanStack Table. **Next: scaffold the API + web app** (`src/diamond/api/` + `web/`) → first page is the player page (Bref-shaped layout, Savant-styled visuals, AI assistant pinned). Per UI_DESIGN.md build order: player page → demotion/promotion → leaderboards → universes/charts → AI overlay → cockpit → reviews → setup wizard → sync triggers.
 
 ---
 
@@ -167,12 +167,19 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
 1. ✅ **D13 reference scope expansion** — done 2026-05-07.
 2. ✅ **D15 stat dictionary** thin v1 — done 2026-05-07. 39 entries +
    CLI + smoke. Long-tail entries land as UI screens reach for them.
-3. **Tech stack pick** — UI_DESIGN.md flags this as the load-bearing
-   open question. Lean: FastAPI + Next.js. Worth a sanity check before
-   any frontend code lands; record as a new Decision when settled.
-4. Then per UI_DESIGN.md: player page → demotion/promotion → custom
-   leaderboards → universes+chart-builder → AI overlay → cockpit →
-   reviews → setup wizard → sync triggers.
+3. ✅ **D16 tech stack pick** — done 2026-05-07. FastAPI + Next.js
+   (App Router) with Pydantic-derived TS types. Tailwind + shadcn/ui
+   + Vega-Embed + Plotly WebGL + KaTeX + TanStack Table.
+4. **Scaffold `src/diamond/api/` + `web/`** — directory layout,
+   Pydantic→TS type-gen pipeline, `make dev` task runner running
+   `uvicorn` on `:8000` and `pnpm dev` on `:3000`. Roughly 1-2 days
+   per D16's setup-cost note.
+5. **Player page** — first user-facing feature; Bref-shaped layout +
+   Savant-styled percentile bars + AI assistant pinned in right rail.
+   Consumes `STATS[id]` from D15 for every column header / tooltip.
+6. Then per UI_DESIGN.md: demotion/promotion → custom leaderboards →
+   universes + chart-builder → AI overlay → cockpit → reviews →
+   setup wizard → sync triggers.
 
 **Open audit carry-forwards** (non-blocking, picked up opportunistically):
 multi-level OPS+/ERA+ park weighting, hit_loc-based spray, LeaderCategory codes

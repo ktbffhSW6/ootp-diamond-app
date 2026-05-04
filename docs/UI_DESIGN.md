@@ -353,20 +353,30 @@ Existing material consolidates from:
 
 ---
 
-## Tech stack candidates
+## Tech stack (locked 2026-05-07 per [D16](DECISIONS.md#d16))
 
-Not yet picked — call when UI work starts.
+**FastAPI + Next.js (App Router), TypeScript types auto-generated from
+Pydantic models.**
 
-| Stack | Pros | Cons |
-|---|---|---|
-| **FastAPI + Next.js** | Best polish; React ecosystem (Vega-Lite, KaTeX, Plotly all first-class); future web-share path | Two codebases (Python + TS); dev setup heavier |
-| **Streamlit** | Single Python codebase; fast iteration; built-in charts | Less polished UI; harder to do bespoke layouts; weaker for graph-builder UI |
-| **Tauri + Vue/Svelte** | Native desktop feel; small binary | Learning curve; smaller ecosystem |
-| **Dash (Plotly)** | Python-only; good for analytics dashboards | Limited beyond dashboards; harder for custom UX |
+- **Backend**: FastAPI (Python). Reuses every existing `src/diamond/`
+  module (records / awards / hof / streaks / glossary / advanced /
+  schema) as the data layer. Talks directly to the per-save DuckDB
+  warehouse.
+- **Frontend**: Next.js (App Router) on TypeScript + React.
+- **Bridge**: Pydantic models on the backend are the single source of
+  truth for API shapes; TS interfaces auto-generate from them so the
+  two layers can never drift on field names or types.
 
-Lean: **FastAPI + Next.js** for the app, with shared TS types generated
-from Python Pydantic models. Most polish, best fit for Bloomberg/Factset
-ambition. Slowest to start, but the right substrate.
+**Component primitives** (lean; finalize during scaffolding):
+- Tailwind + shadcn/ui — layout / atoms / forms
+- Vega-Embed (≤50K points) + Plotly WebGL (>50K) — charts
+- KaTeX — formula rendering (matches D15 dictionary `formula_tex` field)
+- TanStack Table — sortable/filterable leaderboards
+
+Alternatives ruled out: Streamlit (layout ceiling on bespoke pages),
+Tauri + Vue/Svelte (Rust+JS+Python three-layer build with no
+analytical benefit), Dash (dashboard-shaped — fights the 8-area design).
+Full reasoning in D16.
 
 ---
 
@@ -396,22 +406,22 @@ useful even before cockpit anomaly flags need it.
 
 Not yet decided; flagged here so they don't get lost.
 
-- **Tech stack final pick** — FastAPI + Next.js leaning, but worth a sanity
-  check before committing
 - **Anomaly-flag detection thresholds** — what counts as a "sharp regression"
   worth surfacing? Z-score over rolling window? % change vs season avg?
-  Needs calibration once we have data flowing
+  Needs calibration once we have data flowing.
 - **Universe naming convention** — "Watchlist" vs "Cohort" vs both?
   Currently undecided; lean is one term ("Universe") that covers casual
-  and analytical use
+  and analytical use.
 - **AI prompt library** — per-feature prompts (monthly review, player
   dossier, chart annotation) need to be authored, versioned, A/B-tested.
   Treat as their own artifact.
-- **Settings file format** — TOML vs JSON vs YAML? Lean TOML (Python-native
-  parsing, comment-friendly, hand-editable)
 - **Onboarding analytics** — opt-in? If sharing with community, useful
-  to know which features get used; respect privacy as a default
-- **Theming** — light/dark/system, or skip until UI matures
+  to know which features get used; respect privacy as a default.
+- **Theming** — light/dark/system, or skip until UI matures.
+
+Closed:
+- ~~Tech stack pick~~ — locked 2026-05-07: FastAPI + Next.js per [D16](DECISIONS.md#d16).
+- ~~Settings file format~~ — TOML, locked alongside D16.
 
 ---
 
@@ -421,8 +431,9 @@ Architectural decisions extracted from this design:
 - [D13 — Two-tier player scope](DECISIONS.md#d13-two-tier-player-scope-org--reference)
 - [D14 — AI overlay architecture](DECISIONS.md#d14-ai-overlay-architecture-keyring-pluggable-providers-four-tier-use-levels)
 - [D15 — Stat dictionary as single source of truth](DECISIONS.md#d15-stat-dictionary-as-single-source-of-truth)
+- [D16 — Tech stack: FastAPI + Next.js](DECISIONS.md#d16-tech-stack-fastapi--nextjs-app-router-pydantic-derived-ts-types)
 
 Decisions still to be recorded as they crystallize:
-- Tech stack pick (when UI work begins)
 - Specific anomaly-detection algorithms
-- Settings file location and format
+- Universe export schema
+- Theming approach

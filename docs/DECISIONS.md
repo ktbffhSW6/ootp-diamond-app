@@ -231,3 +231,52 @@ Each entry carries: `id`, `display_name`, `short_label`, `category`, `formula_te
 - fielding (2): RF/9 / Framing+
 
 **Long-tail entries** (~110 more) land here as UI screens reach for them. Strict rule: any new UI label, chart axis, or AI prompt MUST come from the dictionary — no hand-coded labels in feature code. Dictionary fills in over time but never lags behind what's exposed.
+
+## D16 — Tech stack: FastAPI + Next.js (App Router), Pydantic-derived TS types
+
+**Date**: 2026-05-07
+**Decision**: Diamond's UI ships as a two-process local-first app:
+- **Backend**: FastAPI (Python) serving a typed HTTP API. Talks directly to the per-save DuckDB warehouse (D2), reuses every existing `src/diamond/` module (records / awards / hof / streaks / glossary / advanced / etc.) as the data layer.
+- **Frontend**: Next.js (App Router) on TypeScript + React. Renders every UI surface in UI_DESIGN.md.
+- **Bridge**: Pydantic models on the backend are the single source of truth for API shapes; TypeScript interfaces are auto-generated from them so the two layers can never drift on field names or types.
+
+**Why** (full breakdown lives in the 2026-05-07 chat thread):
+- The 8-area design in UI_DESIGN.md (Bref-shaped player page with sticky tabs + dual rail, Fangraphs-style sortable filter strips with URL state, universes with set-ops, chart builder with template gallery, AI overlay with inline cost previews, KaTeX-rendered glossary) needs full HTML/CSS layout control + the React component model. Streamlit and Dash hit hard layout/composition ceilings on at least 3 of the 8 areas; Tauri+Vue/Svelte gets to the same ceiling as Next.js but adds a Rust+JS+Python three-layer build for desktop integration Diamond doesn't need.
+- Every chart/math primitive Diamond requires (Vega-Lite, Plotly WebGL fallback at >50K points, KaTeX) is React-native — no bridging.
+- Pydantic→TS types eliminates the most common "two codebases drift" pain point. The dictionary's `Stat` dataclass becomes a `Stat` TS interface for free.
+- Future paths stay open: web-share via Vercel deploy, mobile read view from same codebase, hypothetical hosted multi-tenant version is just adding auth. Streamlit/Dash close those doors; Tauri closes the web/mobile door.
+- Setup cost is real (~1-2 days yak-shaving before the first page renders) but it's a one-time tax that pays back across every subsequent UI page. By week 2 Streamlit's "fast to start" advantage evaporates anyway, since custom React components are required to escape its layout primitives.
+
+**Alternatives considered**:
+- *Streamlit* — rejected. Single-Python-codebase fast-iteration wins evaporate on the bespoke pages (player, chart builder, AI overlay). Re-runs-the-script-on-every-interaction model fights the dense interactive layouts.
+- *Tauri + Vue/Svelte* — rejected. Same browser-tech ceiling as Next.js but adds Rust IPC + sidecar Python without an analytical benefit. Would also lose web-share path.
+- *Dash (Plotly)* — rejected. Dashboard-shaped framework. Cockpit would ship fast, every other page would crawl.
+- *Single-process Python served via Jinja templates* — rejected silently as unfit for the design ambition; not formally on the candidate list.
+
+**How to apply** (will materialize over Phase 3 build order; lock the structure when scaffolding lands):
+- **Repo layout** (proposed; finalize during scaffolding):
+  ```
+  ootp-diamond-app/
+    src/diamond/             # existing Python package (warehouse + analytics)
+      api/                   # NEW: FastAPI app, route modules, Pydantic schemas
+    web/                     # NEW: Next.js (App Router) frontend
+      app/                   # routes
+      components/            # shared React components
+      lib/types/             # auto-generated TS from Pydantic
+    pyproject.toml           # Python deps (FastAPI, uvicorn, pydantic-to-typescript or similar)
+    web/package.json         # Node deps (Next, React, Tailwind, shadcn/ui, KaTeX, Vega-Embed, Plotly)
+  ```
+- **Type generation**: Pydantic models live in `src/diamond/api/schemas/`; a build step (likely `pydantic-to-typescript` or `datamodel-code-generator`) emits `web/lib/types/api.ts`. Run on save during dev; CI gate on production builds. Final tool choice TBD when scaffolding.
+- **Dev workflow** (target): `uvicorn diamond.api:app --reload` on `:8000` + `pnpm dev` on `:3000` with Next dev proxy to API. Single `make dev` (or task runner) starts both.
+- **Component primitives** (lean, finalize during scaffolding):
+  - Tailwind + shadcn/ui for layout/atoms/forms
+  - Vega-Embed for chart rendering (≤50K points), Plotly WebGL for the size-blower scenarios (>50K, e.g., universes containing every batter ever)
+  - KaTeX for math rendering (~50KB; matches D15 formula format)
+  - TanStack Table for sortable/filterable leaderboards
+- **Data flow pattern**: every API endpoint returns Pydantic → JSON; the frontend imports the generated TS interface; no hand-typing in the UI. The dictionary (D15) is the source of stat metadata; the warehouse is the source of values; the API stitches them.
+- **Auth + multi-tenancy**: explicitly out of scope per UI_DESIGN.md "audience" section. The API binds to localhost only by default. Web-share path (Phase 4+) would add auth as a separate decision.
+- **Tech-stack open questions absorbed into D16**:
+  - *Settings file format*: TOML (Python-native, comment-friendly) — locks D14's `~/.diamond/settings.toml`.
+  - *Theming*: defer until UI matures (not in MVP scope).
+  - *Anomaly thresholds, AI prompt library, onboarding analytics*: stay open in UI_DESIGN.md.
+- **Universe export format** (per UI_DESIGN.md's community-share aspiration): JSON, schema versioned. Lock when chart builder lands.
