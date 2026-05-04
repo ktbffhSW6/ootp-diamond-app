@@ -38,21 +38,30 @@ console = Console()
 
 SEASON_BAT_CATEGORIES = [
     "HR", "RBI", "R", "H", "BB", "SB", "2B", "3B", "PA", "WAR",
-    # Statcast batting season categories
+    # Statcast batting season categories — both real Statcast (2015-2025)
+    # and save-side EV (computed off f_pa_event) feed these. The save-side
+    # values use a different calibration (~5 mph lower league-average) so
+    # they're flagged via source='save'+yellow vs source='statcast'+yellow.
     "MAX_EV", "AVG_EV", "HARD_HIT_PCT", "BARREL_PCT", "SWEET_SPOT_PCT", "MAX_DIST",
 ]
 CAREER_BAT_CATEGORIES = [
     "HR", "RBI", "R", "H", "BB", "SB", "PA", "WAR",
-    # Statcast career — peak metrics only (rate-stat career rollups skipped)
+    # Statcast / save-side career — peak metrics only (rate-stat career
+    # rollups skipped since they need PA-weighted aggregation).
     "MAX_EV", "MAX_DIST",
 ]
-SEASON_PIT_CATEGORIES = ["W", "S", "K", "IP", "SHO", "CG", "QS", "WAR"]
-CAREER_PIT_CATEGORIES = ["W", "S", "K", "IP", "SHO", "CG", "WAR"]
+SEASON_PIT_CATEGORIES = [
+    "W", "S", "K", "IP", "SHO", "CG", "QS", "WAR",
+    # Statcast pitching — contact-allowed leaderboards (asc-direction for
+    # rate stats, where lower=better).
+    "MAX_EV", "AVG_EV", "HARD_HIT_PCT", "BARREL_PCT", "SWEET_SPOT_PCT", "MAX_DIST",
+]
+CAREER_PIT_CATEGORIES = ["W", "S", "K", "IP", "SHO", "CG", "WAR", "MAX_EV", "MAX_DIST"]
 
-# Categories that only have data in source='statcast' (i.e., empty in
-# 'save' or 'lahman'). The CLI uses this to give a clearer empty-state
-# hint when --era=save|lahman with a Statcast-only category.
-STATCAST_ONLY_CATEGORIES = {
+# Categories that only have data in Statcast or save-side EV — i.e.,
+# empty in 'lahman' / 'bref'. Used to hint when filter and category
+# don't intersect.
+EV_ONLY_CATEGORIES = {
     "MAX_EV", "AVG_EV", "HARD_HIT_PCT", "BARREL_PCT", "SWEET_SPOT_PCT", "MAX_DIST",
 }
 
@@ -106,9 +115,12 @@ def _fetch_leaderboard(
 ) -> list[dict]:
     """Pull the leaderboard rows for one category, era-filtered.
 
-    For `era=all` we union both sources and re-rank by value DESC.
-    For `era=save` / `era=lahman` we filter to that source and use
-    the stored within-source rank.
+    Re-ranking is direction-aware: for `direction='asc'` rows (pitching
+    rate-stats-allowed) the leaderboard sorts ASC (lowest = rank 1);
+    for `direction='desc'` it sorts DESC. Within a single (scope ×
+    discipline × category) tuple all rows share the same direction
+    (set when the table is built), so the CASE inside the ORDER BY is
+    just a per-row noop.
     """
     where_era = ""
     if era in ("save", "lahman", "bref", "statcast", "merged"):
@@ -122,15 +134,20 @@ def _fetch_leaderboard(
     rel = con.execute(
         f"""
         SELECT
-            ROW_NUMBER() OVER (ORDER BY value DESC, display_name) AS rank,
-            value, year, team_abbr, display_name, source,
+            ROW_NUMBER() OVER (
+                ORDER BY
+                    CASE WHEN direction = 'asc' THEN value ELSE -value END ASC,
+                    display_name
+            ) AS rank,
+            value, direction, year, team_abbr, display_name, source,
             player_id, external_id
         FROM f_record_player
         WHERE scope = ?
           AND discipline = ?
           AND category = ?
           {where_era}
-        ORDER BY value DESC
+        ORDER BY
+            CASE WHEN direction = 'asc' THEN value ELSE -value END ASC
         LIMIT ?
         """,
         [scope, discipline, category, limit],
@@ -151,7 +168,11 @@ def _render_leaderboard(
         "lahman": "Lahman (1871-2019)", "bref": "BREF (2020-2025)",
         "statcast": "Statcast era", "merged": "merged real history",
     }[era]
-    title = f"MLB {scope} {discipline} — {category}  [{era_label}]"
+    # Direction-aware title prefix. ASC means lower=better (pitching
+    # contact-suppression rate stats); show that explicitly.
+    direction = rows[0]["direction"] if rows else "desc"
+    leader_word = "Fewest" if direction == "asc" else "Most"
+    title = f"MLB {scope} {discipline} — {leader_word} {category}  [{era_label}]"
     console.rule(f"[bold cyan]{title}")
     if not rows:
         console.print(
@@ -161,11 +182,12 @@ def _render_leaderboard(
             console.print(
                 "[dim](Lahman doesn't carry WAR or QS — try --era save or all.)[/dim]"
             )
-        if era in ("save", "lahman") and category in STATCAST_ONLY_CATEGORIES:
+        if era in ("lahman", "bref", "merged") and category in EV_ONLY_CATEGORIES:
             console.print(
-                f"[dim]({category} is Statcast-only — try --era statcast or all.)[/dim]"
+                f"[dim]({category} is from Statcast / save EV only — "
+                "try --era statcast / save / all.)[/dim]"
             )
-        if era == "statcast" and category not in STATCAST_ONLY_CATEGORIES:
+        if era == "statcast" and category not in EV_ONLY_CATEGORIES:
             console.print(
                 f"[dim]({category} is a counting stat — try --era save / lahman / all.)[/dim]"
             )
@@ -247,7 +269,9 @@ def run(
         for cat in cats:
             rows = _fetch_leaderboard(con, scope, discipline, cat, era, limit)
             _render_leaderboard(rows, scope, discipline, cat, era)
-            all_md.append(f"## {cat}")
+            direction = rows[0]["direction"] if rows else "desc"
+            leader_word = "Fewest" if direction == "asc" else "Most"
+            all_md.append(f"## {leader_word} {cat}")
             all_md.append("")
             if not rows:
                 all_md.append("_No records._")

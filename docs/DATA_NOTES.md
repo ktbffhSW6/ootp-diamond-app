@@ -906,3 +906,91 @@ The 2026 class is the most useful as a hit-rate calibration: 3 years
 out, ~10% reached MLB at all and ~1% are MLB regulars (≥1.0 career
 WAR). The 2029 class shows the expected pattern — barely anyone has
 moved out of their org yet.
+
+
+## OOTP per-PA exit velocity vs Statcast — calibration gap
+
+**Findings** (probe 2026-05-07, year 2029 MLB, league_id=203, level_id=1):
+
+| metric | save (OOTP) | real (Statcast 2015–2025) |
+|---|---|---|
+| league avg EV | 82.9 mph | 88–89 mph |
+| std EV | 17.3 mph | ~13 mph |
+| top max EV | 126.4 mph (Hector Santiago, 379 BBE) | 122.9 mph (Cruz / Henderson) |
+| top avg EV | 88.5 mph (Henderson) | 95+ mph (Judge / Stanton) |
+| top hard-hit% | 34.2% (Judge, save) | 65%+ (Judge, real) |
+
+OOTP's `f_pa_event.exit_velo` runs **~5 mph lower at the league mean**
+than real Statcast and has a **wider tail** (some non-everyday batters
+top 125+, vs real-life ceiling of ~123). Top-end stars sit ~5–7 mph
+*below* their real-life counterparts on avg EV, so HARD_HIT_PCT
+(absolute 95-mph cutoff) scales proportionally lower (~half the
+real-life leader rate).
+
+**Implication for `f_record_player`:** save-side EV records and real
+Statcast EV records are **NOT comparable head-to-head** within the
+same leaderboard. They UNION into the same (scope, discipline, category)
+tuple under different `source` values (`save` vs `statcast`), and the
+renderer uses source-color to disambiguate. `--era statcast` filters
+to real-only, `--era save` filters to save-only, `--era all` mixes
+them with the source column visible.
+
+**Why we don't recalibrate**: shifting OOTP EV by +5 mph would preserve
+relative ranking but distort the absolute scale, and there's no
+internally-consistent way to map OOTP's wider distribution to the
+narrower real-life one without losing information. Better to surface
+both as-is and let the user know they're different scales.
+
+
+## f_record_player.direction — ASC vs DESC ranking
+
+Added 2026-05-07 alongside pitching Statcast records. Each row in
+`f_record_player` carries a `direction` value in {`'asc'`, `'desc'`}
+that controls whether `rank_in_source = 1` means *highest* or *lowest*
+value:
+
+- `direction = 'desc'` (default — counting stats, peak EV, batting
+  Statcast rate stats) — rank 1 = highest value. The CLI title prefix
+  reads "Most HR", "Most MAX_EV", etc.
+- `direction = 'asc'` — pitching contact-allowed rate stats: AVG_EV,
+  HARD_HIT_PCT, BARREL_PCT, SWEET_SPOT_PCT (single-season only). Rank
+  1 = lowest value, the achievement (best contact suppressor). Title
+  prefix reads "Fewest BARREL_PCT", etc.
+
+Within a single (scope × discipline × category × source) tuple all
+rows agree on direction (it's a tuple-level attribute, enforced via
+the smoke test). The `ranked` CTE's `ORDER BY` uses
+`CASE WHEN direction = 'asc' THEN value ELSE -value END ASC` so
+both directions cohabit one ranking expression.
+
+Pitching MAX_EV / MAX_DIST stay `desc` because they describe the
+single hardest/longest ball a pitcher gave up — a feat in the
+curiosity sense, not a positive achievement.
+
+
+## f_award_career_player merged source — Lahman + mlbapi dedup
+
+Added 2026-05-07. Replaced the previous {save, lahman, mlbapi} 3-source
+design with {save, merged} via bbref_id collapse.
+
+- `source = 'save'` — career awards from `f_award_event` (in-save dumps
+  2026+, plus OOTP's historical-seed import of pre-save real awards
+  for active players: Trout 2014/2016/2019 MVPs land here).
+- `source = 'merged'` — Lahman 1871-2017 awards + Lahman All-Stars +
+  MLB Stats API 2018+ awards, collapsed by bbref_id × award × league,
+  filtered to **bbref_ids NOT active in the user's save**. So
+  retired/historical players (Bonds, Aaron, Ruth, Pujols) live in
+  merged; active OOTP imports (Trout, Judge, Ohtani) live in save.
+  Verified spot-check: Bonds 7 MVPs (1990–2004) sits in merged
+  alongside Ohtani 7 MVPs (2021–2028) in save with no double-count.
+
+The previous design surfaced the same player twice (`source=lahman`
+and `source=save` for Trout's 2014/2016 MVPs, since Lahman didn't
+filter active save bbref_ids). Awards-CLI `--era` is now {`all`,
+`save`, `merged`}; the `--lahman-id` flag was renamed `--bbref-id`
+to reflect that all merged-source identities are bbref.
+
+PK = `(source, league_id, award_id, identity_key)` where
+`identity_key = COALESCE(external_id, player_id::VARCHAR)`. DuckDB
+PKs only accept column names so identity_key is materialized as a
+post-CTAS column.

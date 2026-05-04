@@ -196,17 +196,44 @@ and count-state splits).
   all-time max EV; Judge 27.5% barrel% (2023) leads season barrel%.
   Pitching Statcast (`history_statcast_pitching_season`) loaded but
   not yet UNION'd — backlog item below.
-- [ ] **Pitching Statcast records** — `history_statcast_pitching_season`
-  loaded (6,060 pitcher-year rows, 2015-2025) but not yet joined
-  into `f_record_player`. Would surface "max EV allowed" /
-  hardest-hit-pitcher / lowest-barrel-allowed leaderboards.
-  Same UNION pattern as the batting Statcast categories.
-- [ ] **Save-side EV records** — OOTP per-PA
-  `players_at_bat_batting_stats` exposes `ev` and `la`. Could
-  contribute save-source MAX_EV / BARREL_PCT records alongside
-  Statcast era. Calibration check needed first vs real Statcast
-  to decide whether to merge into one leaderboard or keep
-  source-segregated.
+- [x] **Pitching Statcast records** — done 2026-05-07.
+  `history_statcast_pitching_season` (6,060 pitcher-year rows,
+  2015-2025) joined into `f_record_player` as
+  `discipline='pitching'` + `source='statcast'`. New `direction`
+  column on `f_record_player` (`'asc'` or `'desc'`) drives
+  ranking — pitching rate-stats-allowed (AVG_EV, HARD_HIT_PCT,
+  BARREL_PCT, SWEET_SPOT_PCT) sort ASC (lowest = rank 1, the
+  achievement); MAX_EV / MAX_DIST sort DESC (peak feat). The CLI
+  renderer prefixes leaderboards with "Fewest" or "Most" based on
+  direction. Spot-check: Brad Ziegler 0.6% barrel% allowed in 2017
+  leads single-season; Logan Henderson 122.9 mph leads max-EV-
+  allowed (2025). Hoby Milner 80.4 mph leads single-season avg-EV-
+  allowed (2017).
+- [x] **Save-side EV records** — done 2026-05-07. New CTE
+  `save_ev_season` aggregates per-batter (year × team) BIP from
+  `f_pa_event` to produce season MAX_EV / AVG_EV / HARD_HIT_PCT
+  with a 50-BBE qualifier (matches Statcast loader `minBBE`).
+  Career rows take per-batter MAX. UNION'd into f_record_player
+  as `source='save'`, discipline='batting'. Calibration probe
+  (year 2029 MLB): OOTP league-avg EV is **~5 mph lower** than
+  real Statcast (save 82.9 vs real 88-89), and OOTP's top-end
+  avg-EV stars sit ~5-7 mph below their real counterparts (save
+  Henderson 88.5 vs real Judge ~95). HARD_HIT_PCT scales
+  proportionally lower (save Judge 34.2% vs real 65%). Source-
+  color in the UI tells the two scales apart; `--era statcast`
+  filters to real-only. Documented in DATA_NOTES.md.
+- [x] **Awards UNION dedup** — done 2026-05-07. Replaced the
+  previous {save, lahman, mlbapi} 3-source design with {save,
+  merged} via bbref_id collapse. Lahman 1871-2017 awards +
+  All-Star events + MLB Stats API 2018+ awards now roll up into
+  a single 'merged' career-row per (bbref_id × award × league),
+  filtered to bbref_ids NOT active in the user's save. Active
+  OOTP-import players (Trout, Judge, Ohtani, etc.) keep their
+  pre-save real awards in 'save' source via OOTP's historical
+  seed import. Bonds 7 MVPs (1990-2004) now sits alongside
+  Ohtani 7 MVPs (2021-2028) in the unified leaderboard with no
+  Trout double-count. CLI: `--era` enum collapsed to {all,
+  save, merged}; `--lahman-id` flag renamed `--bbref-id`.
 - [x] **MLB Stats API gap-fill (awards + HOF 2018-2025)** — done
   2026-05-06. Lahman caps awards at 2017 + HOF at 2018; the MLB Stats
   API (`statsapi.mlb.com/api/v1/awards/<ID>/recipients`) fills the

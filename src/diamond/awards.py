@@ -73,8 +73,8 @@ def _fetch_player_leaderboard(
     where_era = ""
     if era == "save":
         where_era = "AND acp.source = 'save'"
-    elif era == "lahman":
-        where_era = "AND acp.source = 'lahman'"
+    elif era == "merged":
+        where_era = "AND acp.source = 'merged'"
     rel = con.execute(
         f"""
         SELECT acp.source, acp.player_id, acp.external_id, acp.display_name,
@@ -109,17 +109,24 @@ def _fetch_player_career(
     return [dict(zip(cols, r)) for r in rel.fetchall()]
 
 
-def _fetch_player_career_lahman(
-    con: duckdb.DuckDBPyConnection, lahman_id: str, league_id: int
+def _fetch_player_career_merged(
+    con: duckdb.DuckDBPyConnection, bbref_id: str, league_id: int
 ) -> list[dict]:
+    """Look up a real-history player's career awards by bbref_id.
+
+    Reads from `source='merged'` (the unified Lahman + MLB Stats API
+    real-history view, filtered to bbref_ids not active in the user's
+    save). Active players' awards live under `source='save'` via
+    OOTP's player_id — use `_fetch_player_career` for those.
+    """
     rel = con.execute(
         """
         SELECT award_id, n_won, first_year, last_year, source
         FROM f_award_career_player
-        WHERE source = 'lahman' AND external_id = ? AND league_id = ?
+        WHERE source = 'merged' AND external_id = ? AND league_id = ?
         ORDER BY n_won DESC, last_year DESC, award_id
         """,
-        [lahman_id, league_id],
+        [bbref_id, league_id],
     )
     cols = [d[0] for d in rel.description]
     return [dict(zip(cols, r)) for r in rel.fetchall()]
@@ -156,11 +163,16 @@ def _team_name(con: duckdb.DuckDBPyConnection, team_id: int) -> str:
     return r[0] if r else f"team_id={team_id}"
 
 
+_ERA_LABEL: dict[str, str] = {
+    "all": "all eras", "save": "save only", "merged": "real history",
+}
+
+
 def _render_player_leaderboard(
     rows: list[dict], award_id: int, league_id: int, era: str
 ) -> None:
     label = _award_label(award_id)
-    era_label = {"all": "all eras", "save": "save only", "lahman": "real history"}[era]
+    era_label = _ERA_LABEL[era]
     console.rule(
         f"[bold cyan]Career leaders — {label}  (league {league_id}) [{era_label}]"
     )
@@ -182,7 +194,7 @@ def _render_player_leaderboard(
         )
         cells = [name, str(r["n_won"]), years, r["last_team_abbr"] or ""]
         if era == "all":
-            color = "magenta" if r["source"] == "lahman" else "cyan"
+            color = "green" if r["source"] == "merged" else "cyan"
             cells.append(f"[{color}]{r['source']}[/{color}]")
         t.add_row(*cells)
     console.print(t)
@@ -235,7 +247,7 @@ def _write_markdown_leaderboard(
     era: str = "all",
 ) -> None:
     label = _award_label(award_id)
-    era_label = {"all": "all eras", "save": "save only", "lahman": "real history"}[era]
+    era_label = _ERA_LABEL[era]
     output_path.parent.mkdir(parents=True, exist_ok=True)
     md = [f"# Career leaders — {label}  (league {league_id}) [{era_label}]", ""]
     if not rows:
@@ -264,7 +276,7 @@ def run(
     save: SaveConfig = BUILDING_THE_GREEN_MONSTER,
     award_id: int | None = None,
     player_id: int | None = None,
-    lahman_id: str | None = None,
+    bbref_id: str | None = None,
     team_id: int | None = None,
     league_id: int = 203,
     era: str = "all",
@@ -273,14 +285,14 @@ def run(
 ) -> Path:
     """Four modes, in priority order:
       - player_id provided    → render OOTP player's full career-awards table
-      - lahman_id provided    → render Lahman player's full career-awards table
-                                (use this to drill into Bonds, Trout, etc.)
+      - bbref_id provided     → render real-history player's full career-awards
+                                table (use this to drill into Bonds, Aaron, etc.)
       - team_id provided      → render franchise totals
       - award_id provided     → render top-N players for that award (era-filtered)
       - none → render top-N for *every* award (the default catalog view)
     """
-    if era not in ("all", "save", "lahman"):
-        raise ValueError(f"era must be 'all', 'save', or 'lahman', got {era!r}")
+    if era not in ("all", "save", "merged"):
+        raise ValueError(f"era must be 'all', 'save', or 'merged', got {era!r}")
     output_path = output_path or Path("audit_output") / "awards.md"
     con = _connect(save)
     try:
@@ -324,15 +336,15 @@ def run(
                     md.append(f"| {_award_label(r['award_id'])} | {r['n_won']} | {years} |")
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text("\n".join(md), encoding="utf-8")
-        elif lahman_id is not None:
-            rows = _fetch_player_career_lahman(con, lahman_id, league_id)
+        elif bbref_id is not None:
+            rows = _fetch_player_career_merged(con, bbref_id, league_id)
             r0 = con.execute(
                 "SELECT nameFirst || ' ' || nameLast FROM history_lahman_people WHERE playerID = ?",
-                [lahman_id],
+                [bbref_id],
             ).fetchone()
-            name = r0[0] if r0 else f"lahman_id={lahman_id}"
+            name = r0[0] if r0 else f"bbref_id={bbref_id}"
             console.rule(
-                f"[bold cyan]Career awards — {name}  (lahman_id={lahman_id})"
+                f"[bold cyan]Career awards — {name}  (bbref_id={bbref_id})"
             )
             if not rows:
                 console.print("[yellow]No awards on record.[/yellow]")
@@ -377,7 +389,7 @@ def run(
                     [league_id],
                 ).fetchall()
             ]
-            era_label = {"all": "all eras", "save": "save only", "lahman": "real history"}[era]
+            era_label = _ERA_LABEL[era]
             md = [
                 f"# Career awards leaderboard catalog  (league {league_id}) [{era_label}]",
                 "",

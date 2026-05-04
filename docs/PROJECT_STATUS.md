@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-06 (in-game year 2029→2030) — **Phase 2 + analytical layer + history backfill all closed**. Phase 2 (warehouse + ingest) shipped end-of-day 05-05; the analytical layer (draft analyzer, records, awards, HOF, trade attribution, refined movement_type) shipped 05-06; the real-MLB-history backfill (Lahman + BREF + Statcast + MLB Stats API + Chadwick Register crosswalk) shipped same-day. f_record_player UNIONs five sources with a bbref_id-based career dedup; real Cooperstown reads through the 2026 induction class; Bonds 73 leads single-season HR records, Bonds 762 leads career, Pujols 686 (Lahman 656 + BREF 30 merged) sits at #5 career. **Phase 3 (UI implementation) is the next phase** — start point per UI_DESIGN.md is D13 reference scope expansion (~30 lines) followed by D15 stat dictionary Python module.
+**Last updated**: 2026-05-07 (in-game year 2029→2030) — **Phase 2 + analytical layer + history backfill all closed; analytical surfaces clean**. Phase 2 (warehouse + ingest) shipped 05-05; the L3 analytical layer + real-MLB-history backfill shipped 05-06; final analytical-data cleanup shipped 05-07 — added `direction` column + pitching Statcast records to `f_record_player` (ASC ranking for "lowest barrel% allowed" leaderboards), unified Lahman + MLB Stats API into a single 'merged' source on `f_award_career_player` with bbref_id dedup (Bonds 7 MVPs sits alongside Ohtani 7 with no Trout-style double-counting), and added save-side EV records computed from `f_pa_event` with a documented calibration gap (~5 mph lower than Statcast). Bonds 73 leads single-season HR records, Bonds 762 leads career, Pujols 686 (Lahman 656 + BREF 30 merged) sits at #5 career. **Phase 3 (UI implementation) is the next phase** — start point per UI_DESIGN.md is D13 reference scope expansion (~30 lines) followed by D15 stat dictionary Python module.
 
 ---
 
@@ -131,9 +131,15 @@ history backfill closed same-day 2026-05-06. Major shipped artifacts:
   intra_org_lateral / waiver_or_other / trade) + `trade_id` attribution
 - `f_draft_class` — 2,320 rows; outcome buckets (mlb_star/mlb_regular/mlb_callup/
   in_draft_org/traded_away/released/retired)
-- `f_record_player` — 4,100 rows; UNIONs save + lahman + bref + statcast + merged
-  with `--era` CLI filter; bbref_id career dedup
-- `f_award_career_player` — 10,111 rows; UNIONs save + lahman + mlbapi
+- `f_record_player` — 4,700 rows; UNIONs save + lahman + bref + statcast + merged
+  with `--era` CLI filter; bbref_id career dedup. New `direction` column drives
+  ASC vs DESC ranking (pitching contact-allowed rate stats sort ASC, "Fewest" wins).
+  Save-side EV (MAX_EV/AVG_EV/HARD_HIT_PCT) computed off `f_pa_event` with
+  50-BBE qualifier; calibration ~5 mph below Statcast scale (documented in
+  DATA_NOTES.md).
+- `f_award_career_player` — 9,953 rows; UNIONs save + merged (Lahman+mlbapi
+  collapsed via bbref_id; merged filtered to non-save bbref_ids to avoid
+  active-player double-count via OOTP historical-seed import).
 - `f_award_franchise` — 1,856 rows
 
 **Real MLB history backfill** (one-time, capped at save_start_year - 1 = 2025):
@@ -171,11 +177,11 @@ multi-level OPS+/ERA+ park weighting, hit_loc-based spray, LeaderCategory codes
 archetype "Type", All-Star teams 2020-2025 (Lahman caps at 2019, MLB API
 doesn't expose annual rosters cleanly). All in BACKLOG.md.
 
-**Smaller follow-ons in the analytical layer** (optional, wrap-up tasks):
-- Pitching Statcast records (`history_statcast_pitching_season` loaded but
-  not yet UNION'd into f_record_player — would surface "max EV allowed" /
-  hardest-hit-pitcher leaderboards)
-- Save-side EV records (OOTP per-PA EV joined into f_record_player as a
-  fifth source; needs calibration check vs real Statcast)
-- Awards UNION dedup polish (occasional duplicate rows for same player
-  across save + lahman+mlbapi when bbref_id linkage is partial)
+**Smaller follow-ons in the analytical layer** — closed 2026-05-07:
+- ✅ Pitching Statcast records — UNION'd via `direction='asc'` for rate stats.
+- ✅ Save-side EV records — joined via `f_pa_event`, calibration documented.
+- ✅ Awards UNION dedup — Lahman+mlbapi collapsed into `merged` via bbref_id.
+
+All-Star teams 2020-2025 gap remains noted in BACKLOG.md (Lahman caps at
+2019; MLB Stats API doesn't expose annual rosters cleanly — separate research
+item if surfacing real-life All-Star streaks ever becomes important).

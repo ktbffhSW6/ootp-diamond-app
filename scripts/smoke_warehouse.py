@@ -541,9 +541,14 @@ def smoke_l3(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
         "[green]✓[/green] f_record_player rank_in_source contiguous per (category, source)"
     )
 
+    # Direction-aware monotonicity: for direction='desc' (counting stats /
+    # peak EV / batting Statcast) value must non-increase as rank goes up;
+    # for direction='asc' (pitching contact-allowed rate stats — barrel%,
+    # avg EV, hard-hit%, sweet-spot%) value must non-decrease.
     n_value_violation = con.execute("""
         WITH ordered AS (
-            SELECT scope, discipline, category, source, rank_in_source, value,
+            SELECT scope, discipline, category, source, direction,
+                   rank_in_source, value,
                    LAG(value) OVER (
                        PARTITION BY scope, discipline, category, source
                        ORDER BY rank_in_source
@@ -551,16 +556,20 @@ def smoke_l3(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
             FROM f_record_player
         )
         SELECT COUNT(*) FROM ordered
-        WHERE prev_value IS NOT NULL AND value > prev_value
+        WHERE prev_value IS NOT NULL
+          AND (
+              (direction = 'desc' AND value > prev_value)
+              OR (direction = 'asc' AND value < prev_value)
+          )
     """).fetchone()[0]
     if n_value_violation:
         console.print(
-            f"[red]FAIL:[/red] f_record_player has {n_value_violation} rows where "
-            f"value increases as rank_in_source goes up"
+            f"[red]FAIL:[/red] f_record_player has {n_value_violation} rows whose "
+            f"value violates direction-implied monotonicity"
         )
         return False
     console.print(
-        "[green]✓[/green] f_record_player values monotonically descend by rank_in_source"
+        "[green]✓[/green] f_record_player values monotonic by rank_in_source (per direction)"
     )
 
     # source must be one of {'save', 'lahman', 'bref', 'statcast', 'merged'}.
@@ -578,6 +587,36 @@ def smoke_l3(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
         return False
     console.print("[green]✓[/green] f_record_player source values valid")
 
+    # direction must be 'asc' or 'desc' — and within a (scope×discipline×
+    # category×source) tuple all rows must agree on direction (it's a
+    # tuple-level attribute, not row-level).
+    n_bad_direction = con.execute("""
+        SELECT COUNT(*) FROM f_record_player
+        WHERE direction NOT IN ('asc', 'desc')
+    """).fetchone()[0]
+    if n_bad_direction:
+        console.print(
+            f"[red]FAIL:[/red] f_record_player has {n_bad_direction} rows "
+            f"with direction not in {{'asc', 'desc'}}"
+        )
+        return False
+    n_split_direction = con.execute("""
+        WITH grouped AS (
+            SELECT scope, discipline, category, source,
+                   COUNT(DISTINCT direction) AS n_dirs
+            FROM f_record_player
+            GROUP BY scope, discipline, category, source
+        )
+        SELECT COUNT(*) FROM grouped WHERE n_dirs > 1
+    """).fetchone()[0]
+    if n_split_direction:
+        console.print(
+            f"[red]FAIL:[/red] {n_split_direction} f_record_player groups "
+            f"(scope×discipline×category×source) carry mixed direction values"
+        )
+        return False
+    console.print("[green]✓[/green] f_record_player direction values valid + tuple-consistent")
+
     # f_award_career_player: every row must have n_won > 0 (no empty rows)
     n_zero_awards = con.execute("""
         SELECT COUNT(*) FROM f_award_career_player WHERE n_won <= 0
@@ -588,6 +627,38 @@ def smoke_l3(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
         )
         return False
     console.print("[green]✓[/green] all f_award_career_player rows have n_won > 0")
+
+    # f_award_career_player source must be 'save' or 'merged' (post-2026-05-07
+    # dedup; raw 'lahman' / 'mlbapi' sources were collapsed into 'merged').
+    n_bad_award_source = con.execute("""
+        SELECT COUNT(*) FROM f_award_career_player
+        WHERE source NOT IN ('save', 'merged')
+    """).fetchone()[0]
+    if n_bad_award_source:
+        console.print(
+            f"[red]FAIL:[/red] {n_bad_award_source} f_award_career_player rows "
+            f"have source not in {{'save', 'merged'}}"
+        )
+        return False
+    console.print("[green]✓[/green] f_award_career_player source values valid")
+
+    # No (source, league_id, award_id, identity_key) duplicates — PK enforces this
+    # but explicit invariant catches schema drift.
+    n_award_dupes = con.execute("""
+        WITH counted AS (
+            SELECT source, league_id, award_id, identity_key, COUNT(*) AS c
+            FROM f_award_career_player
+            GROUP BY 1, 2, 3, 4
+        )
+        SELECT COUNT(*) FROM counted WHERE c > 1
+    """).fetchone()[0]
+    if n_award_dupes:
+        console.print(
+            f"[red]FAIL:[/red] {n_award_dupes} duplicate "
+            f"(source, league_id, award_id, identity_key) rows in f_award_career_player"
+        )
+        return False
+    console.print("[green]✓[/green] f_award_career_player identity_key unique per source/award")
 
     # f_award_franchise: same n_won > 0 invariant
     n_zero_franchise = con.execute("""

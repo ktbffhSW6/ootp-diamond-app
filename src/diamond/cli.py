@@ -267,9 +267,10 @@ def records(
     era: str = typer.Option(
         "all",
         help="'all' (default — unified), 'save' (OOTP only), 'lahman' "
-        "(real classic stats), or 'statcast' (real EV/barrel/hard-hit, "
-        "Statcast era 2015+). Run `diamond fetch-history` to populate "
-        "the Lahman + Statcast sides.",
+        "(1871-2019 classic stats), 'bref' (2020-2025 fill), 'statcast' "
+        "(EV/barrel/hard-hit, 2015-2025), or 'merged' (career rollup of "
+        "lahman+bref+statcast for non-save players). Run `diamond "
+        "fetch-history` to populate the non-save sides.",
     ),
     limit: int = typer.Option(10, help="Top-N per category (max 50)."),
     output: Path = typer.Option(
@@ -277,17 +278,18 @@ def records(
         help="Markdown output path. Defaults to audit_output/records_<era>_<scope>_<discipline>.md",
     ),
 ) -> None:
-    """MLB leaderboards (single-season + career) — counting stats.
+    """MLB leaderboards (single-season + career) — counting stats + Statcast.
 
-    Reads from the L3 `f_record_player` table. Two sources are unioned:
-    `save` (your OOTP save) and `lahman` (real-life MLB 1871-present, via
-    `diamond fetch-history`).
+    Reads from the L3 `f_record_player` table. Five sources are unioned:
+    `save` (your OOTP save), `lahman` (1871-2019), `bref` (2020-2025),
+    `statcast` (2015-2025 EV/barrel), and `merged` (career career-row
+    rollup of the three real-history sources for non-save players).
 
     Examples:
         diamond records                                  # career batting, all eras
         diamond records --scope season --category HR     # season HR, all eras
         diamond records --era save --category HR         # your sim only
-        diamond records --era lahman --scope career      # real-life leaderboards
+        diamond records --era merged --scope career      # real-life all-time
     """
     records_mod.run(
         scope=scope, discipline=discipline,
@@ -306,9 +308,10 @@ def awards(
         None,
         help="OOTP player_id — shows their full career awards.",
     ),
-    lahman_id: str | None = typer.Option(
+    bbref_id: str | None = typer.Option(
         None,
-        help="Lahman playerID (e.g., 'bondsba01') — shows real-life player career.",
+        "--bbref-id",
+        help="bbref playerID (e.g., 'bondsba01') — shows real-life player career.",
     ),
     team: int | None = typer.Option(
         None,
@@ -317,8 +320,8 @@ def awards(
     league: int = typer.Option(203, help="League id (default MLB=203)."),
     era: str = typer.Option(
         "all",
-        help="'all' (default), 'save' (OOTP only), 'lahman' (real-life). "
-        "Affects leaderboard + catalog modes.",
+        help="'all' (default), 'save' (OOTP only), 'merged' (real-life history "
+        "Lahman+MLBAPI dedup'd). Affects leaderboard + catalog modes.",
     ),
     limit: int = typer.Option(15, help="Top-N players per award."),
     output: Path = typer.Option(
@@ -329,16 +332,16 @@ def awards(
     """Awards leaderboards — career totals per player, per franchise.
 
     Modes (priority order):
-      diamond awards --player <id>           # OOTP player's full résumé
-      diamond awards --lahman-id <playerID>  # real-life player (Bonds, etc.)
-      diamond awards --team <id>             # franchise totals
-      diamond awards --award <id>            # top-N for that award (era-filtered)
-      diamond awards                         # catalog: every award
+      diamond awards --player <id>          # OOTP player's full résumé
+      diamond awards --bbref-id <playerID>  # real-life player (Bonds, etc.)
+      diamond awards --team <id>            # franchise totals
+      diamond awards --award <id>           # top-N for that award (era-filtered)
+      diamond awards                        # catalog: every award
     """
     awards_mod.run(
         award_id=award,
         player_id=player,
-        lahman_id=lahman_id,
+        bbref_id=bbref_id,
         team_id=team,
         league_id=league,
         era=era,
