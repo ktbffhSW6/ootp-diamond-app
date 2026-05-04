@@ -159,7 +159,15 @@ def smoke_l1_reference(con: duckdb.DuckDBPyConnection, console: Console) -> bool
 
 
 def smoke_l1_machinery(con: duckdb.DuckDBPyConnection, save, console: Console) -> bool:
-    """Phase C prereq: _scoped_teams and _scoped_players."""
+    """Phase C prereq: _scoped_teams and _scoped_players.
+
+    Also exercises D13 reference-scope toggle: rebuilds machinery with
+    reference scope ON, verifies the expansion (PA + IP cohorts), then
+    rebuilds with reference scope OFF to leave the smoke test in the
+    expected default state for downstream phases.
+    """
+    from dataclasses import replace
+
     console.rule("Phase C prereq — L1 machinery (scope sets)")
     rows = build_l1_machinery(con, save, verbose=True)
 
@@ -177,6 +185,59 @@ def smoke_l1_machinery(con: duckdb.DuckDBPyConnection, save, console: Console) -
     console.print(
         f"[green]✓[/green] _scoped_teams matches expected count from l0_teams"
     )
+
+    # D13 reference-scope sanity: toggling on must strictly expand the player set.
+    org_only_count = rows["_scoped_players"]
+    save_with_ref = replace(save, reference_scope_enabled=True)
+    rows_ref = build_l1_machinery(con, save_with_ref, verbose=False)
+    if rows_ref["_scoped_players"] < org_only_count:
+        console.print(
+            f"[red]FAIL:[/red] reference scope shrank _scoped_players "
+            f"({org_only_count} → {rows_ref['_scoped_players']})"
+        )
+        return False
+    console.print(
+        f"[green]✓[/green] D13 reference scope expansion: "
+        f"{org_only_count:,} → {rows_ref['_scoped_players']:,} players "
+        f"(+{rows_ref['_scoped_players'] - org_only_count:,})"
+    )
+
+    # Verify every player in the reference cohort has at least one MLB
+    # appearance — the cohort definition's load-bearing invariant.
+    ref_only = con.execute("""
+        SELECT COUNT(*) FROM _scoped_players sp
+        WHERE sp.player_id NOT IN (
+            SELECT DISTINCT player_id FROM l0_players
+            WHERE team_id IN (SELECT team_id FROM _scoped_teams)
+        )
+    """).fetchone()[0]
+    bad_ref = con.execute("""
+        SELECT COUNT(*) FROM _scoped_players sp
+        WHERE sp.player_id NOT IN (
+            SELECT DISTINCT player_id FROM l0_players
+            WHERE team_id IN (SELECT team_id FROM _scoped_teams)
+        )
+        AND sp.player_id NOT IN (
+            SELECT DISTINCT player_id FROM l0_players_career_batting_stats
+            WHERE level_id = 1 AND split_id = 1 AND pa >= 1
+        )
+        AND sp.player_id NOT IN (
+            SELECT DISTINCT player_id FROM l0_players_career_pitching_stats
+            WHERE level_id = 1 AND split_id = 1 AND outs >= 1
+        )
+    """).fetchone()[0]
+    if bad_ref > 0:
+        console.print(
+            f"[red]FAIL:[/red] {bad_ref} reference-scope players have no MLB appearance"
+        )
+        return False
+    console.print(
+        f"[green]✓[/green] all {ref_only:,} reference-only players have ≥1 MLB appearance"
+    )
+
+    # Reset to org-only for downstream phases (existing invariants assume
+    # the org-scope baseline counts).
+    build_l1_machinery(con, save, verbose=False)
     return True
 
 

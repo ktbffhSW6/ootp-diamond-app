@@ -110,10 +110,10 @@
 
 ## D13 — Two-tier player scope (org + reference)
 
-**Date**: 2026-05-05
+**Date**: 2026-05-05 (implemented 2026-05-07; cohort definition refined)
 **Decision**: Player scope splits into two distinct populations:
 - **Org scope** (the existing D4 rule): players who have ever appeared on a team in `SaveConfig.league_ids`. Powers cockpit, demotion/promotion tool, day-to-day org views.
-- **Reference scope** (new): any player with **≥1 career MLB PA** (`SUM(pa) ≥ 1` over level_id=1 rows in `f_player_season_batting`). Includes Hall of Famers, historical legends OOTP imports, current-era stars on other orgs. Estimated 30–50K players for a typical save vs ~10K org-scope.
+- **Reference scope** (new): any player with **≥1 career MLB appearance** — either a batting PA or pitching outs at level_id=1. Includes Hall of Famers, historical legends OOTP imports, current-era stars on other orgs. Empirical sizing on "Building the Green Monster" 2026-05-07: 15,992 org-tier players → 35,261 with reference scope on (+19,269 net new), matching D13's 30-50K-total estimate. Cohort definition was refined from the original "≥1 career MLB PA" to "PA OR pitching outs ≥1" because universal-DH-era pitchers may never bat (3,022 such pitchers in this save would have been wrongly excluded under a strict PA gate).
 
 **Opt-in per save**: `SaveConfig.reference_scope_enabled: bool` defaults `False`. When `True`, the L1 `_scoped_players` builder UNIONs the org-scope set with the MLB-PA set. UI surfaces (cockpit, leaderboards) default to org-scope; chart builder / universes / glossary distribution histograms can opt into reference scope when meaningful (e.g., "compare Mike Trout to every batting Hall of Famer").
 
@@ -125,17 +125,25 @@
 
 The ≥1 MLB PA cutoff keeps the population manageable (~30K rather than ~150K worldwide-bio) while including everyone of analytical interest. Per-save opt-in keeps the cost zero for users who don't need it.
 
-**How to apply**:
-- `_scoped_players` machinery query gains an optional second clause when `reference_scope_enabled`:
+**How to apply** (implemented 2026-05-07):
+- `_scoped_players` builder in `src/diamond/schema/l1_machinery.py` accepts `save.reference_scope_enabled`. When True, the CTAS `UNION`s the org-tier base set with two cohorts pulled directly from L0 (no L2 dependency):
   ```sql
-  WHERE team_id IN _scoped_teams
-     OR player_id IN (SELECT player_id FROM f_player_season_batting
-                      WHERE level_id = 1 GROUP BY player_id HAVING SUM(pa) >= 1)
+  -- org-tier (always)
+  SELECT DISTINCT player_id FROM l0_players
+  WHERE team_id IN (SELECT team_id FROM _scoped_teams)
+  UNION  -- reference-tier batting cohort
+  SELECT DISTINCT player_id FROM l0_players_career_batting_stats
+  WHERE level_id = 1 AND split_id = 1 AND pa >= 1
+  UNION  -- reference-tier pitching cohort (covers DH-era relief pitchers)
+  SELECT DISTINCT player_id FROM l0_players_career_pitching_stats
+  WHERE level_id = 1 AND split_id = 1 AND outs >= 1
   ```
-  (Order of operations: f_player_season_batting must be built before _scoped_players when reference scope is on. The L0→L1 dependency graph adjusts.)
-- `diamond ingest --reference-scope` flag toggles per-ingest
-- Setup wizard step 4 exposes the toggle per save
-- Setting persisted in tracked-saves registry
+  Querying L0 directly (rather than L2 `f_player_season_batting`) avoids the L1→L2→L1 dependency flip the original design called out.
+- CLI: `diamond ingest --reference-scope` / `--no-reference-scope` toggles + persists in the warehouse `_diamond_settings` table; absent flag uses the previously-persisted value (defaulting False on first run).
+- New admin table `_diamond_settings (key, value, updated_at)` provides forward-compatible per-save flag storage. Helpers: `get_setting / set_setting / get_reference_scope_enabled / set_reference_scope_enabled` in `diamond.schema.build`.
+- Smoke test exercises both modes: rebuilds machinery with reference scope on, verifies the expansion strictly grows the player set + every reference-only player has ≥1 MLB appearance, then resets to org-only baseline for downstream phases.
+- Setup wizard step 4 (future Phase 3 work) will surface the toggle per save in UI form.
+- Tracked-saves registry persistence (future Phase 3 work) will move per-save settings to a user-level registry alongside the warehouse-local `_diamond_settings` table.
 
 **Alternatives considered**:
 - *No reference scope, ever* — rejected once user surfaced the "Trout vs HoF" use case; the analytical value is real and the cost is small.

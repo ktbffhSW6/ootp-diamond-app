@@ -70,10 +70,78 @@ CREATE TABLE IF NOT EXISTS _diamond_ingests (
 );
 """
 
+# Key/value warehouse settings — per-save persistent flags that survive
+# across CLI invocations. First user is `reference_scope_enabled` (D13);
+# future users will land here too (e.g., user-org team_id override per
+# the v2 save-setup picker).
+DIAMOND_SETTINGS_DDL = """
+CREATE TABLE IF NOT EXISTS _diamond_settings (
+    key         VARCHAR PRIMARY KEY,
+    value       VARCHAR NOT NULL,
+    updated_at  TIMESTAMP NOT NULL
+);
+"""
+
 
 def init_admin_tables(con: duckdb.DuckDBPyConnection) -> None:
     """Create the warehouse-machinery tables if they don't exist."""
     con.execute(DIAMOND_INGESTS_DDL)
+    con.execute(DIAMOND_SETTINGS_DDL)
+
+
+def get_setting(
+    con: duckdb.DuckDBPyConnection,
+    key: str,
+    default: str | None = None,
+) -> str | None:
+    """Read a `_diamond_settings` value or return `default` if unset.
+
+    Read-only-safe: if `_diamond_settings` doesn't exist yet (warehouse
+    has never had a setting written), returns `default` without trying
+    to create the table. Use `set_setting` to materialize the table.
+    """
+    exists = con.execute(
+        "SELECT 1 FROM duckdb_tables() WHERE table_name = ? LIMIT 1",
+        ["_diamond_settings"],
+    ).fetchone()
+    if exists is None:
+        return default
+    row = con.execute(
+        "SELECT value FROM _diamond_settings WHERE key = ?", [key]
+    ).fetchone()
+    return row[0] if row is not None else default
+
+
+def set_setting(
+    con: duckdb.DuckDBPyConnection,
+    key: str,
+    value: str,
+) -> None:
+    """Upsert a `_diamond_settings` value with current timestamp."""
+    init_admin_tables(con)
+    con.execute(
+        """
+        INSERT INTO _diamond_settings (key, value, updated_at)
+        VALUES (?, ?, NOW())
+        ON CONFLICT (key) DO UPDATE SET
+            value      = excluded.value,
+            updated_at = NOW()
+        """,
+        [key, value],
+    )
+
+
+def get_reference_scope_enabled(con: duckdb.DuckDBPyConnection) -> bool:
+    """Read the persisted reference-scope flag (D13). Defaults False."""
+    return get_setting(con, "reference_scope_enabled", "false") == "true"
+
+
+def set_reference_scope_enabled(
+    con: duckdb.DuckDBPyConnection,
+    enabled: bool,
+) -> None:
+    """Persist the reference-scope flag (D13)."""
+    set_setting(con, "reference_scope_enabled", "true" if enabled else "false")
 
 
 def record_ingest_start(

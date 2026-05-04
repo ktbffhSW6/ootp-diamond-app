@@ -127,6 +127,15 @@ def ingest(
         "--no-rebuild",
         help="Stop after L0 ingest; skip the L1+L2 rebuild.",
     ),
+    reference_scope: bool = typer.Option(
+        None,
+        "--reference-scope/--no-reference-scope",
+        help="Per Decision D13: enable/disable the reference-tier "
+        "expansion of `_scoped_players` (adds players with ≥1 MLB "
+        "appearance — HoFers, current-era stars on other orgs, "
+        "historical legends). Persists in `_diamond_settings`. "
+        "Omit to use the previously-persisted value (defaults False).",
+    ),
 ) -> None:
     """Ingest OOTP dumps into the warehouse and rebuild L1+L2.
 
@@ -137,11 +146,16 @@ def ingest(
       L2   facts       — 8 analytical-grain tables (see docs/SCHEMA.md)
 
     Examples:
-        diamond ingest dump_2029_11        # ingest one dump + rebuild L1+L2
-        diamond ingest --all               # walk every dump folder in order
-        diamond ingest --rebuild-only      # rebuild L1+L2 from current L0
-        diamond ingest dump_2029_11 --force --no-rebuild   # L0 only, force re-ingest
+        diamond ingest dump_2029_11               # ingest one dump + rebuild L1+L2
+        diamond ingest --all                      # walk every dump folder in order
+        diamond ingest --rebuild-only             # rebuild L1+L2 from current L0
+        diamond ingest --rebuild-only --reference-scope   # turn D13 on, rebuild
     """
+    from dataclasses import replace
+    from diamond.schema.build import (
+        get_reference_scope_enabled, set_reference_scope_enabled,
+    )
+
     save = BUILDING_THE_GREEN_MONSTER
 
     # Argument validation: exactly one of {dump, --all, --rebuild-only}
@@ -157,6 +171,20 @@ def ingest(
     _console.print(f"[bold]Warehouse:[/bold] {db_path}\n")
 
     try:
+        # Resolve reference-scope flag: explicit CLI flag overrides + persists;
+        # absent flag reads the previously-persisted value.
+        if reference_scope is not None:
+            set_reference_scope_enabled(con, reference_scope)
+            effective_ref = reference_scope
+        else:
+            effective_ref = get_reference_scope_enabled(con)
+        save = replace(save, reference_scope_enabled=effective_ref)
+        if effective_ref:
+            _console.print(
+                "[cyan]Reference scope enabled[/cyan] — `_scoped_players` "
+                "includes ≥1-MLB-appearance players (D13).\n"
+            )
+
         if rebuild_only:
             rebuild_l1_l2(con, save, verbose=True)
         else:

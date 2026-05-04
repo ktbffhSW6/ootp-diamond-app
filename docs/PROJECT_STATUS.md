@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-07 (in-game year 2029→2030) — **All Phase 2 + analytical-layer items closed; backlog clean for Phase 3.** Phase 2 (warehouse + ingest) shipped 05-05; L3 analytical surfaces (records / awards / HOF / draft / trades / movements) + real-MLB-history backfill shipped 05-06; analytical-data cleanup AM 05-07 added `direction` column + pitching Statcast + 'merged' awards source + save-side EV calibration; analytical-layer refinements PM 05-07 closed every remaining open feature/refinement item: streaks decoder + `f_player_streak` L3 + `diamond streaks` CLI; Custom oWAR + pitching WAR (FIP-based, replacement × 1.13); park-factor integration on OPS+ (halved factor) and ERA+ (80% factor); RE24 refined to full Tango `(RE_after - RE_before + rbi)` via LEAD window function. **Phase 3 (UI implementation) is the next phase** — start point per UI_DESIGN.md is D13 reference scope expansion (~30 lines) followed by D15 stat dictionary Python module.
+**Last updated**: 2026-05-07 (in-game year 2029→2030) — **Phase 3 (UI implementation) is now active.** All Phase 2 + analytical-layer items closed (warehouse + ingest + L3 analytics + real-MLB history backfill + analytical refinements); the analytical layer reads zero open items. **D13 (two-tier player scope) shipped same-day** — `SaveConfig.reference_scope_enabled` + CLI `--reference-scope/--no-reference-scope` flags + `_diamond_settings` warehouse admin table for persistence. Reference cohort = "≥1 MLB appearance" (PA OR IP, refined from D13's original PA-only definition); expands `_scoped_players` from 15,992 → 35,261 on the live warehouse. **Next start point per UI_DESIGN.md build order: D15 stat dictionary Python module** (`diamond/dictionary/`, ~150 entries consolidating reconcile.py ColSpec.notes + advanced/ docstrings + DATA_NOTES.md), then player page → demotion/promotion → leaderboards → universes/charts → AI overlay → cockpit → reviews → setup wizard → sync triggers.
 
 ---
 
@@ -164,9 +164,8 @@ history backfill closed same-day 2026-05-06. Major shipped artifacts:
 
 Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
 
-1. **D13 reference scope expansion** (~30 min) — small extension of
-   `_scoped_players` to opt-in include the ≥1 MLB PA cohort for
-   "Mike Trout vs every HoF batter" comparisons. Pure Python, infra prep.
+1. ✅ **D13 reference scope expansion** — done 2026-05-07. Foundation
+   in place for cross-era / cross-org analytical comparisons.
 2. **D15 stat dictionary** Python module (~1-2 hrs) — `diamond/dictionary/`
    with formulas + KaTeX strings + display labels. Every UI screen will
    depend on this; ships before any frontend.

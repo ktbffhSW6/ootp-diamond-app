@@ -297,8 +297,15 @@ and count-state splits).
 
 Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
 
-- [ ] **Reference scope expansion** (per D13). Small — extends `_scoped_players`
-  builder with the ≥1 MLB PA union when `SaveConfig.reference_scope_enabled`.
+- [x] **Reference scope expansion** (per D13) — done 2026-05-07.
+  `SaveConfig.reference_scope_enabled` field added; `_scoped_players`
+  builder UNIONs org-tier with the ≥1-MLB-appearance cohort (PA OR IP)
+  when enabled. CLI `--reference-scope` / `--no-reference-scope` flags
+  toggle + persist in new `_diamond_settings` admin table. Empirical
+  expansion: 15,992 → 35,261 players (+19,269) on the live warehouse.
+  Smoke test exercises both modes. Cohort refined from D13's original
+  "≥1 PA" to "PA OR IP outs ≥ 1" so universal-DH-era relief pitchers
+  aren't dropped (3,022 such in this save).
 - [ ] **Stat dictionary + glossary** (per D15). `diamond/dictionary/` module +
   `/glossary` page with KaTeX-rendered formulas + hover tooltips on column
   headers. Infrastructure for everything else.

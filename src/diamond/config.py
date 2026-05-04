@@ -18,6 +18,17 @@ class SaveConfig:
     save_name: str
     league_ids: tuple[int, ...]
     audit_team_id: int = 4  # Boston Red Sox
+    reference_scope_enabled: bool = False
+    """Per Decision D13: when True, `_scoped_players` is expanded to
+    include any player with ≥1 career MLB appearance (PA or IP outs at
+    level_id=1) regardless of whether they ever played for a scoped team.
+    Adds ~5-15K reference-scope players (HoFers, current-era stars on
+    other orgs, historical legends OOTP imports). Default False.
+
+    The CLI `--reference-scope` / `--no-reference-scope` flags toggle
+    the persisted value in the warehouse `_diamond_settings` table; the
+    SaveConfig field here is the in-memory representation that
+    `build_l1_machinery` reads."""
 
     @property
     def save_dir(self) -> Path:
