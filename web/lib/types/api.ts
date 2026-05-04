@@ -60,6 +60,52 @@ export interface HealthResponse {
   api_version: string;
 }
 /**
+ * Per-(year, league_id, level_id) advanced batting stats.
+ *
+ * One row per league-year-level a player accumulated PA in. Multi-team
+ * stints within the same level collapse to one row (the dominant
+ * team's park factor applies). Cross-level rollups are intentionally
+ * omitted — league constants differ by level so cross-level wRC+
+ * isn't a well-defined number.
+ */
+export interface PlayerAdvancedBattingRow {
+  year: number;
+  age: number | null;
+  level_id: number;
+  level_name: string;
+  league_id: number;
+  league_abbr: string | null;
+  pa: number;
+  woba: number | null;
+  wraa: number | null;
+  wrc: number | null;
+  wrc_plus: number | null;
+  ops_plus: number | null;
+  o_war: number | null;
+  park_avg: number | null;
+}
+/**
+ * Per-(year, league_id, level_id) advanced pitching stats.
+ *
+ * Only pitchers with ≥ 30 outs (≥ 10 IP) at the level appear — matches
+ * the audit's quality threshold. Park factor is the dominant team's
+ * (most outs at this level).
+ */
+export interface PlayerAdvancedPitchingRow {
+  year: number;
+  age: number | null;
+  level_id: number;
+  level_name: string;
+  league_id: number;
+  league_abbr: string | null;
+  outs: number;
+  ip_display: number;
+  fip: number | null;
+  era_plus: number | null;
+  pit_war: number | null;
+  park_avg: number | null;
+}
+/**
  * A year's worth of batting — one or more stints + optional TOT row.
  *
  * `stints` always has 1+ rows (sorted by level then team). `combined`
@@ -294,6 +340,8 @@ export interface PlayerResponse {
   batting_seasons: PlayerBattingSeason[];
   pitching_seasons: PlayerPitchingSeason[];
   fielding_rows: PlayerFieldingRow[];
+  advanced_batting: PlayerAdvancedBattingRow[];
+  advanced_pitching: PlayerAdvancedPitchingRow[];
   batting_career: PlayerCareerBatting | null;
   pitching_career: PlayerCareerPitching | null;
   fielding_career: PlayerCareerFielding[];

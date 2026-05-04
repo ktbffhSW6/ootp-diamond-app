@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-07 (in-game year 2029→2030) — **Phase 3: player page Stats tab live with batting + pitching + fielding.** First real product feature shipped; Diamond now renders Bref-shaped year-by-year batting + pitching disclosure tables and a per-(year, position, team) fielding section with per-position career rollups. `GET /api/players/{id}` + `/player/[id]` route work end-to-end against the warehouse — 16-season Carlos Rodón career (1796⅓ IP, 3.92 ERA, 9.69 K/9; pitcher fielding .887 FPCT across 95 games), 5-stint Raymer Medina with TOT rows on click, 7-position Samad Taylor utility career with per-position fielding rollups. Dictionary expanded to 60 entries (+13 batting/pitching counting; +8 fielding: G_fielder / GS_fielder / INN / PO / A / E / DP / FPCT). `POSITION_NAMES` + `LEVEL_NAMES` lifted from `draft.py` to `constants.py` for shared use. **Next: advanced stats column block** (wOBA / wRC+ / OPS+ / FIP / ERA+ / WAR — needs L3 materialization decision) **or Charts tab** (radial career arc).
+**Last updated**: 2026-05-07 (in-game year 2029→2030) — **Phase 3: player page Stats tab now full — batting + pitching + fielding + advanced stats.** Diamond surfaces wOBA / wRAA / wRC / wRC+ / OPS+ / FIP / ERA+ / oWAR / pit_WAR per (player, year, league, level), pre-materialized into two new L3 tables (`f_player_season_advanced_batting`, `f_player_season_advanced_pitching`) — park-aware (halved for OPS+, 80% for ERA+ per OOTP convention), league-constants-aware (per (league, year, level) — D11). Numbers cross-checked: Crochet 2029 ERA+=127 ✓ (matches IE-reconciled audit value), Skubal 2029 FIP=2.65 ✓, Gunnar Henderson 2029 oWAR=8.7 ✓. Pre-2026 rows show `—` for advanced stats since the save's league_history coverage starts in 2026. Cross-level rollups intentionally omitted (different league constants). **Next: Charts tab** (radial career arc) **or pivot to demotion/promotion review**.
 
 ---
 
@@ -55,9 +55,11 @@ Phases 1-2 closed; analytical CLI surface complete; real MLB history through 202
   - L1: 12 reference + 35 event + 21 state-snapshot + 6 `_current` views + 2 machinery (`_scoped_*`) + 1 admin (`_diamond_ingests`)
   - L2: 8 facts (`f_player_season_batting/pitching/fielding`, `f_player_career`,
     `f_team_season`, `f_league_season`, `f_pa_event`, `f_award_event`)
-  - L3: 6 derived (`f_trade_participant`, `player_movements` w/ `trade_id`,
+  - L3: 8 derived (`f_trade_participant`, `player_movements` w/ `trade_id`,
     `f_draft_class`, `f_record_player`, `f_award_career_player`,
-    `f_award_franchise`)
+    `f_award_franchise`, `f_player_streak`,
+    `f_player_season_advanced_batting` + `_advanced_pitching` [the
+    sabermetric stack materialized per (player, year, league, level)])
   - History backfill (one-time): 8 `history_lahman_*` tables +
     2 `history_statcast_*` tables + 2 `history_bref_*` tables +
     2 `history_mlbapi_*` tables (awards + HOF gap-fill 2018+) +
@@ -218,11 +220,32 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
      `f_player_season_advanced_*` work listed in `l3.py` docstring)
      or threading the on-demand computation through the request
      handler.
-6. **Advanced stats column block** — wOBA / wRC+ / OPS+ / FIP /
-   ERA+ / WAR per stint. Materialize `f_player_season_advanced_*`
-   L3 tables (cleaner, future-proof) vs threading existing
-   `diamond.advanced.*` functions through the route (faster, no
-   schema improvement). Recommend materialize.
+6. ✅ **Advanced stats column block** — done 2026-05-07.
+   - New L3 module `src/diamond/schema/l3_advanced.py` materializes
+     `f_player_season_advanced_batting` (244k rows) +
+     `f_player_season_advanced_pitching` (151k rows) per
+     (player, year, league_id, level_id). Linear weights computed
+     inline via SQL (woba_scale calibrates against league OBP),
+     park factor pulled from the dominant team's park (most PA /
+     most outs), filters mirror the audit (PA > 0; outs >= 30 / 10
+     IP for pitching).
+   - `_lg_constants_advanced` view aggregates league_history at
+     (league_id, year, level_id), exposing every constant the
+     formulas need (linear weights, woba_scale, fip_constant,
+     runs_per_pa, lg_obp/slg/era).
+   - Player API extended with `advanced_batting` +
+     `advanced_pitching` arrays. UI renders two new sections —
+     "Advanced Batting" (PA / wOBA / wRAA / wRC / wRC+ / OPS+ /
+     oWAR) and "Advanced Pitching" (IP / FIP / ERA+ / pit_WAR) —
+     per-(year, level) flat rows with explainer footnotes.
+   - Math verified: Crochet 2029 ERA+=127 (matches audit IE-recon
+     127), Skubal 2029 FIP=2.65 (matches docs), Gunnar Henderson
+     2029 oWAR=8.7 (matches docs). Top OPS+ leaders 2029 MLB:
+     Kurtz 164, Henderson 164, Judge 159, Rooker 159, Santiago 155.
+   - Limitation: league_history covers only 2026-2029 in this save,
+     so pre-2026 player rows show `—` for advanced stats. Mapping
+     OOTP's pre-save imported player history to historical Lahman/
+     BREF league averages is deferred (separate scope).
 7. **Player page Charts tab** — radial career arc visualization
    (angular axis = year, radius = headline stat: OPS+/wRC+/WAR/ERA+).
    Per the design discussion 2026-05-07: radial earns its keep as

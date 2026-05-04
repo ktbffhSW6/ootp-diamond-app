@@ -350,12 +350,23 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
     player has multi-position career rows). Smoke verified live with
     Samad Taylor (7-position UTIL) and Carlos Rodón (pitcher-only
     fielding).
-  - [ ] **Advanced stats column block** — wOBA / wRC+ / OPS+ / FIP /
-    ERA+ / WAR / Statcast EV+barrel per stint. Requires either
-    materializing `f_player_season_advanced_*` L3 tables (listed as
-    future work in `src/diamond/schema/l3.py` docstring; recommended
-    path) or threading existing `diamond.advanced.*` on-demand
-    computations through the request handler.
+  - [x] **Advanced stats column block** — done 2026-05-07. New L3
+    module `src/diamond/schema/l3_advanced.py` materializes
+    `f_player_season_advanced_batting` + `_advanced_pitching` per
+    (player, year, league_id, level_id). Park-aware (halved for OPS+,
+    80% for ERA+), league-constants-aware. UI renders "Advanced
+    Batting" + "Advanced Pitching" sections below the standard
+    counting tables. Math verified: Crochet 2029 ERA+=127 ✓
+    (audit IE-reconciled), Skubal FIP 2.65 ✓, Gunnar Henderson
+    oWAR 8.7 ✓.
+    - Note: league_history coverage is 2026-2029 in this save, so
+      pre-2026 player rows show `—` for advanced stats. Mapping
+      OOTP's pre-save imported history to Lahman/BREF league averages
+      is a deferred follow-on (separate scope item).
+    - Statcast advanced (MAX_EV / AVG_EV / barrel%) still deferred to
+      the Charts tab — those live in `f_pa_event` + the
+      `history_statcast_*` tables but aren't yet folded into the
+      player-page response.
   - [ ] **Charts tab** — radial career arc (angular = year, radius
     = headline stat: OPS+/wRC+/WAR/ERA+, color = team or level).
     Per the design discussion 2026-05-07: radial earns its keep as

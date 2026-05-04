@@ -31,6 +31,8 @@ import duckdb
 from fastapi import APIRouter, Depends, HTTPException
 
 from diamond.api.schemas import (
+    PlayerAdvancedBattingRow,
+    PlayerAdvancedPitchingRow,
     PlayerBattingSeason,
     PlayerBattingStint,
     PlayerBio,
@@ -351,6 +353,99 @@ def _fetch_fielding_rows(
     return [dict(zip(cols, r, strict=True)) for r in rows]
 
 
+def _fetch_advanced_batting(
+    con: duckdb.DuckDBPyConnection, player_id: int,
+) -> list[PlayerAdvancedBattingRow]:
+    """Pull pre-materialized advanced batting rows from the L3 table.
+
+    See `src/diamond/schema/l3_advanced.py` for the grain rationale —
+    one row per (player, year, league_id, level_id), with park factor
+    and league constants resolved at build time.
+    """
+    rows = con.execute(
+        """
+        SELECT
+            f.year, f.league_id, f.level_id,
+            l.abbr            AS league_abbr,
+            (f.year - EXTRACT(YEAR FROM pl.date_of_birth))::INTEGER AS age,
+            CAST(f.pa AS BIGINT) AS pa,
+            f.woba, f.wraa, f.wrc, f.wrc_plus, f.ops_plus, f.o_war, f.park_avg
+        FROM f_player_season_advanced_batting f
+        LEFT JOIN leagues         l  ON l.league_id  = f.league_id
+        LEFT JOIN players_current pl ON pl.player_id = f.player_id
+        WHERE f.player_id = ?
+        ORDER BY f.year, f.level_id, f.league_id
+        """,
+        [player_id],
+    ).fetchall()
+    out: list[PlayerAdvancedBattingRow] = []
+    for r in rows:
+        (year, league_id, level_id, league_abbr, age, pa,
+         woba, wraa, wrc, wrc_plus, ops_plus, o_war, park_avg) = r
+        out.append(PlayerAdvancedBattingRow(
+            year=int(year),
+            age=int(age) if age is not None else None,
+            level_id=int(level_id),
+            level_name=LEVEL_NAMES.get(int(level_id), f"L{level_id}"),
+            league_id=int(league_id),
+            league_abbr=league_abbr,
+            pa=int(pa),
+            woba=float(woba) if woba is not None else None,
+            wraa=float(wraa) if wraa is not None else None,
+            wrc=float(wrc) if wrc is not None else None,
+            wrc_plus=int(wrc_plus) if wrc_plus is not None else None,
+            ops_plus=int(ops_plus) if ops_plus is not None else None,
+            o_war=float(o_war) if o_war is not None else None,
+            park_avg=float(park_avg) if park_avg is not None else None,
+        ))
+    return out
+
+
+def _fetch_advanced_pitching(
+    con: duckdb.DuckDBPyConnection, player_id: int,
+) -> list[PlayerAdvancedPitchingRow]:
+    """Pull pre-materialized advanced pitching rows.
+
+    Filtered server-side to outs >= 30 (10 IP) by the L3 builder, so
+    short-cup-of-coffee pitcher seasons don't surface here.
+    """
+    rows = con.execute(
+        """
+        SELECT
+            f.year, f.league_id, f.level_id,
+            l.abbr            AS league_abbr,
+            (f.year - EXTRACT(YEAR FROM pl.date_of_birth))::INTEGER AS age,
+            CAST(f.outs AS BIGINT) AS outs,
+            f.ip_display, f.fip, f.era_plus, f.pit_war, f.park_avg
+        FROM f_player_season_advanced_pitching f
+        LEFT JOIN leagues         l  ON l.league_id  = f.league_id
+        LEFT JOIN players_current pl ON pl.player_id = f.player_id
+        WHERE f.player_id = ?
+        ORDER BY f.year, f.level_id, f.league_id
+        """,
+        [player_id],
+    ).fetchall()
+    out: list[PlayerAdvancedPitchingRow] = []
+    for r in rows:
+        (year, league_id, level_id, league_abbr, age, outs,
+         ip_display, fip, era_plus, pit_war, park_avg) = r
+        out.append(PlayerAdvancedPitchingRow(
+            year=int(year),
+            age=int(age) if age is not None else None,
+            level_id=int(level_id),
+            level_name=LEVEL_NAMES.get(int(level_id), f"L{level_id}"),
+            league_id=int(league_id),
+            league_abbr=league_abbr,
+            outs=int(outs),
+            ip_display=float(ip_display),
+            fip=float(fip) if fip is not None else None,
+            era_plus=int(era_plus) if era_plus is not None else None,
+            pit_war=float(pit_war) if pit_war is not None else None,
+            park_avg=float(park_avg) if park_avg is not None else None,
+        ))
+    return out
+
+
 def _fetch_pitching_stints(
     con: duckdb.DuckDBPyConnection, player_id: int,
 ) -> list[dict[str, Any]]:
@@ -663,11 +758,15 @@ def get_player(
     bat_stints = _fetch_batting_stints(con, player_id)
     pit_stints = _fetch_pitching_stints(con, player_id)
     fld_rows = _fetch_fielding_rows(con, player_id)
+    advanced_bat = _fetch_advanced_batting(con, player_id)
+    advanced_pit = _fetch_advanced_pitching(con, player_id)
     return PlayerResponse(
         bio=bio,
         batting_seasons=_build_batting_seasons(bat_stints),
         pitching_seasons=_build_pitching_seasons(pit_stints),
         fielding_rows=_build_fielding_rows(fld_rows),
+        advanced_batting=advanced_bat,
+        advanced_pitching=advanced_pit,
         batting_career=_build_batting_career(bat_stints),
         pitching_career=_build_pitching_career(pit_stints),
         fielding_career=_build_fielding_career(fld_rows),

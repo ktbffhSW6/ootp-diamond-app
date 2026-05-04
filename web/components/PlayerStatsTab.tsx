@@ -20,6 +20,8 @@ import { useState } from "react";
 import type {
   GlossaryEntry,
   GlossaryListResponse,
+  PlayerAdvancedBattingRow,
+  PlayerAdvancedPitchingRow,
   PlayerBattingSeason,
   PlayerBattingStint,
   PlayerCareerBatting,
@@ -57,6 +59,26 @@ const BATTING_COLUMNS: Array<[keyof PlayerBattingStint, string]> = [
   ["obp", "OBP"],
   ["slg", "SLG"],
   ["ops", "OPS"],
+];
+
+// Advanced batting columns. Per-(year, league_id, level_id) grain
+// from f_player_season_advanced_batting; multi-team-same-level stints
+// collapse to one row using the dominant team's park factor.
+const ADV_BATTING_COLUMNS: Array<[keyof PlayerAdvancedBattingRow, string]> = [
+  ["pa", "PA"],
+  ["woba", "wOBA"],
+  ["wraa", "wRAA"],
+  ["wrc", "wRC"],
+  ["wrc_plus", "wRC_plus"],
+  ["ops_plus", "OPS_plus"],
+  ["o_war", "oWAR"],
+];
+
+const ADV_PITCHING_COLUMNS: Array<[keyof PlayerAdvancedPitchingRow, string]> = [
+  ["ip_display", "IP"],
+  ["fip", "FIP"],
+  ["era_plus", "ERA_plus"],
+  ["pit_war", "pit_WAR"],
 ];
 
 // Fielding columns. The schema is keyed by (year, position, team), so
@@ -118,12 +140,14 @@ function tooltipFor(entry: GlossaryEntry | undefined): string | undefined {
 // ─────────────────────────────────────────────────────────────────────────
 
 // Slash-line stats render to 3 decimals leading-zero-stripped (Bref style).
-// FPCT shares the same convention (.985, .992, etc.).
-const SLASH_FIELDS = new Set(["avg", "obp", "slg", "ops", "fpct"]);
-// ERA / WHIP / K9 / BB9 render to 2 decimals.
-const TWO_DP_FIELDS = new Set(["era", "whip", "k_per_9", "bb_per_9"]);
+// FPCT + wOBA share the same convention (.985, .992, .380, etc.).
+const SLASH_FIELDS = new Set(["avg", "obp", "slg", "ops", "fpct", "woba"]);
+// ERA / WHIP / K9 / BB9 / FIP render to 2 decimals.
+const TWO_DP_FIELDS = new Set(["era", "whip", "k_per_9", "bb_per_9", "fip"]);
 // IP / INN render as `int.frac` (Bref convention: 172.1 = 172⅓).
 const IP_FIELDS = new Set(["ip_display", "inn_display"]);
+// One-decimal stats (WAR, runs).
+const ONE_DP_FIELDS = new Set(["o_war", "pit_war", "wraa", "wrc"]);
 
 function formatCell(field: string, value: unknown): string {
   if (value == null) return "—";
@@ -137,6 +161,9 @@ function formatCell(field: string, value: unknown): string {
     return value.toFixed(2);
   }
   if (IP_FIELDS.has(field)) {
+    return value.toFixed(1);
+  }
+  if (ONE_DP_FIELDS.has(field)) {
     return value.toFixed(1);
   }
   // Counting stats: integer display.
@@ -405,6 +432,151 @@ function BattingCareerRow({
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Advanced — per (year, league, level) flat rows
+// ─────────────────────────────────────────────────────────────────────────
+
+function AdvancedBattingTable({
+  rows,
+  headers,
+}: {
+  rows: PlayerAdvancedBattingRow[];
+  headers: ColumnHeader[];
+}) {
+  return (
+    <section>
+      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        Advanced Batting
+      </h2>
+      <div className="overflow-x-auto rounded-md border border-slate-200">
+        <table className="min-w-full text-sm">
+          <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+            <tr>
+              <th className="w-16 px-2 py-1.5 text-left font-medium">Year</th>
+              <th className="w-12 px-2 py-1.5 text-right font-medium">Age</th>
+              <th className="w-20 px-2 py-1.5 text-left font-medium">Lvl/Lg</th>
+              {headers.map((h) => (
+                <th
+                  key={h.field}
+                  className="px-2 py-1.5 text-right font-medium"
+                  title={h.tooltip}
+                >
+                  {h.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr
+                key={`${r.year}-${r.level_id}-${r.league_id}`}
+                className="border-t border-slate-100"
+              >
+                <td className="px-2 py-1.5 text-left font-mono text-sm tabular-nums">
+                  {r.year}
+                </td>
+                <td className="px-2 py-1.5 text-right font-mono text-xs text-slate-500">
+                  {r.age ?? "—"}
+                </td>
+                <td className="px-2 py-1.5 text-left font-mono">
+                  <span className="text-slate-800">{r.level_name}</span>
+                  <span className="ml-1 text-xs text-slate-400">
+                    {r.league_abbr ?? "—"}
+                  </span>
+                </td>
+                {ADV_BATTING_COLUMNS.map(([field]) => (
+                  <td
+                    key={field as string}
+                    className="px-2 py-1.5 text-right font-mono text-sm tabular-nums"
+                  >
+                    {formatCell(field as string, (r as unknown as Record<string, unknown>)[field as string])}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-1 text-xs text-slate-400">
+        Per-(year, level) grain. Multi-team-same-level seasons collapse
+        into one row using the dominant team&apos;s park factor. League
+        constants are 2026-2029-only in this save — earlier years show
+        &ldquo;—&rdquo; when no historical league baseline exists.
+      </p>
+    </section>
+  );
+}
+
+function AdvancedPitchingTable({
+  rows,
+  headers,
+}: {
+  rows: PlayerAdvancedPitchingRow[];
+  headers: ColumnHeader[];
+}) {
+  return (
+    <section>
+      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        Advanced Pitching
+      </h2>
+      <div className="overflow-x-auto rounded-md border border-slate-200">
+        <table className="min-w-full text-sm">
+          <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+            <tr>
+              <th className="w-16 px-2 py-1.5 text-left font-medium">Year</th>
+              <th className="w-12 px-2 py-1.5 text-right font-medium">Age</th>
+              <th className="w-20 px-2 py-1.5 text-left font-medium">Lvl/Lg</th>
+              {headers.map((h) => (
+                <th
+                  key={h.field}
+                  className="px-2 py-1.5 text-right font-medium"
+                  title={h.tooltip}
+                >
+                  {h.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr
+                key={`${r.year}-${r.level_id}-${r.league_id}`}
+                className="border-t border-slate-100"
+              >
+                <td className="px-2 py-1.5 text-left font-mono text-sm tabular-nums">
+                  {r.year}
+                </td>
+                <td className="px-2 py-1.5 text-right font-mono text-xs text-slate-500">
+                  {r.age ?? "—"}
+                </td>
+                <td className="px-2 py-1.5 text-left font-mono">
+                  <span className="text-slate-800">{r.level_name}</span>
+                  <span className="ml-1 text-xs text-slate-400">
+                    {r.league_abbr ?? "—"}
+                  </span>
+                </td>
+                {ADV_PITCHING_COLUMNS.map(([field]) => (
+                  <td
+                    key={field as string}
+                    className="px-2 py-1.5 text-right font-mono text-sm tabular-nums"
+                  >
+                    {formatCell(field as string, (r as unknown as Record<string, unknown>)[field as string])}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-1 text-xs text-slate-400">
+        Pitchers with ≥10 IP at the level only. Park-aware: ERA+ uses
+        80% park factor (audit convention); pit_WAR uses replacement
+        FIP × 1.13.
+      </p>
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Fielding — flat rows + per-position career rollup
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -568,6 +740,14 @@ export function PlayerStatsTab({
     FIELDING_COLUMNS as Array<[string, string]>,
     dict,
   );
+  const advBattingHeaders = buildHeaders(
+    ADV_BATTING_COLUMNS as Array<[string, string]>,
+    dict,
+  );
+  const advPitchingHeaders = buildHeaders(
+    ADV_PITCHING_COLUMNS as Array<[string, string]>,
+    dict,
+  );
 
   const [expandedBatting, setExpandedBatting] = useState<Set<number>>(
     () => new Set(),
@@ -590,6 +770,8 @@ export function PlayerStatsTab({
   const hasBatting = player.batting_seasons.length > 0;
   const hasPitching = player.pitching_seasons.length > 0;
   const hasFielding = player.fielding_rows.length > 0;
+  const hasAdvBatting = player.advanced_batting.length > 0;
+  const hasAdvPitching = player.advanced_pitching.length > 0;
 
   return (
     <div className="space-y-8">
@@ -650,6 +832,20 @@ export function PlayerStatsTab({
               )}
             </>
           }
+        />
+      )}
+
+      {hasAdvBatting && (
+        <AdvancedBattingTable
+          rows={player.advanced_batting}
+          headers={advBattingHeaders}
+        />
+      )}
+
+      {hasAdvPitching && (
+        <AdvancedPitchingTable
+          rows={player.advanced_pitching}
+          headers={advPitchingHeaders}
         />
       )}
 

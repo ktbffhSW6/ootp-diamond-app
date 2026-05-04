@@ -299,6 +299,58 @@ class PlayerFieldingRow(BaseModel):
     fpct: float | None          # (PO+A)/(PO+A+E); None when total chances are 0
 
 
+class PlayerAdvancedBattingRow(BaseModel):
+    """Per-(year, league_id, level_id) advanced batting stats.
+
+    One row per league-year-level a player accumulated PA in. Multi-team
+    stints within the same level collapse to one row (the dominant
+    team's park factor applies). Cross-level rollups are intentionally
+    omitted — league constants differ by level so cross-level wRC+
+    isn't a well-defined number.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    year: int
+    age: int | None
+    level_id: int
+    level_name: str
+    league_id: int
+    league_abbr: str | None
+    pa: int
+    woba: float | None
+    wraa: float | None
+    wrc: float | None
+    wrc_plus: int | None
+    ops_plus: int | None
+    o_war: float | None
+    park_avg: float | None        # the dominant-team park factor used
+
+
+class PlayerAdvancedPitchingRow(BaseModel):
+    """Per-(year, league_id, level_id) advanced pitching stats.
+
+    Only pitchers with ≥ 30 outs (≥ 10 IP) at the level appear — matches
+    the audit's quality threshold. Park factor is the dominant team's
+    (most outs at this level).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    year: int
+    age: int | None
+    level_id: int
+    level_name: str
+    league_id: int
+    league_abbr: str | None
+    outs: int
+    ip_display: float
+    fip: float | None
+    era_plus: int | None
+    pit_war: float | None
+    park_avg: float | None
+
+
 class PlayerCareerFielding(BaseModel):
     """Career rollup per position.
 
@@ -343,6 +395,8 @@ class PlayerResponse(BaseModel):
     batting_seasons: list[PlayerBattingSeason]
     pitching_seasons: list[PlayerPitchingSeason]
     fielding_rows: list[PlayerFieldingRow]
+    advanced_batting: list[PlayerAdvancedBattingRow]
+    advanced_pitching: list[PlayerAdvancedPitchingRow]
     batting_career: PlayerCareerBatting | None
     pitching_career: PlayerCareerPitching | None
     fielding_career: list[PlayerCareerFielding]   # one row per position

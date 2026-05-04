@@ -1754,4 +1754,12 @@ def build_l3(
             f"[dim]{n:>10,} rows  PK=(streak_id, scope, rank_in_scope)[/dim]"
         )
 
+    # Advanced fact tables — wOBA / wRC+ / OPS+ / FIP / ERA+ / WAR per
+    # (player, year, league, level). Materializes the audit-decoded
+    # sabermetric stack so the player API + future leaderboards SELECT
+    # rather than recomputing per request. See l3_advanced.py for the
+    # grain rationale + park-factor handling.
+    from diamond.schema.l3_advanced import build_l3_advanced
+    rows.update(build_l3_advanced(con, verbose=verbose))
+
     return rows
