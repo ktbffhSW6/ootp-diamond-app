@@ -23,7 +23,9 @@ import type {
   PlayerBattingSeason,
   PlayerBattingStint,
   PlayerCareerBatting,
+  PlayerCareerFielding,
   PlayerCareerPitching,
+  PlayerFieldingRow,
   PlayerPitchingSeason,
   PlayerPitchingStint,
   PlayerResponse,
@@ -57,6 +59,20 @@ const BATTING_COLUMNS: Array<[keyof PlayerBattingStint, string]> = [
   ["ops", "OPS"],
 ];
 
+// Fielding columns. The schema is keyed by (year, position, team), so
+// rows are flat rather than disclosure-grouped — see schemas/player.py
+// for why combining across positions doesn't carry meaning.
+const FIELDING_COLUMNS: Array<[keyof PlayerFieldingRow, string]> = [
+  ["g", "G_fielder"],
+  ["gs", "GS_fielder"],
+  ["inn_display", "INN"],
+  ["po", "PO"],
+  ["a", "A"],
+  ["e", "E"],
+  ["dp", "DP"],
+  ["fpct", "FPCT"],
+];
+
 const PITCHING_COLUMNS: Array<[keyof PlayerPitchingStint, string]> = [
   ["w", "W"],
   ["l", "L"],
@@ -77,12 +93,13 @@ const PITCHING_COLUMNS: Array<[keyof PlayerPitchingStint, string]> = [
 ];
 
 // Where the field-name → dictionary lookup doesn't capture the column
-// header (rate-per-9 derivatives), pin the header here. Tooltip still
-// pulls from the related dictionary entry.
+// header (rate-per-9 derivatives, IP/INN display variants), pin the
+// header here. Tooltip still pulls from the related dictionary entry.
 const COLUMN_HEADER_OVERRIDES: Partial<Record<string, string>> = {
   k_per_9: "K/9",
   bb_per_9: "BB/9",
   ip_display: "IP",
+  inn_display: "INN",
 };
 
 function buildGlossaryIndex(g: GlossaryListResponse): Record<string, GlossaryEntry> {
@@ -101,11 +118,12 @@ function tooltipFor(entry: GlossaryEntry | undefined): string | undefined {
 // ─────────────────────────────────────────────────────────────────────────
 
 // Slash-line stats render to 3 decimals leading-zero-stripped (Bref style).
-const SLASH_FIELDS = new Set(["avg", "obp", "slg", "ops"]);
+// FPCT shares the same convention (.985, .992, etc.).
+const SLASH_FIELDS = new Set(["avg", "obp", "slg", "ops", "fpct"]);
 // ERA / WHIP / K9 / BB9 render to 2 decimals.
 const TWO_DP_FIELDS = new Set(["era", "whip", "k_per_9", "bb_per_9"]);
-// IP renders as `int.frac` (Bref convention: 172.1 = 172⅓).
-const IP_FIELDS = new Set(["ip_display"]);
+// IP / INN render as `int.frac` (Bref convention: 172.1 = 172⅓).
+const IP_FIELDS = new Set(["ip_display", "inn_display"]);
 
 function formatCell(field: string, value: unknown): string {
   if (value == null) return "—";
@@ -386,6 +404,121 @@ function BattingCareerRow({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Fielding — flat rows + per-position career rollup
+// ─────────────────────────────────────────────────────────────────────────
+
+function FieldingRowItem({ row }: { row: PlayerFieldingRow }) {
+  return (
+    <tr className="border-t border-slate-100">
+      <td className="w-16 px-2 py-1.5 text-left font-mono text-sm tabular-nums">
+        {row.year}
+      </td>
+      <td className="w-12 px-2 py-1.5 text-right font-mono text-xs text-slate-500">
+        {row.age ?? "—"}
+      </td>
+      <td className="w-16 px-2 py-1.5 text-left font-mono text-sm">
+        {row.position_name}
+      </td>
+      <td className="w-32 px-2 py-1.5 text-left">
+        <TeamCell team={row.team} />
+      </td>
+      {FIELDING_COLUMNS.map(([field]) => (
+        <td
+          key={field as string}
+          className="px-2 py-1.5 text-right font-mono text-sm tabular-nums"
+        >
+          {formatCell(field as string, (row as unknown as Record<string, unknown>)[field as string])}
+        </td>
+      ))}
+    </tr>
+  );
+}
+
+function FieldingCareerRow({
+  career,
+}: {
+  career: PlayerCareerFielding;
+}) {
+  return (
+    <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
+      <td className="px-2 py-1.5 text-left text-sm" colSpan={2}>
+        Career
+      </td>
+      <td className="w-16 px-2 py-1.5 text-left font-mono text-sm">
+        {career.position_name}
+      </td>
+      <td></td>
+      {FIELDING_COLUMNS.map(([field]) => (
+        <td
+          key={field as string}
+          className="px-2 py-1.5 text-right font-mono text-sm tabular-nums"
+        >
+          {formatCell(field as string, (career as unknown as Record<string, unknown>)[field as string])}
+        </td>
+      ))}
+    </tr>
+  );
+}
+
+function FieldingTable({
+  rows,
+  career,
+  headers,
+}: {
+  rows: PlayerFieldingRow[];
+  career: PlayerCareerFielding[];
+  headers: ColumnHeader[];
+}) {
+  return (
+    <section>
+      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        Fielding
+      </h2>
+      <div className="overflow-x-auto rounded-md border border-slate-200">
+        <table className="min-w-full text-sm">
+          <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+            <tr>
+              <th className="w-16 px-2 py-1.5 text-left font-medium">Year</th>
+              <th className="w-12 px-2 py-1.5 text-right font-medium">Age</th>
+              <th className="w-16 px-2 py-1.5 text-left font-medium">Pos</th>
+              <th className="w-32 px-2 py-1.5 text-left font-medium">Team</th>
+              {headers.map((h) => (
+                <th
+                  key={h.field}
+                  className="px-2 py-1.5 text-right font-medium"
+                  title={h.tooltip}
+                >
+                  {h.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <FieldingRowItem
+                key={`${r.year}-${r.position}-${r.team?.team_id ?? "x"}`}
+                row={r}
+              />
+            ))}
+            {career.length > 0 &&
+              career.map((c) => (
+                <FieldingCareerRow key={c.position} career={c} />
+              ))}
+          </tbody>
+        </table>
+      </div>
+      {career.length > 1 && (
+        <p className="mt-1 text-xs text-slate-400">
+          Career rows are per-position; cross-position totals omitted on
+          purpose (combining PO+A+E across positions doesn&apos;t carry
+          meaningful semantics).
+        </p>
+      )}
+    </section>
+  );
+}
+
 function PitchingCareerRow({
   career,
   columnOrder,
@@ -431,6 +564,10 @@ export function PlayerStatsTab({
     PITCHING_COLUMNS as Array<[string, string]>,
     dict,
   );
+  const fieldingHeaders = buildHeaders(
+    FIELDING_COLUMNS as Array<[string, string]>,
+    dict,
+  );
 
   const [expandedBatting, setExpandedBatting] = useState<Set<number>>(
     () => new Set(),
@@ -452,12 +589,13 @@ export function PlayerStatsTab({
 
   const hasBatting = player.batting_seasons.length > 0;
   const hasPitching = player.pitching_seasons.length > 0;
+  const hasFielding = player.fielding_rows.length > 0;
 
   return (
     <div className="space-y-8">
-      {!hasBatting && !hasPitching && (
+      {!hasBatting && !hasPitching && !hasFielding && (
         <p className="text-sm text-slate-500">
-          No batting or pitching stats yet for this player.
+          No batting, pitching, or fielding stats yet for this player.
         </p>
       )}
 
@@ -512,6 +650,14 @@ export function PlayerStatsTab({
               )}
             </>
           }
+        />
+      )}
+
+      {hasFielding && (
+        <FieldingTable
+          rows={player.fielding_rows}
+          career={player.fielding_career}
+          headers={fieldingHeaders}
         />
       )}
     </div>

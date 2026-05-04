@@ -179,6 +179,27 @@ export interface PlayerCareerBatting {
   slg: number | null;
   ops: number | null;
 }
+/**
+ * Career rollup per position.
+ *
+ * One row per position the player ever played; sums G/GS/INN/PO/A/E/
+ * DP across years. Career-summary FPCT is the position-rollup ratio.
+ * Career-across-positions totals aren't included — see PlayerFieldingRow
+ * for why combining across positions is semantically fraught.
+ */
+export interface PlayerCareerFielding {
+  position: number;
+  position_name: string;
+  g: number;
+  gs: number;
+  inn_outs: number;
+  inn_display: number;
+  po: number;
+  a: number;
+  e: number;
+  dp: number;
+  fpct: number | null;
+}
 export interface PlayerCareerPitching {
   g: number;
   gs: number;
@@ -198,6 +219,29 @@ export interface PlayerCareerPitching {
   whip: number | null;
   k_per_9: number | null;
   bb_per_9: number | null;
+}
+/**
+ * One fielding row at (year, league, level, team, position) grain.
+ *
+ * `inn_outs` is the total defensive outs (`ip*3 + ipf`); `inn_display`
+ * is the Bref-style "147.1" form (147⅓). Use `inn_outs` for any
+ * arithmetic; display form is lossy.
+ */
+export interface PlayerFieldingRow {
+  year: number;
+  age: number | null;
+  team: TeamRef | null;
+  position: number;
+  position_name: string;
+  g: number;
+  gs: number;
+  inn_outs: number;
+  inn_display: number;
+  po: number;
+  a: number;
+  e: number;
+  dp: number;
+  fpct: number | null;
 }
 export interface PlayerPitchingSeason {
   year: number;
@@ -249,6 +293,8 @@ export interface PlayerResponse {
   bio: PlayerBio;
   batting_seasons: PlayerBattingSeason[];
   pitching_seasons: PlayerPitchingSeason[];
+  fielding_rows: PlayerFieldingRow[];
   batting_career: PlayerCareerBatting | null;
   pitching_career: PlayerCareerPitching | null;
+  fielding_career: PlayerCareerFielding[];
 }

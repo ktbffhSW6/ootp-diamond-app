@@ -35,7 +35,9 @@ from diamond.api.schemas import (
     PlayerBattingStint,
     PlayerBio,
     PlayerCareerBatting,
+    PlayerCareerFielding,
     PlayerCareerPitching,
+    PlayerFieldingRow,
     PlayerPitchingSeason,
     PlayerPitchingStint,
     PlayerResponse,
@@ -123,6 +125,14 @@ def _ip_display(outs: int) -> float:
     full = outs // 3
     frac = outs % 3
     return round(full + frac * 0.1, 1)
+
+
+def _fpct(po: int, a: int, e: int) -> float | None:
+    """Fielding percentage: (PO+A)/(PO+A+E). None when no chances."""
+    chances = po + a + e
+    if chances == 0:
+        return None
+    return round((po + a) / chances, 3)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -294,6 +304,49 @@ def _fetch_batting_stints(
         "team_abbr", "team_nickname", "league_abbr", "age",
         "g", "pa", "ab", "r", "h", "d", "t", "hr",
         "rbi", "sb", "cs", "bb", "so", "hbp", "sf",
+    ]
+    return [dict(zip(cols, r, strict=True)) for r in rows]
+
+
+def _fetch_fielding_rows(
+    con: duckdb.DuckDBPyConnection, player_id: int,
+) -> list[dict[str, Any]]:
+    """Return one dict per (year, league, level, team, position) fielding row.
+
+    Filters to `split_id = 0` (fielding has no platoon split — the
+    overall aggregate is `split_id = 0`, not 1). `inn_outs` is computed
+    server-side as `ip*3 + ipf` to keep the API surface in canonical
+    units.
+    """
+    rows = con.execute(
+        """
+        SELECT
+            f.year, f.league_id, f.level_id, f.team_id, f.position,
+            t.abbr            AS team_abbr,
+            t.nickname        AS team_nickname,
+            l.abbr            AS league_abbr,
+            (f.year - EXTRACT(YEAR FROM pl.date_of_birth))::INTEGER AS age,
+            CAST(f.g    AS BIGINT) AS g,
+            CAST(f.gs   AS BIGINT) AS gs,
+            CAST(f.ip   AS BIGINT) AS ip,
+            CAST(f.ipf  AS BIGINT) AS ipf,
+            CAST(f.po   AS BIGINT) AS po,
+            CAST(f.a    AS BIGINT) AS a,
+            CAST(f.e    AS BIGINT) AS e,
+            CAST(f.dp   AS BIGINT) AS dp
+        FROM f_player_season_fielding f
+        LEFT JOIN teams   t  ON t.team_id   = f.team_id
+        LEFT JOIN leagues l  ON l.league_id = f.league_id
+        LEFT JOIN players_current pl ON pl.player_id = f.player_id
+        WHERE f.player_id = ? AND f.split_id = 0
+        ORDER BY f.year, f.position, f.level_id, t.abbr
+        """,
+        [player_id],
+    ).fetchall()
+    cols = [
+        "year", "league_id", "level_id", "team_id", "position",
+        "team_abbr", "team_nickname", "league_abbr", "age",
+        "g", "gs", "ip", "ipf", "po", "a", "e", "dp",
     ]
     return [dict(zip(cols, r, strict=True)) for r in rows]
 
@@ -499,6 +552,73 @@ def _build_batting_career(stints: list[dict[str, Any]]) -> PlayerCareerBatting |
     )
 
 
+def _build_fielding_rows(rows: list[dict[str, Any]]) -> list[PlayerFieldingRow]:
+    """Convert fetched dicts to PlayerFieldingRow models in fetch order.
+
+    Fetch SQL already orders by (year, position, level, team), so the
+    output reads top-to-bottom as a Bref-style flat fielding table.
+    """
+    out: list[PlayerFieldingRow] = []
+    for r in rows:
+        ip = int(r["ip"])
+        ipf = int(r["ipf"])
+        inn_outs = ip * 3 + ipf
+        po, a, e = int(r["po"]), int(r["a"]), int(r["e"])
+        position = int(r["position"])
+        out.append(PlayerFieldingRow(
+            year=int(r["year"]),
+            age=int(r["age"]) if r.get("age") is not None else None,
+            team=_team_ref(r),
+            position=position,
+            position_name=POSITION_NAMES.get(position, f"P{position}"),
+            g=int(r["g"]),
+            gs=int(r["gs"]),
+            inn_outs=inn_outs,
+            inn_display=_ip_display(inn_outs),
+            po=po,
+            a=a,
+            e=e,
+            dp=int(r["dp"]),
+            fpct=_fpct(po, a, e),
+        ))
+    return out
+
+
+_FIELDING_SUM_COLS = ("g", "gs", "po", "a", "e", "dp")
+
+
+def _build_fielding_career(rows: list[dict[str, Any]]) -> list[PlayerCareerFielding]:
+    """One career-rollup row per position. Sums G/GS/INN/PO/A/E/DP across years.
+
+    Returns [] when the player has no fielding data. Career rows omit
+    cross-position totals deliberately — see PlayerFieldingRow docstring
+    for why combining across positions is semantically fraught.
+    """
+    if not rows:
+        return []
+    by_position: dict[int, list[dict[str, Any]]] = {}
+    for r in rows:
+        by_position.setdefault(int(r["position"]), []).append(r)
+    out: list[PlayerCareerFielding] = []
+    for position in sorted(by_position):
+        pos_rows = by_position[position]
+        totals = {col: sum(int(r[col]) for r in pos_rows) for col in _FIELDING_SUM_COLS}
+        ip_total = sum(int(r["ip"]) for r in pos_rows)
+        ipf_total = sum(int(r["ipf"]) for r in pos_rows)
+        # ipf can sum past 3 if a player had multiple fractional-out
+        # stints; normalize so display IP stays canonical.
+        inn_outs = ip_total * 3 + ipf_total
+        out.append(PlayerCareerFielding(
+            position=position,
+            position_name=POSITION_NAMES.get(position, f"P{position}"),
+            g=totals["g"], gs=totals["gs"],
+            inn_outs=inn_outs, inn_display=_ip_display(inn_outs),
+            po=totals["po"], a=totals["a"], e=totals["e"], dp=totals["dp"],
+            fpct=_fpct(totals["po"], totals["a"], totals["e"]),
+        ))
+    return out
+
+
 def _build_pitching_career(stints: list[dict[str, Any]]) -> PlayerCareerPitching | None:
     if not stints:
         return None
@@ -542,10 +662,13 @@ def get_player(
         )
     bat_stints = _fetch_batting_stints(con, player_id)
     pit_stints = _fetch_pitching_stints(con, player_id)
+    fld_rows = _fetch_fielding_rows(con, player_id)
     return PlayerResponse(
         bio=bio,
         batting_seasons=_build_batting_seasons(bat_stints),
         pitching_seasons=_build_pitching_seasons(pit_stints),
+        fielding_rows=_build_fielding_rows(fld_rows),
         batting_career=_build_batting_career(bat_stints),
         pitching_career=_build_pitching_career(pit_stints),
+        fielding_career=_build_fielding_career(fld_rows),
     )

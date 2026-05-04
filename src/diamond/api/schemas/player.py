@@ -11,15 +11,21 @@ page's Stats tab. It carries:
   render a top-level "TOT" row + indented stints, or just the single stint.
 - career totals across all stints
 
+Fielding stats (added 2026-05-07): `PlayerFieldingRow` is keyed by
+`(year, league, level, team, position)` — note the extra `position`
+dimension vs batting/pitching. A single player can have multiple
+fielding rows in one (year, team) pair when they played multiple
+positions; we render those as flat rows rather than a TOT-style
+disclosure since combining PO+A+E across positions doesn't carry
+meaningful semantics.
+
 What's intentionally NOT here yet (deferred to a follow-up slice):
 
-- Fielding stats — separate schema once the column set stabilizes.
 - Advanced stats (wOBA / wRC+ / OPS+ / FIP / ERA+ / WAR) — currently
   computed in `diamond.advanced.*` over the full warehouse; routing them
   through the player endpoint requires either materializing per-season
   advanced facts or threading the on-demand computation through the
-  request handler. Either is a meaningful chunk of work; this slice
-  proves the end-to-end shape with counting stats first.
+  request handler. Either is a meaningful chunk of work.
 - Statcast-cohort fields (MAX_EV / AVG_EV / barrel% etc.) — defer to
   the player Charts tab.
 
@@ -256,6 +262,68 @@ class PlayerCareerPitching(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Fielding — per (year, league, level, team, position) flat rows
+#
+# Why no disclosure: fielding rows aren't naturally summable across
+# positions (a player's PO at 2B + PO at SS sum to a number but it
+# doesn't mean "putouts as an infielder" in any useful sense), so the
+# TOT-row pattern that works for batting/pitching doesn't fit. The
+# frontend renders these as a flat table sorted by year-then-position-
+# then-team, with `position_name` resolved server-side.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class PlayerFieldingRow(BaseModel):
+    """One fielding row at (year, league, level, team, position) grain.
+
+    `inn_outs` is the total defensive outs (`ip*3 + ipf`); `inn_display`
+    is the Bref-style "147.1" form (147⅓). Use `inn_outs` for any
+    arithmetic; display form is lossy.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    year: int
+    age: int | None
+    team: TeamRef | None
+    position: int               # raw OOTP code 1-9 (no DH at fielding grain)
+    position_name: str          # resolved display: "P", "C", "1B", ...
+    g: int
+    gs: int
+    inn_outs: int               # total defensive outs (ip*3 + ipf)
+    inn_display: float          # Bref-style display (147.1 = 147⅓ INN)
+    po: int
+    a: int
+    e: int
+    dp: int
+    fpct: float | None          # (PO+A)/(PO+A+E); None when total chances are 0
+
+
+class PlayerCareerFielding(BaseModel):
+    """Career rollup per position.
+
+    One row per position the player ever played; sums G/GS/INN/PO/A/E/
+    DP across years. Career-summary FPCT is the position-rollup ratio.
+    Career-across-positions totals aren't included — see PlayerFieldingRow
+    for why combining across positions is semantically fraught.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    position: int
+    position_name: str
+    g: int
+    gs: int
+    inn_outs: int
+    inn_display: float
+    po: int
+    a: int
+    e: int
+    dp: int
+    fpct: float | None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Top-level envelope
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -274,5 +342,7 @@ class PlayerResponse(BaseModel):
     bio: PlayerBio
     batting_seasons: list[PlayerBattingSeason]
     pitching_seasons: list[PlayerPitchingSeason]
+    fielding_rows: list[PlayerFieldingRow]
     batting_career: PlayerCareerBatting | None
     pitching_career: PlayerCareerPitching | None
+    fielding_career: list[PlayerCareerFielding]   # one row per position

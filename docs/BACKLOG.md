@@ -342,15 +342,20 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
     Carlos Rodón career renders w/ 1796⅓ IP, 3.92 ERA; 5-stint
     2029 Raymer Medina with synthesized TOT + indented stints
     expanding correctly.
-  - [ ] **Stats tab v2** — fielding stats subtable (uses
-    `f_player_season_fielding`; needs ~8 new dictionary entries:
-    G_fielder, GS_fielder, INN, PO, A, E, DP, FPCT). Advanced-stats
-    column block (wOBA / wRC+ / OPS+ / FIP / ERA+ / WAR / Statcast
-    EV+barrel) — requires either materializing
-    `f_player_season_advanced_*` L3 tables (listed as future work in
-    `src/diamond/schema/l3.py` docstring) or threading the existing
-    `diamond.advanced.*` on-demand computations through the request
-    handler.
+  - [x] **Fielding subtable** — done 2026-05-07. Per-(year, position,
+    team) flat rows + per-position career rollups. Dictionary +8:
+    G_fielder, GS_fielder, INN, PO, A, E, DP, FPCT. Cross-position
+    totals deliberately omitted (combining PO+A+E across positions
+    doesn't carry useful semantics; explainer line in the UI when a
+    player has multi-position career rows). Smoke verified live with
+    Samad Taylor (7-position UTIL) and Carlos Rodón (pitcher-only
+    fielding).
+  - [ ] **Advanced stats column block** — wOBA / wRC+ / OPS+ / FIP /
+    ERA+ / WAR / Statcast EV+barrel per stint. Requires either
+    materializing `f_player_season_advanced_*` L3 tables (listed as
+    future work in `src/diamond/schema/l3.py` docstring; recommended
+    path) or threading existing `diamond.advanced.*` on-demand
+    computations through the request handler.
   - [ ] **Charts tab** — radial career arc (angular = year, radius
     = headline stat: OPS+/wRC+/WAR/ERA+, color = team or level).
     Per the design discussion 2026-05-07: radial earns its keep as

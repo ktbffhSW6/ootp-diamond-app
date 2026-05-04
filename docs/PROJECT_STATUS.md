@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-07 (in-game year 2029→2030) — **Phase 3: player page Stats tab is live.** First real product feature shipped; Diamond now renders Bref-shaped year-by-year batting + pitching tables with a Savant-leaning bio header. `GET /api/players/{id}` + `/player/[id]` route work end-to-end against the warehouse — 16-season Carlos Rodón career (1796⅓ IP, 3.92 ERA, 9.69 K/9), 5-stint single-season disclosure for Raymer Medina with synthesized "TOT" rows and indented per-(level, team) sub-rows on click. Dictionary expanded to 52 entries (+13: G_batter / AB / H / D / T / L / G_pitcher / GS / ER / H_allowed / R_allowed / HR_allowed / BB_allowed) so every column header reads from `STATS[id]` per D15. `POSITION_NAMES` + `LEVEL_NAMES` lifted from `draft.py` to `constants.py` for shared use. **Next: player Charts tab** (radial career arc, percentile bars) or **demotion/promotion review** per UI_DESIGN.md build order.
+**Last updated**: 2026-05-07 (in-game year 2029→2030) — **Phase 3: player page Stats tab live with batting + pitching + fielding.** First real product feature shipped; Diamond now renders Bref-shaped year-by-year batting + pitching disclosure tables and a per-(year, position, team) fielding section with per-position career rollups. `GET /api/players/{id}` + `/player/[id]` route work end-to-end against the warehouse — 16-season Carlos Rodón career (1796⅓ IP, 3.92 ERA, 9.69 K/9; pitcher fielding .887 FPCT across 95 games), 5-stint Raymer Medina with TOT rows on click, 7-position Samad Taylor utility career with per-position fielding rollups. Dictionary expanded to 60 entries (+13 batting/pitching counting; +8 fielding: G_fielder / GS_fielder / INN / PO / A / E / DP / FPCT). `POSITION_NAMES` + `LEVEL_NAMES` lifted from `draft.py` to `constants.py` for shared use. **Next: advanced stats column block** (wOBA / wRC+ / OPS+ / FIP / ERA+ / WAR — needs L3 materialization decision) **or Charts tab** (radial career arc).
 
 ---
 
@@ -182,40 +182,53 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
      web`, `make types`, `make smoke` documented. Two-terminal flow.
    - Frontend dev deps installed on this machine: Node 24, pnpm 10,
      web/node_modules complete.
-5. ✅ **Player page Stats tab** — done 2026-05-07.
+5. ✅ **Player page Stats tab — batting + pitching + fielding** — done 2026-05-07.
    - `GET /api/players/{player_id}` returns bio + per-(year, level,
-     team) batting + pitching stints + synthesized per-season "TOT"
-     combined rows + career totals. One big payload, one fetch.
-     Pydantic schemas in `src/diamond/api/schemas/player.py`; route
-     in `src/diamond/api/routes/players.py`; warehouse connection
-     pool in `src/diamond/api/warehouse.py` (per-process root con
-     + cursor-per-request).
-   - `/player/[id]` page (URL uses internal `player_id`; bbref-id
-     lookups deferred). Server component fetches player + glossary
-     in parallel; bio header (name, nickname, position, B/T,
-     current team, retired/HoF flags) + tab strip (Stats active;
-     Charts/Game log/Comparisons/Scouting/Contract as placeholders).
-   - `web/components/PlayerStatsTab.tsx` (client component) — Bref-
-     shaped disclosure-row tables. Default rendering: one row per
-     year (combined "TOT" if multi-stint, single stint otherwise).
-     Clicking the chevron on a multi-stint row expands per-(level,
-     team) sub-rows indented below. Career-total row pinned at the
-     bottom of each table.
+     team) batting + pitching stints with synthesized per-season
+     "TOT" rows + per-(year, position, team) fielding rows + career
+     rollups (batting/pitching cross-year, fielding per-position).
+     One big payload, one fetch. Pydantic schemas in
+     `src/diamond/api/schemas/player.py`; route in
+     `src/diamond/api/routes/players.py`; warehouse connection
+     pool in `src/diamond/api/warehouse.py`.
+   - `/player/[id]` page (URL uses internal `player_id`). Server
+     component fetches player + glossary in parallel. Bio header,
+     tab strip (Stats active; others placeholder), and three
+     stacked stat sections.
+   - `web/components/PlayerStatsTab.tsx` (client component):
+     - **Batting / Pitching**: Bref-shaped disclosure-row tables.
+       One row per year (TOT if multi-stint, single stint otherwise);
+       chevron expands multi-stint years to indented per-(level,
+       team) sub-rows. Career-totals row pinned at bottom.
+     - **Fielding**: flat per-(year, position, team) rows — fielding
+       isn't summable across positions in a meaningful way, so no
+       TOT-style disclosure. Per-position career rollup rows pinned
+       at bottom; explainer line below the table when a player has
+       multi-position career rows ("cross-position totals omitted on
+       purpose").
    - Column headers + tooltips read from `STATS[id]` (D15 contract):
-     dictionary expanded by 13 entries to cover G/AB/H/2B/3B/L/GS/
-     ER + H/R/HR/BB allowed for the v1 column set.
-   - Fielding stats + advanced cohort (wOBA / wRC+ / OPS+ / FIP /
-     ERA+ / WAR / Statcast EV + barrel) **deferred to follow-up
-     slices**. Advanced stats currently live as functions in
-     `diamond.advanced.*`; surfacing them on the player page needs
-     either per-season L3 materialization or threading the on-
-     demand computation through the request handler.
-6. **Player page Charts tab** — radial career arc visualization
+     dictionary now 60 entries (+13 batting/pitching counting; +8
+     fielding). Header overrides for K/9, BB/9, IP, INN where the
+     display label diverges from the dictionary's `short_label`;
+     tooltip still inherits from the parent entry.
+   - Advanced cohort (wOBA / wRC+ / OPS+ / FIP / ERA+ / WAR /
+     Statcast EV + barrel) still **deferred**. Advanced stats live
+     as functions in `diamond.advanced.*`; surfacing them on the
+     player page needs either per-season L3 materialization (the
+     `f_player_season_advanced_*` work listed in `l3.py` docstring)
+     or threading the on-demand computation through the request
+     handler.
+6. **Advanced stats column block** — wOBA / wRC+ / OPS+ / FIP /
+   ERA+ / WAR per stint. Materialize `f_player_season_advanced_*`
+   L3 tables (cleaner, future-proof) vs threading existing
+   `diamond.advanced.*` functions through the route (faster, no
+   schema improvement). Recommend materialize.
+7. **Player page Charts tab** — radial career arc visualization
    (angular axis = year, radius = headline stat: OPS+/wRC+/WAR/ERA+).
    Per the design discussion 2026-05-07: radial earns its keep as
    a viz, not a navigation aid; the Stats tab disclosure rows are
    the foundation, the chart adds visual signature.
-7. Then per UI_DESIGN.md: demotion/promotion → custom leaderboards →
+8. Then per UI_DESIGN.md: demotion/promotion → custom leaderboards →
    universes + chart-builder → AI overlay → cockpit → reviews →
    setup wizard → sync triggers.
 

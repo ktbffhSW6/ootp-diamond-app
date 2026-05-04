@@ -1230,8 +1230,203 @@ _ENTRIES: list[Stat] = [
     ),
 
     # ─────────────────────────────────────────────────────────────────
-    # Fielding
+    # Fielding — counting + rate
     # ─────────────────────────────────────────────────────────────────
+
+    Stat(
+        id="G_fielder",
+        display_name="Games (fielding)",
+        short_label="G",
+        category="fielding",
+        formula_tex="",
+        formula_plain="(count)",
+        description=(
+            "Games played at this defensive position. A multi-position "
+            "player has separate G totals per position — a UTIL with "
+            "30 games at 2B + 20 at SS + 15 at 3B totals 65 G across "
+            "positions, not 65 in any one row."
+        ),
+        units="count",
+        typical_range="Everyday: 130+; backup at the position: <50",
+        interpretation="Higher = more time at this spot. Add across "
+                       "positions for total defensive games.",
+        caveats="Per-position; sums across positions for the same year/"
+                "team can exceed the player's batting G if they switched "
+                "positions mid-game.",
+        source="f_player_season_fielding.g",
+        formula_source="OOTP raw",
+        related=("GS_fielder", "G_batter", "INN"),
+        refs={"Bref": f"{_BR}/Games_played"},
+    ),
+
+    Stat(
+        id="GS_fielder",
+        display_name="Games Started (fielding)",
+        short_label="GS",
+        category="fielding",
+        formula_tex="",
+        formula_plain="(count)",
+        description=(
+            "Games started at this position. Distinguishes a true "
+            "regular at the spot from a late-game defensive replacement."
+        ),
+        units="count",
+        typical_range="Everyday: 130+; platoon partner: 60-90; sub: <30",
+        interpretation="GS / G ratio identifies regular vs. backup status.",
+        caveats=None,
+        source="f_player_season_fielding.gs",
+        formula_source="OOTP raw",
+        related=("G_fielder", "INN"),
+        refs={"Bref": f"{_BR}/Games_started"},
+    ),
+
+    Stat(
+        id="INN",
+        display_name="Innings (fielding)",
+        short_label="INN",
+        category="fielding",
+        formula_tex=r"\mathrm{INN} = \mathrm{ip} + \tfrac{\mathrm{ipf}}{3}",
+        formula_plain=(
+            "INN = ip + ipf/3 (rendered as integer.frac, e.g., 147.0 = 147 IP, "
+            "147.1 = 147⅓, 147.2 = 147⅔)"
+        ),
+        description=(
+            "Defensive innings at this position. The denominator for "
+            "RF/9 and similar rate stats. Bref-style display: integer + "
+            "fractional outs (`.1` = 1 out, `.2` = 2 outs)."
+        ),
+        units="count (innings, .1/.2 fractional)",
+        typical_range="Full season at one position: 1300+; backup: <500",
+        interpretation="Display: 147.1 = 147⅓ defensive innings.",
+        caveats=(
+            "Display convention: integer + (ipf)*0.1, NOT integer.frac "
+            "decimal. Same rule as IP for pitching."
+        ),
+        source="f_player_season_fielding.ip + ipf/3",
+        formula_source="OOTP raw / standard",
+        related=("G_fielder", "RF_per_9"),
+        refs={"Bref": f"{_BR}/Innings_played"},
+    ),
+
+    Stat(
+        id="PO",
+        display_name="Putouts",
+        short_label="PO",
+        category="fielding",
+        formula_tex="",
+        formula_plain="(count)",
+        description=(
+            "Defensive plays where the player records the out by tagging "
+            "the runner, catching a fly ball, or stepping on a base. "
+            "Highly position-dependent — first basemen rack up PO from "
+            "throws across the diamond, outfielders from fly balls."
+        ),
+        units="count",
+        typical_range="1B: 1200+; OF: 250-400; SS: 200-280; pitcher: <50",
+        interpretation="Higher = more plays. Compare WITHIN position only.",
+        caveats="Strongly position-dependent; cross-position raw PO "
+                "comparisons are meaningless.",
+        source="f_player_season_fielding.po",
+        formula_source="OOTP raw",
+        related=("A", "FPCT", "RF_per_9"),
+        refs={"Bref": f"{_BR}/Putout"},
+    ),
+
+    Stat(
+        id="A",
+        display_name="Assists",
+        short_label="A",
+        category="fielding",
+        formula_tex="",
+        formula_plain="(count)",
+        description=(
+            "Defensive plays where the player throws or deflects to a "
+            "teammate who records the out. Infielders dominate — SS and "
+            "2B accumulate hundreds per season, outfielders rack up "
+            "double-digits at most."
+        ),
+        units="count",
+        typical_range="SS: 400+; 3B: 250+; 2B: 350+; OF: 5-15",
+        interpretation="Higher = more throws made. Position-dependent.",
+        caveats="Don't compare across positions; OF assists are a "
+                "fundamentally different skill (arm + situational reads).",
+        source="f_player_season_fielding.a",
+        formula_source="OOTP raw",
+        related=("PO", "FPCT", "RF_per_9"),
+        refs={"Bref": f"{_BR}/Assist_(baseball)"},
+    ),
+
+    Stat(
+        id="E",
+        display_name="Errors",
+        short_label="E",
+        category="fielding",
+        formula_tex="",
+        formula_plain="(count)",
+        description=(
+            "Defensive plays the player should have made but didn't. "
+            "Subjective scorer judgement — modern advanced metrics "
+            "(DRS / UZR / OAA) avoid the official-scorer dependency."
+        ),
+        units="count",
+        typical_range="Gold-glove tier: <10; bad season at a position: 25+",
+        interpretation="Lower = better. Pair with FPCT for rate context.",
+        caveats="Official-scorer-subjective. Pair with range-based metrics "
+                "(DRS / UZR / OAA) for fielder evaluation.",
+        source="f_player_season_fielding.e",
+        formula_source="OOTP raw",
+        related=("FPCT", "PO", "A"),
+        refs={"Bref": f"{_BR}/Error_(baseball)"},
+    ),
+
+    Stat(
+        id="DP",
+        display_name="Double Plays",
+        short_label="DP",
+        category="fielding",
+        formula_tex="",
+        formula_plain="(count)",
+        description=(
+            "Double plays this player participated in (as a fielder of "
+            "record on either out). Concentrated at SS, 2B, 1B — the "
+            "6-4-3 / 4-6-3 / 5-4-3 routes."
+        ),
+        units="count",
+        typical_range="2B: 100+; SS: 80+; 1B: 130+; OF: <5",
+        interpretation="Higher = more pivot opportunity. Strongly affected "
+                       "by team groundball rate and runners-on rate.",
+        caveats="Team-context-dependent — high-K pitching staffs starve "
+                "infielders of DP opportunities.",
+        source="f_player_season_fielding.dp",
+        formula_source="OOTP raw",
+        related=("PO", "A"),
+        refs={"Bref": f"{_BR}/Double_play"},
+    ),
+
+    Stat(
+        id="FPCT",
+        display_name="Fielding Percentage",
+        short_label="FPCT",
+        category="fielding",
+        formula_tex=r"\mathrm{FPCT} = \dfrac{PO + A}{PO + A + E}",
+        formula_plain="FPCT = (PO + A) / (PO + A + E)",
+        description=(
+            "Successful defensive plays as a fraction of total chances. "
+            "The classic measure but a flawed one — doesn't reward range "
+            "(a poor fielder who never reaches a ball can post a perfect "
+            "FPCT)."
+        ),
+        units="rate (.000-1.000)",
+        typical_range="Gold-glove tier: .985+; league avg: ~.980; rough: <.965",
+        interpretation="Higher = fewer errors per chance. Use DRS / UZR "
+                       "for true defensive value.",
+        caveats="Doesn't distinguish range from sure-handedness — a "
+                "player who never gets to the ball can't make an error.",
+        source="f_player_season_fielding (po, a, e)",
+        formula_source="standard",
+        related=("E", "PO", "A", "RF_per_9"),
+        refs={"Bref": f"{_BR}/Fielding_percentage"},
+    ),
 
     Stat(
         id="RF_per_9",
