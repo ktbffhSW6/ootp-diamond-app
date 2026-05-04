@@ -111,12 +111,12 @@ def _fetch_leaderboard(
     the stored within-source rank.
     """
     where_era = ""
-    if era in ("save", "lahman", "bref", "statcast"):
+    if era in ("save", "lahman", "bref", "statcast", "merged"):
         where_era = f"AND source = '{era}'"
     elif era != "all":
         raise ValueError(
-            f"era must be one of 'all' / 'save' / 'lahman' / 'bref' / 'statcast', "
-            f"got {era!r}"
+            f"era must be one of 'all' / 'save' / 'lahman' / 'bref' / 'statcast' "
+            f"/ 'merged', got {era!r}"
         )
 
     rel = con.execute(
@@ -149,7 +149,7 @@ def _render_leaderboard(
     era_label = {
         "all": "all eras", "save": "save only",
         "lahman": "Lahman (1871-2019)", "bref": "BREF (2020-2025)",
-        "statcast": "Statcast era",
+        "statcast": "Statcast era", "merged": "merged real history",
     }[era]
     title = f"MLB {scope} {discipline} — {category}  [{era_label}]"
     console.rule(f"[bold cyan]{title}")
@@ -193,6 +193,7 @@ def _render_leaderboard(
             color = {
                 "save": "cyan", "lahman": "magenta",
                 "bref": "blue", "statcast": "yellow",
+                "merged": "green",
             }.get(r["source"], "white")
             cells.append(f"[{color}]{r['source']}[/{color}]")
         t.add_row(*cells)
@@ -219,10 +220,10 @@ def run(
         raise ValueError(f"scope must be 'season' or 'career', got {scope!r}")
     if discipline not in ("batting", "pitching"):
         raise ValueError(f"discipline must be 'batting' or 'pitching', got {discipline!r}")
-    if era not in ("all", "save", "lahman", "bref", "statcast"):
+    if era not in ("all", "save", "lahman", "bref", "statcast", "merged"):
         raise ValueError(
-            f"era must be one of 'all' / 'save' / 'lahman' / 'bref' / 'statcast', "
-            f"got {era!r}"
+            f"era must be one of 'all' / 'save' / 'lahman' / 'bref' / 'statcast' "
+            f"/ 'merged', got {era!r}"
         )
 
     output_path = output_path or (
@@ -235,7 +236,7 @@ def run(
         era_label = {
         "all": "all eras", "save": "save only",
         "lahman": "Lahman (1871-2019)", "bref": "BREF (2020-2025)",
-        "statcast": "Statcast era",
+        "statcast": "Statcast era", "merged": "merged real history",
     }[era]
         all_md: list[str] = [
             f"# Records — MLB {scope} {discipline}  ({era_label})",

@@ -563,10 +563,13 @@ def smoke_l3(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
         "[green]✓[/green] f_record_player values monotonically descend by rank_in_source"
     )
 
-    # source must be one of {'save', 'lahman', 'bref', 'statcast'}
+    # source must be one of {'save', 'lahman', 'bref', 'statcast', 'merged'}.
+    # 'merged' is synthesized at L3-build time when career rows from multiple
+    # non-save sources collapse onto one bbref_id (e.g., Pujols Lahman 656
+    # + BREF 30 → merged 686 HR).
     n_bad_source = con.execute("""
         SELECT COUNT(*) FROM f_record_player
-        WHERE source NOT IN ('save', 'lahman', 'bref', 'statcast')
+        WHERE source NOT IN ('save', 'lahman', 'bref', 'statcast', 'merged')
     """).fetchone()[0]
     if n_bad_source:
         console.print(

@@ -711,6 +711,13 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
                     NULL AS display_name
                 FROM {lahman_cte}
             """)
+    # Chadwick Register — bbref_id ↔ mlb_id crosswalk. Optional; only
+    # used to merge non-save career rows by bbref_id.
+    chadwick_present = bool(con.execute("""
+        SELECT COUNT(*) FROM information_schema.tables
+        WHERE table_name = 'history_player_id_map'
+    """).fetchone()[0])
+
     # BREF (Baseball-Reference) — fills the Lahman 2020-2024 gap for retirees.
     # Same shape as Lahman but per-season aggregates only.
     bref_present = bool(con.execute("""
@@ -922,7 +929,89 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
             GROUP BY player_id
         ),
             {lahman_ctes}
-        all_records AS ({union_sql}),
+        all_records_raw AS ({union_sql}),
+        -- bbref_id resolution: links every record row across the 4 sources
+        -- by Lahman bbrefID where possible. OOTP players carry bbrefID
+        -- in `players_current.historical_id`; BREF + Statcast use MLBAM
+        -- ids that JOIN to `history_player_id_map` (Chadwick Register)
+        -- to get bbrefID. When Chadwick isn't loaded, BREF / Statcast
+        -- rows have NULL bbref_id_resolved and stay as their own source
+        -- (no merge possible without the crosswalk).
+        all_records AS (
+            SELECT
+                ar.*,
+                CASE
+                    WHEN ar.source = 'save' THEN
+                        (SELECT historical_id FROM players_current
+                         WHERE player_id = ar.player_id)
+                    WHEN ar.source = 'lahman' THEN ar.external_id
+                    WHEN ar.source IN ('bref', 'statcast') THEN
+                        {(
+                            "(SELECT bbref_id FROM history_player_id_map WHERE mlb_id = TRY_CAST(ar.external_id AS BIGINT))"
+                            if chadwick_present else "NULL"
+                        )}
+                    ELSE NULL
+                END AS bbref_id_resolved
+            FROM all_records_raw ar
+        ),
+        -- Career dedup logic:
+        --   1. Save career rows passthrough (save wins — OOTP imports each
+        --      active player's full real career, so save rows for active
+        --      players are complete).
+        --   2. Non-save career rows for bbrefIDs that ARE in save: drop
+        --      (avoid double-counting active players via Lahman/BREF).
+        --   3. Non-save career rows for bbrefIDs NOT in save: MERGE across
+        --      lahman + bref sources by bbrefID. This is the win — Pujols's
+        --      Lahman 656 + BREF 30 collapse to one 686-HR row.
+        --   4. Non-save career rows with no bbrefID linkage: passthrough
+        --      with their original source (rare edge case).
+        --   5. Season rows passthrough untouched (each year owned by one
+        --      source by design — Lahman ≤2019, BREF 2020-2025, save covers
+        --      its overlapping range with priority).
+        save_career_bbrefs AS (
+            SELECT DISTINCT bbref_id_resolved FROM all_records
+            WHERE source = 'save' AND scope = 'career'
+              AND bbref_id_resolved IS NOT NULL
+        ),
+        career_save AS (
+            SELECT * FROM all_records WHERE scope = 'career' AND source = 'save'
+        ),
+        career_merged AS (
+            SELECT
+                scope, discipline, category,
+                'merged' AS source,
+                SUM(value) AS value,
+                CAST(NULL AS BIGINT) AS player_id,
+                ANY_VALUE(external_id) AS external_id,
+                CAST(NULL AS INTEGER) AS year,
+                CAST(NULL AS BIGINT) AS team_id,
+                CAST(NULL AS VARCHAR) AS team_abbr,
+                ANY_VALUE(display_name) AS display_name,
+                bbref_id_resolved
+            FROM all_records
+            WHERE scope = 'career'
+              AND source IN ('lahman', 'bref', 'statcast')
+              AND bbref_id_resolved IS NOT NULL
+              AND bbref_id_resolved NOT IN (
+                  SELECT bbref_id_resolved FROM save_career_bbrefs
+              )
+            GROUP BY scope, discipline, category, bbref_id_resolved
+        ),
+        career_unlinked AS (
+            SELECT * FROM all_records
+            WHERE scope = 'career'
+              AND source IN ('lahman', 'bref', 'statcast')
+              AND bbref_id_resolved IS NULL
+        ),
+        season_passthrough AS (
+            SELECT * FROM all_records WHERE scope = 'season'
+        ),
+        deduped_records AS (
+            SELECT * FROM career_save
+            UNION ALL SELECT * FROM career_merged
+            UNION ALL SELECT * FROM career_unlinked
+            UNION ALL SELECT * FROM season_passthrough
+        ),
         -- Resolve display_name + team_abbr per source. Source-disambiguated
         -- name lookups: save → players_current; lahman → history_lahman_people;
         -- statcast → history_statcast_batting_season (the "last_name, first_name"
@@ -950,7 +1039,7 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
                         if statcast_present else "NULL"
                     )}
                 ) AS display_name
-            FROM all_records ar
+            FROM deduped_records ar
         ),
         ranked AS (
             SELECT

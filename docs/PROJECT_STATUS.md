@@ -62,11 +62,15 @@ warehouse and build the ingest pipeline.
     `f_draft_class`, `f_record_player`, `f_award_career_player`,
     `f_award_franchise`)
   - History backfill (one-time): 8 `history_lahman_*` tables +
-    2 `history_statcast_*` tables + 2 `history_bref_*` tables.
-    f_record_player UNIONs all four sources ('save' / 'lahman' /
-    'bref' / 'statcast') with `--era` CLI filter. Statcast adds
-    EV/barrel/hard-hit categories. f_award_career_player UNIONs
-    save + lahman.
+    2 `history_statcast_*` tables + 2 `history_bref_*` tables +
+    `history_player_id_map` (Chadwick Register). f_record_player
+    UNIONs five sources ('save' / 'lahman' / 'bref' / 'statcast' /
+    'merged') with `--era` CLI filter. Career rows dedup across
+    sources via bbref_id crosswalk: save wins for active players;
+    Lahman + BREF + Statcast merge into 'merged' source for
+    pre-save retirees (Pujols Lahman 656 + BREF 30 = merged 686 HR).
+    Statcast adds EV/barrel/hard-hit categories.
+    f_award_career_player UNIONs save + lahman.
 - **Empirical scripts retained** in `scripts/` — `xstats_eda.py` and
   `xstats_3d.py` are the evidence behind the structural-limit D-tier verdict
   on xBA/xSLG/xwOBA. Rerun rather than re-investigate.

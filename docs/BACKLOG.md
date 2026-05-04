@@ -197,19 +197,19 @@ and count-state splits).
   is calibrated similarly enough to real Statcast that we can join
   them in records, with a clear `source` distinction. Already-built
   `f_record_player` schema accommodates this with no changes.
-- [ ] **Cross-source player linkage** — three id namespaces today:
-  OOTP `player_id` (BIGINT), Lahman `bbrefID` (VARCHAR like
-  "bondsba01"), MLBAM `player_id` (BIGINT, used by BREF + Statcast).
-  Without a unified id table, the same real player appears as
-  separate rows in records (Pujols Lahman 656 HR + Pujols BREF
-  30 HR + Pujols Statcast EV/barrel%) instead of one combined
-  career line. The `pybaseball.playerid_lookup` API exposes
-  Chadwick Register data with all three crosswalks — pull once,
-  store as `history_player_id_map`, then merge career-rollup
-  CTEs in `_build_f_record_player` / `_build_f_award_career_player`
-  to dedup. OOTP↔Lahman/BREF linkage requires reading
-  `players.historical_id` column (rumored to hold real-life MLB ids
-  for imported players).
+- [x] **Cross-source player linkage** — done 2026-05-06. Discovered
+  OOTP `players_current.historical_id` IS bbref_id natively for
+  real-life imported players (1,699 of 15,940 in current save —
+  Judge='judgeaa01', Trout='troutmi01', Ohtani='ohtansh01' etc.).
+  So OOTP↔Lahman is direct; only BREF/Statcast need crosswalk.
+  Pulled Chadwick Register via `pybaseball.chadwick_register()` →
+  `history_player_id_map` (26,046 rows: bbref_id, mlb_id, retro_id,
+  fangraphs_id, name, played_first/last). New `_build_f_record_player`
+  career-dedup logic: save-rows win; non-save lahman+bref+statcast
+  rows for the same bbref_id collapse into a single 'merged' source
+  row with summed value. Pujols now correctly shows 686 HR
+  (Lahman 656 + BREF 30) as one career row. Awards UNION dedup
+  not yet wired (followup).
 
 ### Closed as non-derivable
 

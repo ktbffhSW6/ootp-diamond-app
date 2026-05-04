@@ -207,6 +207,7 @@ def fetch_history(
     skip_lahman: bool = typer.Option(False, "--skip-lahman", help="Skip Lahman pull."),
     skip_statcast: bool = typer.Option(False, "--skip-statcast", help="Skip Statcast pull."),
     skip_bref: bool = typer.Option(False, "--skip-bref", help="Skip Baseball-Reference pull."),
+    skip_chadwick: bool = typer.Option(False, "--skip-chadwick", help="Skip Chadwick Register pull."),
     force: bool = typer.Option(
         False, "--force", help="Re-download Lahman zip even if cached."
     ),
@@ -237,6 +238,7 @@ def fetch_history(
         skip_lahman=skip_lahman,
         skip_statcast=skip_statcast,
         skip_bref=skip_bref,
+        skip_chadwick=skip_chadwick,
         force_download=force,
         statcast_first_year=first_year,
         statcast_last_year=cap_year,
