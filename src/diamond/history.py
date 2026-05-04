@@ -425,6 +425,142 @@ def fetch_and_load_statcast(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Baseball-Reference — fills the 2020-(save_start-1) gap
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# cdalzell/Lahman caps at 2019, but cleared MLB careers continue through
+# the user's save start. BREF scraping via pybaseball fills the post-2019
+# gap so retirees from 2020-2025 (Pujols 703 HR, Cabrera 511, etc.) get
+# their full careers in records leaderboards.
+BREF_FIRST_YEAR = 2020
+
+
+def _bref_clean_batting(df):
+    """Filter BREF batting frame to MLB rows; one row per (player_id, year, team)."""
+    import pandas as pd
+    df = df.copy()
+    if "Lev" in df.columns:
+        df = df[df["Lev"].isin(["Maj-AL", "Maj-NL"])]
+    # mlbID is the canonical id; some rows may have NaN if BREF couldn't link.
+    # Drop those — they're unusable for joins.
+    if "mlbID" in df.columns:
+        df = df[df["mlbID"].notna()]
+        df["mlbID"] = df["mlbID"].astype(str)
+    return df
+
+
+def _bref_clean_pitching(df):
+    """Filter BREF pitching frame to MLB rows."""
+    df = _bref_clean_batting(df)  # same filter logic
+    # Convert IP from BREF baseball format (172.1 = 172 1/3) to outs.
+    if "IP" in df.columns:
+        ip = df["IP"].astype(float)
+        whole = ip.astype(int)
+        frac = (ip - whole) * 10
+        df["IPouts"] = (whole * 3 + frac.round().astype(int)).astype(int)
+    return df
+
+
+def fetch_and_load_bref(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    first_year: int = BREF_FIRST_YEAR,
+    last_year: int | None = None,
+    save: SaveConfig = BUILDING_THE_GREEN_MONSTER,
+    verbose: bool = True,
+) -> dict[str, int]:
+    """Pull Baseball-Reference batting + pitching season stats per year.
+
+    Defaults to `last_year = save_start_year - 1` so we don't pull
+    real-life 2026/2027/etc. stats once OOTP takes over.
+
+    Returns `{table_name: row_count}`.
+    """
+    import pandas as pd
+    import pybaseball as pyb
+
+    if last_year is None:
+        last_year = _save_start_year(save) - 1
+    if first_year > last_year:
+        if verbose:
+            console.rule("Baseball-Reference")
+            console.print(
+                f"[dim]No BREF years to fetch (first={first_year}, last={last_year}).[/dim]"
+            )
+        return {}
+
+    if verbose:
+        console.rule(f"Baseball-Reference  ({first_year}–{last_year})")
+
+    bat_frames: list = []
+    for y in range(first_year, last_year + 1):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            try:
+                df = pyb.batting_stats_bref(y)
+            except Exception as e:
+                console.print(f"  [yellow]⚠[/yellow] {y} batting BREF: {e}")
+                continue
+        df = _bref_clean_batting(df)
+        df["year"] = y
+        bat_frames.append(df)
+        if verbose:
+            console.print(f"  batting {y}: [dim]{len(df):,} MLB rows[/dim]")
+
+    pit_frames: list = []
+    for y in range(first_year, last_year + 1):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            try:
+                df = pyb.pitching_stats_bref(y)
+            except Exception as e:
+                console.print(f"  [yellow]⚠[/yellow] {y} pitching BREF: {e}")
+                continue
+        df = _bref_clean_pitching(df)
+        df["year"] = y
+        pit_frames.append(df)
+        if verbose:
+            console.print(f"  pitching {y}: [dim]{len(df):,} MLB rows[/dim]")
+
+    rows: dict[str, int] = {}
+
+    if bat_frames:
+        bat_all = pd.concat(bat_frames, ignore_index=True)
+        con.execute("DROP TABLE IF EXISTS history_bref_batting")
+        con.register("_bref_bat_tmp", bat_all)
+        con.execute(
+            "CREATE TABLE history_bref_batting AS SELECT * FROM _bref_bat_tmp"
+        )
+        con.unregister("_bref_bat_tmp")
+        n = con.execute("SELECT COUNT(*) FROM history_bref_batting").fetchone()[0]
+        rows["history_bref_batting"] = n
+        if verbose:
+            console.print(
+                f"  [green]✓[/green] history_bref_batting             "
+                f"[dim]{n:>8,} rows[/dim]"
+            )
+
+    if pit_frames:
+        pit_all = pd.concat(pit_frames, ignore_index=True)
+        con.execute("DROP TABLE IF EXISTS history_bref_pitching")
+        con.register("_bref_pit_tmp", pit_all)
+        con.execute(
+            "CREATE TABLE history_bref_pitching AS SELECT * FROM _bref_pit_tmp"
+        )
+        con.unregister("_bref_pit_tmp")
+        n = con.execute("SELECT COUNT(*) FROM history_bref_pitching").fetchone()[0]
+        rows["history_bref_pitching"] = n
+        if verbose:
+            console.print(
+                f"  [green]✓[/green] history_bref_pitching            "
+                f"[dim]{n:>8,} rows[/dim]"
+            )
+
+    return rows
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CLI driver
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -434,9 +570,12 @@ def run(
     *,
     skip_lahman: bool = False,
     skip_statcast: bool = False,
+    skip_bref: bool = False,
     force_download: bool = False,
     statcast_first_year: int = STATCAST_FIRST_YEAR,
     statcast_last_year: int | None = None,
+    bref_first_year: int = BREF_FIRST_YEAR,
+    bref_last_year: int | None = None,
     history_cap_year: int | None = None,
 ) -> dict[str, int]:
     """Top-level `diamond fetch-history` driver — one-time backfill.
@@ -478,6 +617,14 @@ def run(
                     con, save=save,
                     first_year=statcast_first_year,
                     last_year=statcast_last_year if statcast_last_year is not None else cap,
+                )
+            )
+        if not skip_bref:
+            rows.update(
+                fetch_and_load_bref(
+                    con, save=save,
+                    first_year=bref_first_year,
+                    last_year=bref_last_year if bref_last_year is not None else cap,
                 )
             )
     finally:

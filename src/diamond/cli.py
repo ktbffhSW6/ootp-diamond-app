@@ -204,12 +204,9 @@ def draft(
 
 @app.command("fetch-history")
 def fetch_history(
-    skip_lahman: bool = typer.Option(
-        False, "--skip-lahman", help="Skip Lahman download (Statcast only)."
-    ),
-    skip_statcast: bool = typer.Option(
-        False, "--skip-statcast", help="Skip Statcast pull (Lahman only)."
-    ),
+    skip_lahman: bool = typer.Option(False, "--skip-lahman", help="Skip Lahman pull."),
+    skip_statcast: bool = typer.Option(False, "--skip-statcast", help="Skip Statcast pull."),
+    skip_bref: bool = typer.Option(False, "--skip-bref", help="Skip Baseball-Reference pull."),
     force: bool = typer.Option(
         False, "--force", help="Re-download Lahman zip even if cached."
     ),
@@ -239,9 +236,11 @@ def fetch_history(
     history_mod.run(
         skip_lahman=skip_lahman,
         skip_statcast=skip_statcast,
+        skip_bref=skip_bref,
         force_download=force,
         statcast_first_year=first_year,
         statcast_last_year=cap_year,
+        bref_last_year=cap_year,
         history_cap_year=cap_year,
     )
 

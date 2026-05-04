@@ -563,10 +563,10 @@ def smoke_l3(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
         "[green]✓[/green] f_record_player values monotonically descend by rank_in_source"
     )
 
-    # source must be one of {'save', 'lahman', 'statcast'}
+    # source must be one of {'save', 'lahman', 'bref', 'statcast'}
     n_bad_source = con.execute("""
         SELECT COUNT(*) FROM f_record_player
-        WHERE source NOT IN ('save', 'lahman', 'statcast')
+        WHERE source NOT IN ('save', 'lahman', 'bref', 'statcast')
     """).fetchone()[0]
     if n_bad_source:
         console.print(

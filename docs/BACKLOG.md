@@ -178,15 +178,17 @@ and count-state splits).
   with --era flag on the records/awards/hof CLIs. Bonds 73 (2001) now
   shows as the all-time MLB single-season HR record; Mantle/Schmidt/Pujols/A-Rod
   surface in MVP leaderboards alongside Ohtani / Judge.
-- [ ] **Fill 2020-2024 Lahman gap via Baseball-Reference** — the
-  cdalzell/Lahman mirror caps at 2019, so retirees from 2020-2024
-  (Pujols 703 HR, Cabrera 511, Wainwright, Votto) show partial
-  Lahman careers (Pujols at 656). Players still active at save
-  start get their full real careers via OOTP's import, so this gap
-  only affects 2020-2024 retirees. `pybaseball.batting_stats_bref` /
-  `pitching_stats_bref` works for those years (FanGraphs returns 403).
-  Pull as `history_bref_*` tables, UNION into f_record_player /
-  f_award_career_player same as Lahman.
+- [x] **Fill 2020-2024 Lahman gap via Baseball-Reference** — done
+  2026-05-06. New `history_bref_batting` (4,112 rows) +
+  `history_bref_pitching` (4,794 rows) tables. `diamond fetch-history`
+  pulls them automatically; `--skip-bref` opts out. UNION'd into
+  f_record_player as source='bref'. SHO + CG categories stay
+  save+lahman-only because BREF season frames don't expose them.
+  Awards UNION not added — BREF doesn't carry award data.
+  **Open**: BREF rows show as separate from Lahman rows for the
+  same player (Pujols Lahman=656 HR + Pujols BREF=30 HR) because
+  we don't have a bbrefID↔mlbID crosswalk yet. Player linkage is
+  the next item below.
 - [ ] **Add Statcast record categories** — the historical
   `history_statcast_*` tables are loaded but `f_record_player`
   doesn't yet UNION them. Add categories: max EV, avg EV, hard-hit%,
@@ -195,12 +197,19 @@ and count-state splits).
   is calibrated similarly enough to real Statcast that we can join
   them in records, with a clear `source` distinction. Already-built
   `f_record_player` schema accommodates this with no changes.
-- [ ] **OOTP ↔ Lahman player linkage** — OOTP's `players.historical_id`
-  column would let us link save Aaron Judge (player_id=23867) to
-  Lahman Aaron Judge (playerID="judgeaa01") for true career-spanning
-  leaderboards. Not yet wired up. With linkage, "career HR including
-  pre-save real-life + sim continuation" becomes possible. Currently
-  the two appear as separate rows in `--era all` views.
+- [ ] **Cross-source player linkage** — three id namespaces today:
+  OOTP `player_id` (BIGINT), Lahman `bbrefID` (VARCHAR like
+  "bondsba01"), MLBAM `player_id` (BIGINT, used by BREF + Statcast).
+  Without a unified id table, the same real player appears as
+  separate rows in records (Pujols Lahman 656 HR + Pujols BREF
+  30 HR + Pujols Statcast EV/barrel%) instead of one combined
+  career line. The `pybaseball.playerid_lookup` API exposes
+  Chadwick Register data with all three crosswalks — pull once,
+  store as `history_player_id_map`, then merge career-rollup
+  CTEs in `_build_f_record_player` / `_build_f_award_career_player`
+  to dedup. OOTP↔Lahman/BREF linkage requires reading
+  `players.historical_id` column (rumored to hold real-life MLB ids
+  for imported players).
 
 ### Closed as non-derivable
 

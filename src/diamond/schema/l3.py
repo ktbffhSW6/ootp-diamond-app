@@ -711,6 +711,67 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
                     NULL AS display_name
                 FROM {lahman_cte}
             """)
+    # BREF (Baseball-Reference) — fills the Lahman 2020-2024 gap for retirees.
+    # Same shape as Lahman but per-season aggregates only.
+    bref_present = bool(con.execute("""
+        SELECT COUNT(*) FROM information_schema.tables
+        WHERE table_name = 'history_bref_batting'
+    """).fetchone()[0])
+    bref_parts: list[str] = []
+    if bref_present:
+        for scope, disc, cat, save_col, save_cte, lahman_col in RECORD_CATEGORIES:
+            # Only add BREF rows for categories Lahman would have covered
+            # (i.e., lahman_col is not None — those are the universal classic
+            # stats). WAR / QS stay save-only.
+            if lahman_col is None:
+                continue
+            # Map Lahman col names to BREF col names. BREF uses the natural
+            # baseball abbreviations directly; mostly the same as Lahman but
+            # K → SO, IPouts → IPouts (we synthesized this in the loader).
+            bref_col_map = {
+                "hr": "HR", "rbi": "RBI", "r": "R", "h": "H",
+                "bb": "BB", "sb": "SB", "d": '"2B"', "t": '"3B"',
+                "pa": "PA",
+                "w": "W", "sv": "SV", "so": "SO", "ipouts": "IPouts",
+                # BREF pitching season frames don't expose SHO or CG —
+                # those categories stay save+lahman only.
+            }
+            bref_col = bref_col_map.get(lahman_col)
+            if bref_col is None:
+                continue
+            bref_table = "history_bref_batting" if disc == "batting" else "history_bref_pitching"
+            if scope == "season":
+                bref_parts.append(f"""
+                    SELECT
+                        '{scope}' AS scope, '{disc}' AS discipline, '{cat}' AS category,
+                        'bref' AS source,
+                        CAST({bref_col} AS DOUBLE) AS value,
+                        CAST(NULL AS BIGINT) AS player_id,
+                        mlbID AS external_id,
+                        CAST(year AS INTEGER) AS year,
+                        CAST(NULL AS BIGINT) AS team_id,
+                        Tm AS team_abbr,
+                        Name AS display_name
+                    FROM {bref_table}
+                    WHERE {bref_col} IS NOT NULL
+                """)
+            else:  # career — sum per mlbID across all years
+                bref_parts.append(f"""
+                    SELECT
+                        '{scope}' AS scope, '{disc}' AS discipline, '{cat}' AS category,
+                        'bref' AS source,
+                        CAST(SUM({bref_col}) AS DOUBLE) AS value,
+                        CAST(NULL AS BIGINT) AS player_id,
+                        mlbID AS external_id,
+                        CAST(NULL AS INTEGER) AS year,
+                        CAST(NULL AS BIGINT) AS team_id,
+                        CAST(NULL AS VARCHAR) AS team_abbr,
+                        ANY_VALUE(Name) AS display_name
+                    FROM {bref_table}
+                    WHERE {bref_col} IS NOT NULL
+                    GROUP BY mlbID
+                """)
+
     # Statcast batting record parts — only when both Statcast loaded and
     # discipline is batting.
     statcast_parts: list[str] = []
@@ -749,7 +810,9 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
                     FROM history_statcast_batting_season
                     GROUP BY player_id
                 """)
-    union_sql = "\n            UNION ALL".join(save_parts + lahman_parts + statcast_parts)
+    union_sql = "\n            UNION ALL".join(
+        save_parts + lahman_parts + bref_parts + statcast_parts
+    )
 
     # Detect whether Lahman is available — graceful fallback if user hasn't
     # run `diamond fetch-history` yet. We only build save-side records in
@@ -809,9 +872,11 @@ def _build_f_record_player(con: duckdb.DuckDBPyConnection) -> int:
                 GROUP BY playerID
             ),"""
     else:
-        # No Lahman tables yet — build save-only (statcast may still be present).
+        # No Lahman tables yet — fall back to save + bref + statcast.
         lahman_ctes = ""
-        union_sql = "\n            UNION ALL".join(save_parts + statcast_parts)
+        union_sql = "\n            UNION ALL".join(
+            save_parts + bref_parts + statcast_parts
+        )
 
     con.execute(f"""
         CREATE OR REPLACE TABLE f_record_player AS
