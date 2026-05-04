@@ -18,5 +18,6 @@ Conventions:
 """
 
 from diamond.api.schemas.glossary import GlossaryEntry, GlossaryListResponse
+from diamond.api.schemas.health import HealthResponse
 
-__all__ = ["GlossaryEntry", "GlossaryListResponse"]
+__all__ = ["GlossaryEntry", "GlossaryListResponse", "HealthResponse"]

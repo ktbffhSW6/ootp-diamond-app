@@ -27,6 +27,16 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Force UTF-8 stdout/stderr on Windows so unicode arrows in our print
+# statements don't trip cp1252. Same workaround used in
+# `src/diamond/cli.py` and `scripts/smoke_warehouse.py`.
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 # Locate paths relative to repo root (this script's parent's parent).
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMAS_PACKAGE = "diamond.api.schemas"

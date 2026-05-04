@@ -1,22 +1,22 @@
 // AUTO-GENERATED FROM PYDANTIC SCHEMAS — DO NOT EDIT BY HAND.
-//
-// This file is the target of `make types` (or `pnpm types`), which
-// runs `pydantic-to-typescript` against `src/diamond/api/schemas/`
-// and writes the result here. Pydantic models are the single source
-// of truth per D16; this TypeScript mirror exists so the frontend
-// gets autocomplete and type-checking for API payloads.
-//
-// CURRENT STATE (2026-05-07): hand-written mirror for the v1
-// scaffolding session. The first `make types` run will overwrite
-// this file with auto-generated content of the same shape. The
-// hand-written version is here so the frontend can compile before
-// Node is installed.
-//
-// To regenerate manually:
-//   pip install pydantic-to-typescript
-//   pnpm install        # in web/, gets json2ts
-//   make types          # at repo root
+// Source of truth: src/diamond/api/schemas/ (Pydantic v2 models)
+// Regenerate via: make types  (or python scripts/generate_types.py)
+// See docs/DECISIONS.md D16 for the type-gen pipeline contract.
 
+/* tslint:disable */
+/* eslint-disable */
+/**
+/* This file was automatically generated from pydantic models by running pydantic2ts.
+/* Do not modify it by hand - just update the pydantic models and then re-run the script
+*/
+
+/**
+ * One stat dictionary entry, serialized for HTTP.
+ *
+ * Field-for-field mirror of :class:`diamond.dictionary.Stat`. See
+ * ``src/diamond/dictionary/__init__.py`` for the canonical
+ * descriptions of each field.
+ */
 export interface GlossaryEntry {
   id: string;
   display_name: string;
@@ -32,15 +32,29 @@ export interface GlossaryEntry {
   source: string;
   formula_source: string;
   related: string[];
-  refs: Record<string, string>;
+  refs: {
+    [k: string]: string;
+  };
 }
-
+/**
+ * ``GET /api/glossary`` envelope.
+ *
+ * Carries the full entry list plus the canonical category ordering
+ * (so the frontend doesn't have to maintain a parallel CATEGORIES
+ * constant). ``count`` is convenience for the client.
+ */
 export interface GlossaryListResponse {
   entries: GlossaryEntry[];
   categories: string[];
   count: number;
 }
-
+/**
+ * Liveness-probe envelope. Returned by ``GET /api/health``.
+ *
+ * `status` is a fixed-vocabulary string ("ok" today; future values
+ * might include "degraded" / "warehouse_missing" once we surface
+ * warehouse-connectivity probes).
+ */
 export interface HealthResponse {
   status: string;
   api_version: string;

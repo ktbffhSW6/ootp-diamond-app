@@ -16,6 +16,12 @@ export const metadata = {
   title: "Glossary — Diamond",
 };
 
+// Force dynamic rendering — Diamond is a local-first app where every
+// data fetch hits the live FastAPI backend at request time. Skip
+// Next.js's default static prerender (which would call the API at
+// `next build` time, but uvicorn isn't running during builds).
+export const dynamic = "force-dynamic";
+
 function groupByCategory(
   entries: GlossaryEntry[],
   categories: string[],

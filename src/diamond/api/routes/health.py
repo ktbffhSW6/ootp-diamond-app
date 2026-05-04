@@ -6,14 +6,10 @@ you debug a frontend fetch error.
 from __future__ import annotations
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+
+from diamond.api.schemas import HealthResponse
 
 router = APIRouter()
-
-
-class HealthResponse(BaseModel):
-    status: str
-    api_version: str
 
 
 @router.get("/health", response_model=HealthResponse)

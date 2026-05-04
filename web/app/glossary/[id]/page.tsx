@@ -8,6 +8,9 @@ import { notFound } from "next/navigation";
 import { FormulaBlock } from "@/components/FormulaBlock";
 import { getGlossaryEntry } from "@/lib/api";
 
+// Force dynamic rendering — see glossary/page.tsx for rationale.
+export const dynamic = "force-dynamic";
+
 interface Props {
   params: Promise<{ id: string }>;
 }
