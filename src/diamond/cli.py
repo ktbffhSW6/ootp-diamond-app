@@ -23,6 +23,7 @@ from diamond.audit import reconcile as reconcile_mod
 from diamond.config import BUILDING_THE_GREEN_MONSTER
 from diamond import awards as awards_mod
 from diamond import draft as draft_mod
+from diamond import glossary as glossary_mod
 from diamond import history as history_mod
 from diamond import hof as hof_mod
 from diamond import records as records_mod
@@ -439,6 +440,43 @@ def streaks(
     scope = "all_time" if all_time else "active"
     streaks_mod.run(
         scope=scope, category=category, limit=limit, output_path=output,
+    )
+
+
+@app.command()
+def glossary(
+    stat_id: str | None = typer.Argument(
+        None,
+        help="Stat id to render full detail for (e.g., 'wOBA', 'OPS_plus'). "
+        "Omit to list every category.",
+    ),
+    category: str | None = typer.Option(
+        None,
+        help="Filter to one category (batting / pitching / fielding / "
+        "advanced / value / statcast / ratings).",
+    ),
+    output: Path = typer.Option(
+        None,
+        help="Markdown output path. Defaults to audit_output/glossary.md "
+        "when listing all categories; no output file when rendering "
+        "a single stat unless --output is set.",
+    ),
+) -> None:
+    """Stat dictionary glossary — D15 single source of truth.
+
+    Reads from the canonical `diamond.dictionary.STATS` Python dict.
+    Every column header / chart axis / AI prompt in Diamond points back
+    here. Updating a stat's metadata = update the dictionary entry,
+    never inline.
+
+    Examples:
+        diamond glossary                        # list every category
+        diamond glossary wOBA                   # full detail on one stat
+        diamond glossary --category advanced    # one category compact view
+        diamond glossary --output docs/STAT_GLOSSARY.md   # write markdown
+    """
+    glossary_mod.run(
+        stat_id=stat_id, category=category, output_path=output,
     )
 
 

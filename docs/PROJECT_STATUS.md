@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-07 (in-game year 2029→2030) — **Phase 3 (UI implementation) is now active.** All Phase 2 + analytical-layer items closed (warehouse + ingest + L3 analytics + real-MLB history backfill + analytical refinements); the analytical layer reads zero open items. **D13 (two-tier player scope) shipped same-day** — `SaveConfig.reference_scope_enabled` + CLI `--reference-scope/--no-reference-scope` flags + `_diamond_settings` warehouse admin table for persistence. Reference cohort = "≥1 MLB appearance" (PA OR IP, refined from D13's original PA-only definition); expands `_scoped_players` from 15,992 → 35,261 on the live warehouse. **Next start point per UI_DESIGN.md build order: D15 stat dictionary Python module** (`diamond/dictionary/`, ~150 entries consolidating reconcile.py ColSpec.notes + advanced/ docstrings + DATA_NOTES.md), then player page → demotion/promotion → leaderboards → universes/charts → AI overlay → cockpit → reviews → setup wizard → sync triggers.
+**Last updated**: 2026-05-07 (in-game year 2029→2030) — **Phase 3 UI infrastructure shipping fast.** All Phase 2 + analytical layer closed earlier today; D13 (two-tier player scope) + D15 (stat dictionary thin v1) both shipped same-day. **D13**: `SaveConfig.reference_scope_enabled` + CLI flags + `_diamond_settings` persistence; expands `_scoped_players` from 15,992 → 35,261 on the live warehouse via "≥1 MLB appearance" (PA OR IP) cohort. **D15**: `src/diamond/dictionary/` module with `Stat` dataclass + 39 entries (slash + counting + advanced + value + statcast + fielding); `diamond glossary` CLI renders terminal + markdown views; smoke Phase G validates required-fields / categories / related-id resolution / id uniqueness. Long-tail dictionary entries land as UI screens reach for them. **Next per UI_DESIGN.md build order: tech stack pick** (FastAPI + Next.js leaning) → player page → demotion/promotion → leaderboards → universes/charts → AI overlay → cockpit → reviews → setup wizard → sync triggers.
 
 ---
 
@@ -164,14 +164,15 @@ history backfill closed same-day 2026-05-06. Major shipped artifacts:
 
 Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
 
-1. ✅ **D13 reference scope expansion** — done 2026-05-07. Foundation
-   in place for cross-era / cross-org analytical comparisons.
-2. **D15 stat dictionary** Python module (~1-2 hrs) — `diamond/dictionary/`
-   with formulas + KaTeX strings + display labels. Every UI screen will
-   depend on this; ships before any frontend.
-3. Then the rest per UI_DESIGN.md: player page → demotion/promotion → custom
-   leaderboards → universes+chart-builder → AI overlay → cockpit → reviews →
-   setup wizard → sync triggers.
+1. ✅ **D13 reference scope expansion** — done 2026-05-07.
+2. ✅ **D15 stat dictionary** thin v1 — done 2026-05-07. 39 entries +
+   CLI + smoke. Long-tail entries land as UI screens reach for them.
+3. **Tech stack pick** — UI_DESIGN.md flags this as the load-bearing
+   open question. Lean: FastAPI + Next.js. Worth a sanity check before
+   any frontend code lands; record as a new Decision when settled.
+4. Then per UI_DESIGN.md: player page → demotion/promotion → custom
+   leaderboards → universes+chart-builder → AI overlay → cockpit →
+   reviews → setup wizard → sync triggers.
 
 **Open audit carry-forwards** (non-blocking, picked up opportunistically):
 multi-level OPS+/ERA+ park weighting, hit_loc-based spray, LeaderCategory codes

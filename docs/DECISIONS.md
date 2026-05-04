@@ -194,7 +194,7 @@ The ≥1 MLB PA cutoff keeps the population manageable (~30K rather than ~150K w
 
 ## D15 — Stat dictionary as single source of truth
 
-**Date**: 2026-05-05
+**Date**: 2026-05-05 (initial v1 implementation 2026-05-07; thin dictionary, ~35 entries)
 **Decision**: Every stat reference in Diamond — column headers, chart axis labels, AI prompts, glossary pages, narrative reports — reads from a single canonical Python module: `diamond/dictionary/`. One `Stat` dataclass instance per metric, ~150 entries total covering every L0/L1/L2/L3 column we surface.
 
 Each entry carries: `id`, `display_name`, `short_label`, `category`, `formula_tex` (KaTeX-renderable), `formula_plain` (text fallback), `description`, `units`, `typical_range`, `interpretation`, `caveats`, `source` (warehouse path), `formula_source` (provenance), `related` (list of related stat ids), `refs` (links to Fangraphs / BR / Savant external glossaries).
@@ -215,3 +215,19 @@ Each entry carries: `id`, `display_name`, `short_label`, `category`, `formula_te
 - *External SaaS like Fangraphs glossary as the source of truth* — rejected; their formulas may differ from ours (e.g., park-halving conventions), and we'd take a runtime dependency on someone else's site.
 
 **Maintenance**: dictionary entries are append-only by default. Adding a new stat = add an entry. Changing a formula = update the entry AND the code that computes it (cross-reference enforced by `Stat.source` field pointing to the implementation).
+
+**Implementation status (2026-05-07)**:
+- `src/diamond/dictionary/__init__.py` — `Stat` frozen dataclass + `CATEGORIES` tuple + `STATS` dict aggregator. Category validated at instantiation via `__post_init__`.
+- `src/diamond/dictionary/_stats.py` — entries grouped by category in source for readability; consumers index by `id`. Dataclass instantiation enforces unique ids.
+- `src/diamond/glossary.py` + `diamond glossary` CLI — terminal + markdown rendering. Three modes: list-all (default), `glossary <id>` for full detail, `--category <cat>` for compact one-category table. Validates the dictionary works end-to-end before any frontend exists.
+- Smoke test Phase G — required-fields-non-empty + categories valid + related ids resolve + ids unique.
+
+**Thin v1 cohort (39 entries shipped)**:
+- batting (15): AVG / OBP / SLG / OPS / ISO / BABIP / K%/BB% / PA / HR / RBI / R / BB / K / SB
+- advanced (8): wOBA / wRAA / wRC / wRC+ / OPS+ / ERA+ / FIP / SIERA
+- pitching (6): W / SV / IP / K / ERA / WHIP
+- value (3): WAR (OOTP) / oWAR / pit_WAR
+- statcast (5): MAX_EV / AVG_EV / HARD_HIT_PCT / BARREL_PCT / SWEET_SPOT_PCT
+- fielding (2): RF/9 / Framing+
+
+**Long-tail entries** (~110 more) land here as UI screens reach for them. Strict rule: any new UI label, chart axis, or AI prompt MUST come from the dictionary — no hand-coded labels in feature code. Dictionary fills in over time but never lags behind what's exposed.

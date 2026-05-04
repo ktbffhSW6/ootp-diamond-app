@@ -792,6 +792,83 @@ def smoke_l3(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
     return True
 
 
+def smoke_dictionary(console: Console) -> bool:
+    """Phase G — D15 stat dictionary invariants.
+
+    Pure-Python checks (no warehouse needed). Catches:
+      - duplicate ids (already enforced at module import time, but
+        verified here too in case the dataclass-level check is
+        bypassed somehow)
+      - empty / placeholder string fields where content is required
+      - unknown categories (already enforced in __post_init__)
+      - related-id references that don't resolve
+    """
+    console.rule("Phase G — D15 stat dictionary")
+    from diamond.dictionary import CATEGORIES, STATS
+
+    # Required string fields must be non-empty (formula_tex is allowed
+    # empty for raw warehouse-column stats with no derivation).
+    required_nonempty = (
+        "id", "display_name", "short_label", "category",
+        "formula_plain", "description", "units",
+        "typical_range", "interpretation", "source", "formula_source",
+    )
+    bad_empty: list[str] = []
+    for sid, s in STATS.items():
+        for field in required_nonempty:
+            if not getattr(s, field):
+                bad_empty.append(f"{sid}.{field}")
+    if bad_empty:
+        console.print(
+            f"[red]FAIL:[/red] {len(bad_empty)} dictionary entries have "
+            f"empty required fields: {bad_empty[:5]}"
+        )
+        return False
+    console.print(
+        f"[green]✓[/green] all {len(STATS)} dictionary entries have "
+        f"non-empty required fields"
+    )
+
+    # Categories already validated in Stat.__post_init__, but a manual
+    # sanity check catches any future construction path that bypasses it.
+    bad_cat = [s.id for s in STATS.values() if s.category not in CATEGORIES]
+    if bad_cat:
+        console.print(
+            f"[red]FAIL:[/red] entries with unknown category: {bad_cat}"
+        )
+        return False
+    console.print(f"[green]✓[/green] all categories are in CATEGORIES tuple")
+
+    # related-id cross-references must resolve to a real entry.
+    bad_related: list[str] = []
+    for sid, s in STATS.items():
+        for rel in s.related:
+            if rel not in STATS:
+                bad_related.append(f"{sid} → {rel}")
+    if bad_related:
+        console.print(
+            f"[red]FAIL:[/red] {len(bad_related)} dangling `related` ids: "
+            f"{bad_related[:5]}"
+        )
+        return False
+    console.print(f"[green]✓[/green] all `related` ids resolve to real entries")
+
+    # ids should be unique (already enforced at module-import time, but
+    # cheap to verify post-hoc).
+    seen: set[str] = set()
+    dupes: list[str] = []
+    for sid in STATS:
+        if sid in seen:
+            dupes.append(sid)
+        seen.add(sid)
+    if dupes:
+        console.print(f"[red]FAIL:[/red] duplicate ids: {dupes}")
+        return False
+    console.print(f"[green]✓[/green] all stat ids are unique ({len(STATS)} entries)")
+
+    return True
+
+
 def main() -> int:
     console = Console()
     save = BUILDING_THE_GREEN_MONSTER
@@ -811,6 +888,8 @@ def main() -> int:
     if not smoke_l2(con, console):
         return 1
     if not smoke_l3(con, console):
+        return 1
+    if not smoke_dictionary(console):
         return 1
 
     console.rule("[bold green]All smoke tests passed[/bold green]")

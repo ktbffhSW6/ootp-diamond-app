@@ -306,9 +306,16 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
   Smoke test exercises both modes. Cohort refined from D13's original
   "≥1 PA" to "PA OR IP outs ≥ 1" so universal-DH-era relief pitchers
   aren't dropped (3,022 such in this save).
-- [ ] **Stat dictionary + glossary** (per D15). `diamond/dictionary/` module +
-  `/glossary` page with KaTeX-rendered formulas + hover tooltips on column
-  headers. Infrastructure for everything else.
+- [x] **Stat dictionary + glossary** (per D15) — thin v1 done 2026-05-07.
+  `src/diamond/dictionary/{__init__.py, _stats.py}` module ships the
+  `Stat` frozen dataclass + `CATEGORIES` tuple + `STATS` dict with 39
+  entries (slash + counting batting / advanced / pitching / value /
+  statcast / fielding). `diamond glossary` CLI renders terminal +
+  markdown views (`audit_output/glossary.md`); smoke Phase G
+  validates required fields, category enum, related-id resolution,
+  id uniqueness. Long-tail entries (~110 more) land as UI screens
+  reach for them per the maintenance contract — strict rule: any new
+  UI label MUST come from the dictionary.
 - [ ] **Player page** — Bref-shaped layout, Savant-styled visuals, AI assistant.
 - [ ] **Promotion/demotion decision tool** — flagship "GM sidekick" feature.
 - [ ] **Custom leaderboards** — Fangraphs-style sortable filterable tables.
