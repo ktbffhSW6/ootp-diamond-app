@@ -17,7 +17,9 @@ import type {
   GlossaryEntry,
   GlossaryListResponse,
   HealthResponse,
+  MovementsResponse,
   PlayerResponse,
+  SaveResponse,
 } from "@/lib/types/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -38,6 +40,11 @@ export async function getHealth(): Promise<HealthResponse> {
   return fetchJson<HealthResponse>("/api/health");
 }
 
+// Active save metadata — backs the landing-page header.
+export async function getSave(): Promise<SaveResponse> {
+  return fetchJson<SaveResponse>("/api/save");
+}
+
 export async function getGlossary(): Promise<GlossaryListResponse> {
   return fetchJson<GlossaryListResponse>("/api/glossary");
 }
@@ -55,4 +62,28 @@ export async function getGlossaryEntry(
 // converts that to Next.js notFound().
 export async function getPlayer(playerId: number): Promise<PlayerResponse> {
   return fetchJson<PlayerResponse>(`/api/players/${playerId}`);
+}
+
+// Movement-ledger payload for the user-team org for one season.
+// `year` is optional — backend defaults to the latest season with
+// movements when omitted.
+export async function getMovements(
+  year?: number,
+): Promise<MovementsResponse> {
+  const qs = year !== undefined ? `?year=${year}` : "";
+  return fetchJson<MovementsResponse>(`/api/movements${qs}`);
+}
+
+// Trigger a one-click shutdown of both dev servers (Next.js :3000 and
+// FastAPI :8000). Returns immediately; the actual kill happens ~1s
+// later in a detached subprocess so this response gets to flush first.
+// Windows-only — see `src/diamond/api/routes/admin.py`.
+export async function shutdownApp(): Promise<{
+  status: string;
+  ports: number[];
+}> {
+  return fetchJson<{ status: string; ports: number[] }>(
+    "/api/admin/shutdown",
+    { method: "POST" },
+  );
 }

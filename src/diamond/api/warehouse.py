@@ -53,6 +53,16 @@ def set_active_save(save: SaveConfig) -> None:
         _active_save = save
 
 
+def get_active_save() -> SaveConfig:
+    """Return the currently active SaveConfig.
+
+    Routes that need save-level metadata (e.g. ``audit_team_id`` for
+    the user's org) read it via this helper rather than importing the
+    module-private ``_active_save`` directly. Once D3's save-picker
+    ships, this is the single integration point that needs to change."""
+    return _active_save
+
+
 def _ensure_root() -> duckdb.DuckDBPyConnection:
     """Open the per-process root connection if needed and return it."""
     global _root_con

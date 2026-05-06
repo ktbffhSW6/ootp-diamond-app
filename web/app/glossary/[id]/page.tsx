@@ -38,65 +38,65 @@ export default async function GlossaryDetailPage({ params }: Props) {
 
   return (
     <article className="space-y-6">
-      <nav className="text-sm text-slate-500">
-        <Link href="/glossary" className="hover:text-slate-900">
+      <nav className="text-sm text-content-muted">
+        <Link href="/glossary" className="hover:text-content-primary">
           ← Glossary
         </Link>
       </nav>
 
       <header>
-        <p className="text-sm uppercase tracking-wide text-slate-400">
+        <p className="text-sm uppercase tracking-wide text-content-muted">
           {entry.category}
         </p>
-        <h1 className="mt-1 text-3xl font-bold tracking-tight">
+        <h1 className="mt-1 text-3xl font-bold tracking-tight text-content-primary">
           {entry.display_name}{" "}
-          <span className="ml-2 font-mono text-xl font-normal text-slate-500">
+          <span className="ml-2 font-mono text-xl font-normal text-content-secondary">
             ({entry.short_label})
           </span>
         </h1>
       </header>
 
-      <p className="max-w-2xl text-slate-700">{entry.description}</p>
+      <p className="max-w-2xl text-content-secondary">{entry.description}</p>
 
       {entry.formula_tex && (
         <section>
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-content-muted">
             Formula
           </h2>
           <FormulaBlock tex={entry.formula_tex} />
-          <p className="mt-2 font-mono text-xs text-slate-500">
+          <p className="mt-2 font-mono text-xs text-content-muted">
             {entry.formula_plain}
           </p>
         </section>
       )}
 
       <dl className="grid max-w-2xl grid-cols-[max-content_1fr] gap-x-6 gap-y-3 text-sm">
-        <dt className="font-semibold text-slate-500">Units</dt>
-        <dd className="text-slate-800">{entry.units}</dd>
+        <dt className="font-semibold text-content-muted">Units</dt>
+        <dd className="text-content-primary">{entry.units}</dd>
 
-        <dt className="font-semibold text-slate-500">Typical range</dt>
-        <dd className="text-slate-800">{entry.typical_range}</dd>
+        <dt className="font-semibold text-content-muted">Typical range</dt>
+        <dd className="text-content-primary">{entry.typical_range}</dd>
 
-        <dt className="font-semibold text-slate-500">How to read</dt>
-        <dd className="text-slate-800">{entry.interpretation}</dd>
+        <dt className="font-semibold text-content-muted">How to read</dt>
+        <dd className="text-content-primary">{entry.interpretation}</dd>
 
         {entry.caveats && (
           <>
-            <dt className="font-semibold text-slate-500">Caveats</dt>
-            <dd className="text-slate-800">{entry.caveats}</dd>
+            <dt className="font-semibold text-content-muted">Caveats</dt>
+            <dd className="text-content-primary">{entry.caveats}</dd>
           </>
         )}
 
-        <dt className="font-semibold text-slate-500">Source</dt>
-        <dd className="font-mono text-xs text-slate-700">{entry.source}</dd>
+        <dt className="font-semibold text-content-muted">Source</dt>
+        <dd className="font-mono text-xs text-content-secondary">{entry.source}</dd>
 
-        <dt className="font-semibold text-slate-500">Formula source</dt>
-        <dd className="text-slate-700">{entry.formula_source}</dd>
+        <dt className="font-semibold text-content-muted">Formula source</dt>
+        <dd className="text-content-secondary">{entry.formula_source}</dd>
       </dl>
 
       {entry.related.length > 0 && (
         <section>
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-content-muted">
             Related
           </h2>
           <ul className="flex flex-wrap gap-2">
@@ -104,7 +104,7 @@ export default async function GlossaryDetailPage({ params }: Props) {
               <li key={rid}>
                 <Link
                   href={`/glossary/${encodeURIComponent(rid)}`}
-                  className="rounded-md bg-slate-100 px-2.5 py-1 font-mono text-xs text-slate-700 hover:bg-slate-200"
+                  className="rounded-md border border-border bg-surface-elevated px-2.5 py-1 font-mono text-xs text-content-secondary hover:bg-surface-card hover:text-content-primary"
                 >
                   {rid}
                 </Link>
@@ -116,7 +116,7 @@ export default async function GlossaryDetailPage({ params }: Props) {
 
       {Object.keys(entry.refs).length > 0 && (
         <section>
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-content-muted">
             External glossaries
           </h2>
           <ul className="flex flex-wrap gap-3 text-sm">
@@ -126,7 +126,7 @@ export default async function GlossaryDetailPage({ params }: Props) {
                   href={url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-blue-600 hover:underline"
+                  className="text-link hover:text-link-hover hover:underline"
                 >
                   {name} ↗
                 </a>

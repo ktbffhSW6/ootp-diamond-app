@@ -49,11 +49,13 @@ export default async function GlossaryPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Stat glossary</h1>
-        <p className="mt-2 max-w-2xl text-sm text-slate-600">
+        <h1 className="text-3xl font-bold tracking-tight text-content-primary">
+          Stat glossary
+        </h1>
+        <p className="mt-2 max-w-2xl text-sm text-content-secondary">
           {data.count} stats across {data.categories.length} categories.
           Single source of truth at{" "}
-          <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs">
+          <code className="rounded bg-surface-elevated px-1.5 py-0.5 font-mono text-xs text-content-primary">
             diamond.dictionary.STATS
           </code>{" "}
           (Decision D15). Click any stat for full formula + interpretation.
@@ -65,26 +67,26 @@ export default async function GlossaryPage() {
         if (entries.length === 0) return null;
         return (
           <section key={cat}>
-            <h2 className="mb-3 text-lg font-semibold capitalize text-slate-900">
+            <h2 className="mb-3 text-lg font-semibold capitalize text-content-primary">
               {cat}{" "}
-              <span className="text-sm font-normal text-slate-400">
+              <span className="text-sm font-normal text-content-muted">
                 ({entries.length})
               </span>
             </h2>
-            <ul className="divide-y divide-slate-100 rounded-md border border-slate-200">
+            <ul className="divide-y divide-border rounded-md border border-border bg-surface-card">
               {entries.map((e) => (
                 <li key={e.id}>
                   <Link
                     href={`/glossary/${encodeURIComponent(e.id)}`}
-                    className="flex items-baseline gap-3 px-4 py-2 hover:bg-slate-50"
+                    className="flex items-baseline gap-3 px-4 py-2 hover:bg-surface-elevated"
                   >
-                    <span className="w-24 shrink-0 font-mono text-sm font-semibold text-slate-900">
+                    <span className="w-24 shrink-0 font-mono text-sm font-semibold text-content-primary">
                       {e.short_label}
                     </span>
-                    <span className="w-56 shrink-0 text-sm text-slate-700">
+                    <span className="w-56 shrink-0 text-sm text-content-secondary">
                       {e.display_name}
                     </span>
-                    <span className="truncate text-xs text-slate-500">
+                    <span className="truncate text-xs text-content-muted">
                       {e.description.split(".")[0]}.
                     </span>
                   </Link>

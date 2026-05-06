@@ -176,13 +176,13 @@ function formatCell(field: string, value: unknown): string {
 
 function TeamCell({ team }: { team: TeamRef | null }) {
   if (!team) {
-    return <span className="font-mono text-slate-400">TOT</span>;
+    return <span className="font-mono text-content-muted">TOT</span>;
   }
   return (
     <span className="font-mono">
-      <span className="text-slate-800">{team.abbr ?? "—"}</span>
+      <span className="text-content-primary">{team.abbr ?? "—"}</span>
       {team.level_name && team.level_name !== "MLB" && (
-        <span className="ml-1.5 rounded bg-slate-100 px-1 text-[10px] text-slate-500">
+        <span className="ml-1.5 rounded bg-surface-elevated px-1 text-[10px] text-content-muted">
           {team.level_name}
         </span>
       )}
@@ -206,24 +206,24 @@ function BattingSeasonRow({ season, expanded, onToggle }: BattingSeasonRowProps)
   return (
     <>
       <tr
-        className={`border-t border-slate-100 ${
-          isMultiStint ? "cursor-pointer hover:bg-slate-50" : ""
+        className={`border-t border-border ${
+          isMultiStint ? "cursor-pointer hover:bg-surface-elevated" : ""
         }`}
         onClick={isMultiStint ? onToggle : undefined}
       >
-        <td className="w-16 px-2 py-1.5 text-left font-mono text-sm tabular-nums">
+        <td className="w-16 px-2 py-1.5 text-left font-mono text-sm tabular-nums text-content-primary">
           {isMultiStint && (
             <span
               className={`mr-1 inline-block transition-transform ${
                 expanded ? "rotate-90" : ""
-              } text-slate-400`}
+              } text-content-muted`}
             >
               ▶
             </span>
           )}
           {season.year}
         </td>
-        <td className="w-12 px-2 py-1.5 text-right font-mono text-xs text-slate-500">
+        <td className="w-12 px-2 py-1.5 text-right font-mono text-xs text-content-muted">
           {season.age ?? "—"}
         </td>
         <td className="w-32 px-2 py-1.5 text-left">
@@ -232,7 +232,7 @@ function BattingSeasonRow({ season, expanded, onToggle }: BattingSeasonRowProps)
         {BATTING_COLUMNS.map(([field]) => (
           <td
             key={field as string}
-            className="px-2 py-1.5 text-right font-mono text-sm tabular-nums"
+            className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-primary"
           >
             {formatCell(field as string, (headRow as unknown as Record<string, unknown>)[field as string])}
           </td>
@@ -243,7 +243,7 @@ function BattingSeasonRow({ season, expanded, onToggle }: BattingSeasonRowProps)
         season.stints.map((stint, idx) => (
           <tr
             key={`${stint.team?.team_id ?? idx}-${stint.team?.level_id ?? idx}`}
-            className="border-t border-slate-50 bg-slate-50/40 text-slate-600"
+            className="border-t border-border bg-surface-elevated/40 text-content-secondary"
           >
             <td className="px-2 py-1 text-left font-mono text-xs"></td>
             <td className="px-2 py-1 text-right"></td>
@@ -280,24 +280,24 @@ function PitchingSeasonRow({ season, expanded, onToggle }: PitchingSeasonRowProp
   return (
     <>
       <tr
-        className={`border-t border-slate-100 ${
-          isMultiStint ? "cursor-pointer hover:bg-slate-50" : ""
+        className={`border-t border-border ${
+          isMultiStint ? "cursor-pointer hover:bg-surface-elevated" : ""
         }`}
         onClick={isMultiStint ? onToggle : undefined}
       >
-        <td className="w-16 px-2 py-1.5 text-left font-mono text-sm tabular-nums">
+        <td className="w-16 px-2 py-1.5 text-left font-mono text-sm tabular-nums text-content-primary">
           {isMultiStint && (
             <span
               className={`mr-1 inline-block transition-transform ${
                 expanded ? "rotate-90" : ""
-              } text-slate-400`}
+              } text-content-muted`}
             >
               ▶
             </span>
           )}
           {season.year}
         </td>
-        <td className="w-12 px-2 py-1.5 text-right font-mono text-xs text-slate-500">
+        <td className="w-12 px-2 py-1.5 text-right font-mono text-xs text-content-muted">
           {season.age ?? "—"}
         </td>
         <td className="w-32 px-2 py-1.5 text-left">
@@ -306,7 +306,7 @@ function PitchingSeasonRow({ season, expanded, onToggle }: PitchingSeasonRowProp
         {PITCHING_COLUMNS.map(([field]) => (
           <td
             key={field as string}
-            className="px-2 py-1.5 text-right font-mono text-sm tabular-nums"
+            className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-primary"
           >
             {formatCell(field as string, (headRow as unknown as Record<string, unknown>)[field as string])}
           </td>
@@ -317,7 +317,7 @@ function PitchingSeasonRow({ season, expanded, onToggle }: PitchingSeasonRowProp
         season.stints.map((stint, idx) => (
           <tr
             key={`${stint.team?.team_id ?? idx}-${stint.team?.level_id ?? idx}`}
-            className="border-t border-slate-50 bg-slate-50/40 text-slate-600"
+            className="border-t border-border bg-surface-elevated/40 text-content-secondary"
           >
             <td className="px-2 py-1 text-left font-mono text-xs"></td>
             <td className="px-2 py-1 text-right"></td>
@@ -374,12 +374,12 @@ function StatTable({
 }) {
   return (
     <section>
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-content-muted">
         {title}
       </h2>
-      <div className="overflow-x-auto rounded-md border border-slate-200">
+      <div className="overflow-x-auto rounded-md border border-border bg-surface-card">
         <table className="min-w-full text-sm">
-          <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+          <thead className="bg-surface-elevated text-xs uppercase text-content-muted">
             <tr>
               <th className="w-16 px-2 py-1.5 text-left font-medium">Year</th>
               <th className="w-12 px-2 py-1.5 text-right font-medium">Age</th>
@@ -414,7 +414,7 @@ function BattingCareerRow({
   columnOrder: Array<[keyof PlayerBattingStint, string]>;
 }) {
   return (
-    <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
+    <tr className="border-t-2 border-border-strong bg-surface-elevated font-semibold text-content-primary">
       <td className="px-2 py-1.5 text-left text-sm" colSpan={2}>
         Career
       </td>
@@ -444,12 +444,12 @@ function AdvancedBattingTable({
 }) {
   return (
     <section>
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-content-muted">
         Advanced Batting
       </h2>
-      <div className="overflow-x-auto rounded-md border border-slate-200">
+      <div className="overflow-x-auto rounded-md border border-border bg-surface-card">
         <table className="min-w-full text-sm">
-          <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+          <thead className="bg-surface-elevated text-xs uppercase text-content-muted">
             <tr>
               <th className="w-16 px-2 py-1.5 text-left font-medium">Year</th>
               <th className="w-12 px-2 py-1.5 text-right font-medium">Age</th>
@@ -469,24 +469,24 @@ function AdvancedBattingTable({
             {rows.map((r) => (
               <tr
                 key={`${r.year}-${r.level_id}-${r.league_id}`}
-                className="border-t border-slate-100"
+                className="border-t border-border"
               >
-                <td className="px-2 py-1.5 text-left font-mono text-sm tabular-nums">
+                <td className="px-2 py-1.5 text-left font-mono text-sm tabular-nums text-content-primary">
                   {r.year}
                 </td>
-                <td className="px-2 py-1.5 text-right font-mono text-xs text-slate-500">
+                <td className="px-2 py-1.5 text-right font-mono text-xs text-content-muted">
                   {r.age ?? "—"}
                 </td>
                 <td className="px-2 py-1.5 text-left font-mono">
-                  <span className="text-slate-800">{r.level_name}</span>
-                  <span className="ml-1 text-xs text-slate-400">
+                  <span className="text-content-primary">{r.level_name}</span>
+                  <span className="ml-1 text-xs text-content-muted">
                     {r.league_abbr ?? "—"}
                   </span>
                 </td>
                 {ADV_BATTING_COLUMNS.map(([field]) => (
                   <td
                     key={field as string}
-                    className="px-2 py-1.5 text-right font-mono text-sm tabular-nums"
+                    className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-primary"
                   >
                     {formatCell(field as string, (r as unknown as Record<string, unknown>)[field as string])}
                   </td>
@@ -496,7 +496,7 @@ function AdvancedBattingTable({
           </tbody>
         </table>
       </div>
-      <p className="mt-1 text-xs text-slate-400">
+      <p className="mt-1 text-xs text-content-muted">
         Per-(year, level) grain. Multi-team-same-level seasons collapse
         into one row using the dominant team&apos;s park factor. League
         constants are 2026-2029-only in this save — earlier years show
@@ -515,12 +515,12 @@ function AdvancedPitchingTable({
 }) {
   return (
     <section>
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-content-muted">
         Advanced Pitching
       </h2>
-      <div className="overflow-x-auto rounded-md border border-slate-200">
+      <div className="overflow-x-auto rounded-md border border-border bg-surface-card">
         <table className="min-w-full text-sm">
-          <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+          <thead className="bg-surface-elevated text-xs uppercase text-content-muted">
             <tr>
               <th className="w-16 px-2 py-1.5 text-left font-medium">Year</th>
               <th className="w-12 px-2 py-1.5 text-right font-medium">Age</th>
@@ -540,24 +540,24 @@ function AdvancedPitchingTable({
             {rows.map((r) => (
               <tr
                 key={`${r.year}-${r.level_id}-${r.league_id}`}
-                className="border-t border-slate-100"
+                className="border-t border-border"
               >
-                <td className="px-2 py-1.5 text-left font-mono text-sm tabular-nums">
+                <td className="px-2 py-1.5 text-left font-mono text-sm tabular-nums text-content-primary">
                   {r.year}
                 </td>
-                <td className="px-2 py-1.5 text-right font-mono text-xs text-slate-500">
+                <td className="px-2 py-1.5 text-right font-mono text-xs text-content-muted">
                   {r.age ?? "—"}
                 </td>
                 <td className="px-2 py-1.5 text-left font-mono">
-                  <span className="text-slate-800">{r.level_name}</span>
-                  <span className="ml-1 text-xs text-slate-400">
+                  <span className="text-content-primary">{r.level_name}</span>
+                  <span className="ml-1 text-xs text-content-muted">
                     {r.league_abbr ?? "—"}
                   </span>
                 </td>
                 {ADV_PITCHING_COLUMNS.map(([field]) => (
                   <td
                     key={field as string}
-                    className="px-2 py-1.5 text-right font-mono text-sm tabular-nums"
+                    className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-primary"
                   >
                     {formatCell(field as string, (r as unknown as Record<string, unknown>)[field as string])}
                   </td>
@@ -567,7 +567,7 @@ function AdvancedPitchingTable({
           </tbody>
         </table>
       </div>
-      <p className="mt-1 text-xs text-slate-400">
+      <p className="mt-1 text-xs text-content-muted">
         Pitchers with ≥10 IP at the level only. Park-aware: ERA+ uses
         80% park factor (audit convention); pit_WAR uses replacement
         FIP × 1.13.
@@ -582,14 +582,14 @@ function AdvancedPitchingTable({
 
 function FieldingRowItem({ row }: { row: PlayerFieldingRow }) {
   return (
-    <tr className="border-t border-slate-100">
-      <td className="w-16 px-2 py-1.5 text-left font-mono text-sm tabular-nums">
+    <tr className="border-t border-border">
+      <td className="w-16 px-2 py-1.5 text-left font-mono text-sm tabular-nums text-content-primary">
         {row.year}
       </td>
-      <td className="w-12 px-2 py-1.5 text-right font-mono text-xs text-slate-500">
+      <td className="w-12 px-2 py-1.5 text-right font-mono text-xs text-content-muted">
         {row.age ?? "—"}
       </td>
-      <td className="w-16 px-2 py-1.5 text-left font-mono text-sm">
+      <td className="w-16 px-2 py-1.5 text-left font-mono text-sm text-content-primary">
         {row.position_name}
       </td>
       <td className="w-32 px-2 py-1.5 text-left">
@@ -598,7 +598,7 @@ function FieldingRowItem({ row }: { row: PlayerFieldingRow }) {
       {FIELDING_COLUMNS.map(([field]) => (
         <td
           key={field as string}
-          className="px-2 py-1.5 text-right font-mono text-sm tabular-nums"
+          className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-primary"
         >
           {formatCell(field as string, (row as unknown as Record<string, unknown>)[field as string])}
         </td>
@@ -613,7 +613,7 @@ function FieldingCareerRow({
   career: PlayerCareerFielding;
 }) {
   return (
-    <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
+    <tr className="border-t-2 border-border-strong bg-surface-elevated font-semibold text-content-primary">
       <td className="px-2 py-1.5 text-left text-sm" colSpan={2}>
         Career
       </td>
@@ -644,12 +644,12 @@ function FieldingTable({
 }) {
   return (
     <section>
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-content-muted">
         Fielding
       </h2>
-      <div className="overflow-x-auto rounded-md border border-slate-200">
+      <div className="overflow-x-auto rounded-md border border-border bg-surface-card">
         <table className="min-w-full text-sm">
-          <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+          <thead className="bg-surface-elevated text-xs uppercase text-content-muted">
             <tr>
               <th className="w-16 px-2 py-1.5 text-left font-medium">Year</th>
               <th className="w-12 px-2 py-1.5 text-right font-medium">Age</th>
@@ -681,7 +681,7 @@ function FieldingTable({
         </table>
       </div>
       {career.length > 1 && (
-        <p className="mt-1 text-xs text-slate-400">
+        <p className="mt-1 text-xs text-content-muted">
           Career rows are per-position; cross-position totals omitted on
           purpose (combining PO+A+E across positions doesn&apos;t carry
           meaningful semantics).
@@ -699,7 +699,7 @@ function PitchingCareerRow({
   columnOrder: Array<[keyof PlayerPitchingStint, string]>;
 }) {
   return (
-    <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
+    <tr className="border-t-2 border-border-strong bg-surface-elevated font-semibold text-content-primary">
       <td className="px-2 py-1.5 text-left text-sm" colSpan={2}>
         Career
       </td>
@@ -776,7 +776,7 @@ export function PlayerStatsTab({
   return (
     <div className="space-y-8">
       {!hasBatting && !hasPitching && !hasFielding && (
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-content-muted">
           No batting, pitching, or fielding stats yet for this player.
         </p>
       )}

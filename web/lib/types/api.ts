@@ -60,6 +60,86 @@ export interface HealthResponse {
   api_version: string;
 }
 /**
+ * Headline batting line shown in the before / after columns.
+ *
+ * ``ops_plus`` is the verdict driver (already park-adjusted, league-
+ * relative, scale 100 = average). ``wrc_plus`` is shown alongside
+ * for the wOBA-leaning reader; both come from the same L3 fact row.
+ * ``pa`` is the sample size — also drives the ``too_small`` verdict
+ * when below 30 at the new level.
+ */
+export interface MovementBattingStats {
+  pa: number;
+  ops_plus: number | null;
+  wrc_plus: number | null;
+  woba: number | null;
+  o_war: number | null;
+}
+/**
+ * Headline pitching line. Mirrors the batting model but for
+ * pitchers. ``era_plus`` is the verdict driver (same 100=avg
+ * convention). ``fip`` is included for a peripheral cross-check;
+ * ``ip_display`` uses the OOTP convention (FLOOR(outs/3) + (outs%3)*0.1)
+ * rather than decimal. ``outs`` is the raw sample size used in the
+ * too_small check (< 30 outs = < 10 IP).
+ */
+export interface MovementPitchingStats {
+  outs: number;
+  ip_display: number | null;
+  era_plus: number | null;
+  fip: number | null;
+  pit_war: number | null;
+}
+/**
+ * One movement event with before/after stats and a verdict.
+ */
+export interface MovementRow {
+  movement_id: number;
+  player_id: number;
+  player_name: string;
+  primary_position: string;
+  role: "batter" | "pitcher";
+  movement_type: "promotion" | "demotion" | "trade" | "signed" | "waiver_or_other" | "released";
+  direction: "internal" | "incoming" | "outgoing";
+  dump_date_observed: string;
+  from_team: MovementTeamRef;
+  to_team: MovementTeamRef;
+  before_batting: MovementBattingStats | null;
+  after_batting: MovementBattingStats | null;
+  before_pitching: MovementPitchingStats | null;
+  after_pitching: MovementPitchingStats | null;
+  verdict: "working" | "reconsider" | "struggling" | "too_small";
+  verdict_note: string;
+}
+/**
+ * The from-team or to-team side of a move. Slimmer than the player
+ * page's ``TeamRef`` since we don't carry the league_abbr — the
+ * headline display is "MLB → AAA Worcester" so we need level + nickname,
+ * not league. Kept distinct so the contract for movements is self-contained.
+ */
+export interface MovementTeamRef {
+  team_id: number;
+  abbr: string | null;
+  nickname: string | null;
+  level_id: number | null;
+  level_name: string | null;
+}
+/**
+ * Whole payload for the movements page.
+ *
+ * ``available_seasons`` lets the page render a year picker without a
+ * second round-trip; ``org_team_*`` lets the header show the user's
+ * team. ``rows`` is sorted DESC by date — most recent moves first.
+ */
+export interface MovementsResponse {
+  season: number;
+  available_seasons: number[];
+  org_team_id: number;
+  org_team_abbr: string | null;
+  org_team_nickname: string | null;
+  rows: MovementRow[];
+}
+/**
  * Per-(year, league_id, level_id) advanced batting stats.
  *
  * One row per league-year-level a player accumulated PA in. Multi-team
@@ -345,4 +425,20 @@ export interface PlayerResponse {
   batting_career: PlayerCareerBatting | null;
   pitching_career: PlayerCareerPitching | null;
   fielding_career: PlayerCareerFielding[];
+}
+/**
+ * Active-save identity + ingest health + scope counts.
+ */
+export interface SaveResponse {
+  save_name: string;
+  org_team_id: number;
+  org_team_abbr: string | null;
+  org_team_nickname: string | null;
+  dump_count: number;
+  latest_dump_date: string | null;
+  latest_dump_name: string | null;
+  latest_season: number | null;
+  earliest_season: number | null;
+  scoped_player_count: number;
+  scoped_team_count: number;
 }

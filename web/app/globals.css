@@ -9,3 +9,107 @@
  * shake unused parts and works without running the KaTeX loader.
  */
 @import "katex/dist/katex.min.css";
+
+/* ── Theme tokens ──────────────────────────────────────────────────────
+ *
+ * Four themes, switched via `data-theme` on <html>. Tokens are kept
+ * as space-separated R G B triplets so Tailwind can apply alpha via
+ * its `<alpha-value>` placeholder (e.g., `bg-surface-page/80`).
+ *
+ *   light   — default white-paper look (current state)
+ *   dark    — slate-based dark mode
+ *   neutral — warm cream / off-white, lower contrast (the
+ *             "too bright" fix)
+ *   cb      — color-blind safe palette (Wong 2011 / IBM CB-safe). v1
+ *             swaps chrome + accent only; full verdict-color swap
+ *             is queued as a follow-up since it touches every badge.
+ *
+ * Component classes consume these via the Tailwind extension in
+ * `tailwind.config.ts` (`bg-surface-page`, `text-content-primary`,
+ * etc.). Hard-coded slate / emerald / rose classes still appear in
+ * accent-tinted components (verdict glyphs, move-type badges); those
+ * stay readable across themes but don't fully recolor in CB mode
+ * yet — see the migration note in the file.
+ */
+
+/* Dark is the default — :root and [data-theme="dark"] share tokens
+ * so SSR / no-JS / pre-init paint all use the dark palette. The
+ * inline script in <head> still sets data-theme on <html> before
+ * body paints, so the theme the user chose persists across reloads. */
+:root,
+[data-theme="dark"] {
+  --surface-page: 15 23 42;
+  --surface-card: 30 41 59;
+  --surface-elevated: 51 65 85;
+  --content-primary: 241 245 249;
+  --content-secondary: 203 213 225;
+  --content-muted: 148 163 184;
+  --border-default: 51 65 85;
+  --border-strong: 71 85 105;
+  --accent: 96 165 250;
+  --accent-hover: 147 197 253;
+  --link: 147 197 253;
+  --link-hover: 191 219 254;
+}
+
+[data-theme="light"] {
+  --surface-page: 255 255 255;
+  --surface-card: 248 250 252;
+  --surface-elevated: 241 245 249;
+  --content-primary: 15 23 42;
+  --content-secondary: 71 85 105;
+  --content-muted: 148 163 184;
+  --border-default: 226 232 240;
+  --border-strong: 203 213 225;
+  --accent: 37 99 235;
+  --accent-hover: 29 78 216;
+  --link: 29 78 216;
+  --link-hover: 30 64 175;
+}
+
+[data-theme="neutral"] {
+  /* Warm cream — off-white background, easier on eyes in long sessions.
+   * Tones from the Tailwind `stone` palette plus a custom cream surface.
+   * Lower-contrast text so it doesn't punch through the soft surface. */
+  --surface-page: 250 247 240;
+  --surface-card: 244 240 232;
+  --surface-elevated: 232 226 215;
+  --content-primary: 41 37 36;
+  --content-secondary: 87 83 78;
+  --content-muted: 168 162 158;
+  --border-default: 214 211 209;
+  --border-strong: 168 162 158;
+  --accent: 146 64 14;
+  --accent-hover: 120 53 15;
+  --link: 146 64 14;
+  --link-hover: 120 53 15;
+}
+
+[data-theme="cb"] {
+  /* Color-blind safe — Wong (2011) palette: blue / orange / yellow /
+   * vermillion are differentiable across deuteranopia, protanopia,
+   * and tritanopia. v1 only swaps accent + chrome; the verdict-glyph
+   * + badge palettes still use their named Tailwind classes (emerald
+   * / amber / rose / etc.) and will need a separate pass to fully
+   * realize the accessibility goal. Tracked as a follow-up. */
+  --surface-page: 255 255 255;
+  --surface-card: 248 250 252;
+  --surface-elevated: 241 245 249;
+  --content-primary: 15 23 42;
+  --content-secondary: 71 85 105;
+  --content-muted: 148 163 184;
+  --border-default: 226 232 240;
+  --border-strong: 203 213 225;
+  --accent: 0 114 178;
+  --accent-hover: 0 92 145;
+  --link: 0 114 178;
+  --link-hover: 0 92 145;
+}
+
+/* Default body styling driven by tokens so theme switches apply
+ * before any component-level CSS lands. Components still set their
+ * own surfaces — this is just the page-level fallback. */
+body {
+  background-color: rgb(var(--surface-page));
+  color: rgb(var(--content-primary));
+}

@@ -1,9 +1,16 @@
 import type { Config } from "tailwindcss";
 
-// Tailwind config — minimal v1. shadcn/ui's `init` will mutate this
-// file when added (it adds the design-token color palette + plugin
-// list). For now, plain Tailwind defaults are enough to build the
-// glossary page.
+// Tailwind config. Themes are driven via CSS variables in
+// `app/globals.css` (one `:root` block per theme, switched via
+// `data-theme` on `<html>`). The `colors.surface` / `colors.content`
+// / `colors.border` tokens below let components write semantic
+// classes (`bg-surface-page`, `text-content-primary`,
+// `border-border-default`) that automatically follow whatever
+// theme is active.
+//
+// Verdict-tinted accents (emerald / rose / amber / etc.) still use
+// the named Tailwind palette — full theming for those is queued for
+// the color-blind-mode follow-up.
 
 const config: Config = {
   content: [
@@ -11,14 +18,13 @@ const config: Config = {
     "./components/**/*.{ts,tsx}",
     "./lib/**/*.{ts,tsx}",
   ],
+  // Class strategy on data-theme means we can still write `dark:`
+  // utilities if it ever helps for one-off tweaks, but the primary
+  // mechanism is the CSS variable extension below.
+  darkMode: ["class", '[data-theme="dark"]'],
   theme: {
     extend: {
-      // Bloomberg/Fangraphs ambition (per UI_DESIGN.md): dense data
-      // tables with monospace numerics. Default font stack is fine
-      // for prose; the `font-mono` utility on numeric cells keeps
-      // columns aligned without per-cell spacing tweaks.
       fontFamily: {
-        // Use system font stack as the default; override per-page if needed.
         sans: [
           "ui-sans-serif",
           "system-ui",
@@ -35,6 +41,30 @@ const config: Config = {
           "Consolas",
           "monospace",
         ],
+      },
+      colors: {
+        surface: {
+          page: "rgb(var(--surface-page) / <alpha-value>)",
+          card: "rgb(var(--surface-card) / <alpha-value>)",
+          elevated: "rgb(var(--surface-elevated) / <alpha-value>)",
+        },
+        content: {
+          primary: "rgb(var(--content-primary) / <alpha-value>)",
+          secondary: "rgb(var(--content-secondary) / <alpha-value>)",
+          muted: "rgb(var(--content-muted) / <alpha-value>)",
+        },
+        border: {
+          DEFAULT: "rgb(var(--border-default) / <alpha-value>)",
+          strong: "rgb(var(--border-strong) / <alpha-value>)",
+        },
+        accent: {
+          DEFAULT: "rgb(var(--accent) / <alpha-value>)",
+          hover: "rgb(var(--accent-hover) / <alpha-value>)",
+        },
+        link: {
+          DEFAULT: "rgb(var(--link) / <alpha-value>)",
+          hover: "rgb(var(--link-hover) / <alpha-value>)",
+        },
       },
     },
   },

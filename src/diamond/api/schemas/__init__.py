@@ -19,6 +19,13 @@ Conventions:
 
 from diamond.api.schemas.glossary import GlossaryEntry, GlossaryListResponse
 from diamond.api.schemas.health import HealthResponse
+from diamond.api.schemas.movements import (
+    MovementBattingStats,
+    MovementPitchingStats,
+    MovementRow,
+    MovementsResponse,
+    MovementTeamRef,
+)
 from diamond.api.schemas.player import (
     PlayerAdvancedBattingRow,
     PlayerAdvancedPitchingRow,
@@ -34,11 +41,17 @@ from diamond.api.schemas.player import (
     PlayerResponse,
     TeamRef,
 )
+from diamond.api.schemas.save import SaveResponse
 
 __all__ = [
     "GlossaryEntry",
     "GlossaryListResponse",
     "HealthResponse",
+    "MovementBattingStats",
+    "MovementPitchingStats",
+    "MovementRow",
+    "MovementTeamRef",
+    "MovementsResponse",
     "PlayerAdvancedBattingRow",
     "PlayerAdvancedPitchingRow",
     "PlayerBattingSeason",
@@ -51,5 +64,6 @@ __all__ = [
     "PlayerPitchingSeason",
     "PlayerPitchingStint",
     "PlayerResponse",
+    "SaveResponse",
     "TeamRef",
 ]

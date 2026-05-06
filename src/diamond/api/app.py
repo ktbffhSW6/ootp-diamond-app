@@ -24,7 +24,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from diamond.api.routes import glossary, health, players
+from diamond.api.routes import admin, glossary, health, movements, players, save
 
 
 # CORS allowlist — Next.js dev server runs on :3000 by default.
@@ -57,13 +57,19 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=DEV_FRONTEND_ORIGINS,
         allow_credentials=False,
-        allow_methods=["GET"],
+        # Admin endpoint uses POST for the shutdown trigger, so we need
+        # both verbs in the allowlist. Keeping it tight to GET/POST
+        # (no DELETE/PATCH/etc.) until we have a reason to broaden.
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
 
     app.include_router(health.router, prefix="/api", tags=["health"])
+    app.include_router(save.router, prefix="/api", tags=["save"])
     app.include_router(glossary.router, prefix="/api", tags=["glossary"])
     app.include_router(players.router, prefix="/api", tags=["players"])
+    app.include_router(movements.router, prefix="/api", tags=["movements"])
+    app.include_router(admin.router, prefix="/api", tags=["admin"])
 
     return app
 

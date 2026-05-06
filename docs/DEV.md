@@ -81,12 +81,20 @@ use the batch shortcuts at the repo root instead:
 ```cmd
 api.bat        :: same as `make api`
 web.bat        :: same as `make web`
+dev.bat        :: spawn both + open the browser at :3000 (one-shot launcher)
 ```
 
-Both `cd` to the right directory, set `PYTHONIOENCODING=utf-8`
-(needed for Rich box-drawing on the API side), and pause on error
-so the message is readable. Double-clicking either file from
-Explorer also works.
+Both `api.bat` and `web.bat` `cd` to the right directory, set
+`PYTHONIOENCODING=utf-8` (needed for Rich box-drawing on the API
+side), and pause on error so the message is readable. Double-clicking
+either file from Explorer also works.
+
+`dev.bat` is the one-shot convenience wrapper — it `start`s each of
+the other two batch files in its own console window (so the logs stay
+visible and either can be Ctrl+C'd independently) and then opens the
+default browser to `http://localhost:3000` after a 6-second pause to
+let Next.js's first compile finish. If you only need to restart one
+side, use `api.bat` / `web.bat` directly.
 
 Open http://localhost:3000 — you'll land on the home page with feature
 links. Two demo paths:

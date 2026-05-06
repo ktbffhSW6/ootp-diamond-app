@@ -63,31 +63,35 @@ export default async function PlayerPage({ params }: Props) {
   return (
     <article className="space-y-6">
       {/* Bio header — mirrors Bref's player-page top strip */}
-      <header className="border-b border-slate-200 pb-4">
-        <p className="text-xs uppercase tracking-wide text-slate-400">
+      <header className="border-b border-border pb-4">
+        <p className="text-xs uppercase tracking-wide text-content-muted">
           {bio.position_name}
           {bio.bats_throws && bio.bats_throws !== "?/?" && (
             <span className="ml-2">
-              <span className="text-slate-300">·</span> Bats/Throws{" "}
-              <span className="font-mono text-slate-600">{bio.bats_throws}</span>
+              <span className="text-content-muted">·</span> Bats/Throws{" "}
+              <span className="font-mono text-content-secondary">
+                {bio.bats_throws}
+              </span>
             </span>
           )}
         </p>
-        <h1 className="mt-1 text-3xl font-bold tracking-tight">
+        <h1 className="mt-1 text-3xl font-bold tracking-tight text-content-primary">
           {bio.full_name}
           {bio.uniform_number != null && (
-            <span className="ml-3 font-mono text-xl font-normal text-slate-400">
+            <span className="ml-3 font-mono text-xl font-normal text-content-muted">
               #{bio.uniform_number}
             </span>
           )}
         </h1>
-        <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700">
+        <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm text-content-secondary">
           {bio.current_team && (
             <div>
-              <dt className="inline text-slate-500">Team:</dt>{" "}
+              <dt className="inline text-content-muted">Team:</dt>{" "}
               <dd className="inline">
-                <span className="font-mono">{bio.current_team.abbr}</span>{" "}
-                <span className="text-slate-500">
+                <span className="font-mono text-content-primary">
+                  {bio.current_team.abbr}
+                </span>{" "}
+                <span className="text-content-muted">
                   ({bio.current_team.level_name ?? "—"})
                 </span>
               </dd>
@@ -95,28 +99,32 @@ export default async function PlayerPage({ params }: Props) {
           )}
           {bio.age != null && (
             <div>
-              <dt className="inline text-slate-500">Age:</dt>{" "}
-              <dd className="inline font-mono">{bio.age}</dd>
+              <dt className="inline text-content-muted">Age:</dt>{" "}
+              <dd className="inline font-mono text-content-primary">
+                {bio.age}
+              </dd>
             </div>
           )}
           {bio.bbref_id && (
             <div>
-              <dt className="inline text-slate-500">Bref ID:</dt>{" "}
-              <dd className="inline font-mono">{bio.bbref_id}</dd>
+              <dt className="inline text-content-muted">Bref ID:</dt>{" "}
+              <dd className="inline font-mono text-content-primary">
+                {bio.bbref_id}
+              </dd>
             </div>
           )}
           {bio.retired && (
-            <div className="rounded bg-slate-100 px-2 text-xs text-slate-600">
+            <div className="rounded bg-surface-elevated px-2 text-xs text-content-secondary">
               Retired
             </div>
           )}
           {bio.free_agent && !bio.retired && (
-            <div className="rounded bg-amber-50 px-2 text-xs text-amber-700">
+            <div className="rounded bg-amber-50 px-2 text-xs text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
               Free Agent
             </div>
           )}
           {bio.hall_of_fame && (
-            <div className="rounded bg-amber-100 px-2 text-xs font-semibold text-amber-800">
+            <div className="rounded bg-amber-100 px-2 text-xs font-semibold text-amber-800 dark:bg-amber-900/60 dark:text-amber-200">
               ★ Hall of Fame
             </div>
           )}
@@ -125,15 +133,15 @@ export default async function PlayerPage({ params }: Props) {
 
       {/* Tab strip — only Stats is wired in v1; others are placeholders.
           Sticky-position lands when we add scrollable per-tab content. */}
-      <nav className="flex gap-1 border-b border-slate-200 text-sm">
-        <span className="border-b-2 border-slate-900 px-3 py-1.5 font-semibold text-slate-900">
+      <nav className="flex gap-1 border-b border-border text-sm">
+        <span className="border-b-2 border-content-primary px-3 py-1.5 font-semibold text-content-primary">
           Stats
         </span>
         {["Charts", "Game log", "Comparisons", "Scouting", "Contract"].map(
           (label) => (
             <span
               key={label}
-              className="cursor-not-allowed px-3 py-1.5 text-slate-400"
+              className="cursor-not-allowed px-3 py-1.5 text-content-muted"
               title="Coming soon"
             >
               {label}
@@ -144,8 +152,8 @@ export default async function PlayerPage({ params }: Props) {
 
       <PlayerStatsTab player={player} glossary={glossary} />
 
-      <p className="pt-4 text-xs text-slate-400">
-        <Link href="/" className="hover:text-slate-700">
+      <p className="pt-4 text-xs text-content-muted">
+        <Link href="/" className="hover:text-content-primary">
           ← Diamond
         </Link>
       </p>
