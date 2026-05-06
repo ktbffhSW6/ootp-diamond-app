@@ -162,6 +162,7 @@ export interface PlayerAdvancedBattingRow {
   wrc_plus: number | null;
   ops_plus: number | null;
   o_war: number | null;
+  b_war: number | null;
   park_avg: number | null;
 }
 /**
@@ -183,6 +184,8 @@ export interface PlayerAdvancedPitchingRow {
   fip: number | null;
   era_plus: number | null;
   pit_war: number | null;
+  p_war: number | null;
+  p_ra9_war: number | null;
   park_avg: number | null;
 }
 /**
@@ -460,6 +463,7 @@ export interface RosterBattingLine {
   wrc_plus: number | null;
   ops_plus: number | null;
   o_war: number | null;
+  b_war: number | null;
   park_avg: number | null;
   statcast_bip: number | null;
   statcast_max_ev: number | null;
@@ -548,6 +552,8 @@ export interface RosterPitchingLine {
   siera: number | null;
   era_plus: number | null;
   pit_war: number | null;
+  p_war: number | null;
+  p_ra9_war: number | null;
   park_avg: number | null;
   statcast_bip: number | null;
   statcast_max_ev: number | null;

@@ -1,9 +1,24 @@
 """L3 derived advanced-stats tables — per-(player, year, league, level).
 
 Materializes the sabermetric stat surface (wOBA / wRAA / wRC / wRC+ /
-OPS+ / FIP / ERA+ / oWAR / pit_WAR) at a stable warehouse grain so the
-player API and future leaderboards / AI prompts can SELECT instead of
-recomputing on demand.
+OPS+ / FIP / ERA+ / oWAR / pit_WAR / bWAR / pWAR) at a stable warehouse
+grain so the player API and future leaderboards / AI prompts can SELECT
+instead of recomputing on demand.
+
+WAR convention: this table carries **two parallel WAR values per role**:
+- ``o_war`` (batters) and ``pit_war`` (pitchers) — Diamond's *custom*
+  inspectable formulas (wRAA-based and FIP-based respectively). Useful
+  when you want to see "offense-only WAR" or "what FIP-WAR would say
+  with a flat 1.13 replacement multiplier."
+- ``b_war`` (batters) and ``p_war`` / ``p_ra9_war`` (pitchers) —
+  **OOTP's directly-supplied WAR field**, summed across stints.
+  Reconciled to IE WAR as A-tier (verified 2026-05-04: Mayer 3.2 = IE
+  3.2, Gonzales 2.2 = IE 2.2, Anthony 0.9 = IE 0.9, Crochet within
+  0.15). This is the canonical "combined WAR" — includes defensive
+  runs (zr + framing + arm), positional adjustment, baserunning, and
+  leverage adjustment for relievers. The UI Advanced view surfaces
+  these; the custom o_war / pit_war stay in the table for
+  transparency + glossary cross-reference.
 
 Why per (player_id, year, league_id, level_id) — not per stint:
 - **Park factors** apply per-team; a multi-team-same-level season (e.g.
@@ -194,11 +209,17 @@ def _build_f_player_season_advanced_batting(con: duckdb.DuckDBPyConnection) -> i
     """Per-(player, year, league_id, level_id) batting advanced stats.
 
     Computed:
-      pa, woba, wraa, wrc, wrc_plus, ops_plus, o_war
+      pa, woba, wraa, wrc, wrc_plus, ops_plus, o_war, b_war, park_avg
 
     Filters: ``split_id = 1`` (overall split — vs LHP / vs RHP would
     double-count). Output is the natural unit for headline rate stats —
     cross-level rollups aren't included since league constants differ.
+
+    ``b_war`` is OOTP's directly-supplied WAR field (summed across
+    stints). It includes defensive runs (zr + framing + arm) +
+    positional adjustment + baserunning + leverage; reconciles to IE
+    WAR as A-tier. ``o_war`` is Diamond's offense-only formula and is
+    kept for transparency + glossary cross-reference.
     """
     sql = f"""
         CREATE OR REPLACE TABLE f_player_season_advanced_batting AS
@@ -215,6 +236,7 @@ def _build_f_player_season_advanced_batting(con: duckdb.DuckDBPyConnection) -> i
                 SUM(ibb)::DOUBLE AS ibb,
                 SUM(hp)::DOUBLE  AS hp,
                 SUM(sf)::DOUBLE  AS sf,
+                SUM(war)::DOUBLE AS b_war_raw,
                 (SUM(h) - SUM(d) - SUM(t) - SUM(hr))::DOUBLE AS singles,
                 (SUM(bb) - SUM(ibb))::DOUBLE                 AS nibb
             FROM f_player_season_batting
@@ -284,6 +306,7 @@ def _build_f_player_season_advanced_batting(con: duckdb.DuckDBPyConnection) -> i
                  + {_REPL_WRAA_PER_PA} * pa) / {_RUNS_PER_WIN},
                 1
             ) AS o_war,
+            ROUND(b_war_raw, 1) AS b_war,
             ROUND(park_avg, 3) AS park_avg
         FROM woba_calc
         WHERE pa > 0
@@ -302,12 +325,21 @@ def _build_f_player_season_advanced_pitching(con: duckdb.DuckDBPyConnection) -> 
     """Per-(player, year, league_id, level_id) pitching advanced stats.
 
     Computed:
-      outs, ip_display, fip, siera, era_plus, pit_war
+      outs, ip_display, fip, siera, era_plus, pit_war, p_war,
+      p_ra9_war, park_avg
 
     Filters: ``split_id = 1``. Park factor is the dominant-team's park
     (most outs at this level). Quality threshold: outs >= 30 (10 IP) —
     matches the audit's `era_plus_per_pitcher` filter so headline values
     line up with the audit's IE-reconciled numbers.
+
+    ``p_war`` is OOTP's directly-supplied FIP-WAR (summed across
+    stints). It includes leverage adjustment for relievers and
+    OOTP's own replacement-level scaling, which differs from our flat
+    1.13 multiplier — values run ~1.5-2 wins higher than ``pit_war``
+    for top starters. Reconciles to IE WAR as A-tier (audit tolerance
+    0.15). ``p_ra9_war`` is the parallel RA9-based WAR — tracks actual
+    runs allowed, sensitive to defense + sequencing.
 
     SIERA formula (Fangraphs canonical) — verified against IE 2026-05-04
     in `audit/reconcile.py`: Crochet 2.25 vs IE 2.27, 96/101 within ±0.1
@@ -328,7 +360,9 @@ def _build_f_player_season_advanced_pitching(con: duckdb.DuckDBPyConnection) -> 
                 SUM(k)::DOUBLE    AS k,
                 SUM(bf)::DOUBLE   AS bf,
                 SUM(gb)::DOUBLE   AS gb,
-                SUM(fb)::DOUBLE   AS fb
+                SUM(fb)::DOUBLE   AS fb,
+                SUM(war)::DOUBLE     AS p_war_raw,
+                SUM(ra9war)::DOUBLE  AS p_ra9_war_raw
             FROM f_player_season_pitching
             WHERE split_id = 1
             GROUP BY player_id, year, league_id, level_id
@@ -400,6 +434,8 @@ def _build_f_player_season_advanced_pitching(con: duckdb.DuckDBPyConnection) -> 
                 / {_RUNS_PER_WIN},
                 1
             ) AS pit_war,
+            ROUND(p_war_raw, 1)     AS p_war,
+            ROUND(p_ra9_war_raw, 1) AS p_ra9_war,
             ROUND(park_avg, 3) AS park_avg
         FROM rates
         WHERE outs >= 30   -- 10+ IP minimum, matches audit threshold

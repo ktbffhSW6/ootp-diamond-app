@@ -369,7 +369,8 @@ def _fetch_advanced_batting(
             l.abbr            AS league_abbr,
             (f.year - EXTRACT(YEAR FROM pl.date_of_birth))::INTEGER AS age,
             CAST(f.pa AS BIGINT) AS pa,
-            f.woba, f.wraa, f.wrc, f.wrc_plus, f.ops_plus, f.o_war, f.park_avg
+            f.woba, f.wraa, f.wrc, f.wrc_plus, f.ops_plus, f.o_war, f.b_war,
+            f.park_avg
         FROM f_player_season_advanced_batting f
         LEFT JOIN leagues         l  ON l.league_id  = f.league_id
         LEFT JOIN players_current pl ON pl.player_id = f.player_id
@@ -381,7 +382,7 @@ def _fetch_advanced_batting(
     out: list[PlayerAdvancedBattingRow] = []
     for r in rows:
         (year, league_id, level_id, league_abbr, age, pa,
-         woba, wraa, wrc, wrc_plus, ops_plus, o_war, park_avg) = r
+         woba, wraa, wrc, wrc_plus, ops_plus, o_war, b_war, park_avg) = r
         out.append(PlayerAdvancedBattingRow(
             year=int(year),
             age=int(age) if age is not None else None,
@@ -396,6 +397,7 @@ def _fetch_advanced_batting(
             wrc_plus=int(wrc_plus) if wrc_plus is not None else None,
             ops_plus=int(ops_plus) if ops_plus is not None else None,
             o_war=float(o_war) if o_war is not None else None,
+            b_war=float(b_war) if b_war is not None else None,
             park_avg=float(park_avg) if park_avg is not None else None,
         ))
     return out
@@ -416,7 +418,8 @@ def _fetch_advanced_pitching(
             l.abbr            AS league_abbr,
             (f.year - EXTRACT(YEAR FROM pl.date_of_birth))::INTEGER AS age,
             CAST(f.outs AS BIGINT) AS outs,
-            f.ip_display, f.fip, f.era_plus, f.pit_war, f.park_avg
+            f.ip_display, f.fip, f.era_plus, f.pit_war, f.p_war, f.p_ra9_war,
+            f.park_avg
         FROM f_player_season_advanced_pitching f
         LEFT JOIN leagues         l  ON l.league_id  = f.league_id
         LEFT JOIN players_current pl ON pl.player_id = f.player_id
@@ -428,7 +431,7 @@ def _fetch_advanced_pitching(
     out: list[PlayerAdvancedPitchingRow] = []
     for r in rows:
         (year, league_id, level_id, league_abbr, age, outs,
-         ip_display, fip, era_plus, pit_war, park_avg) = r
+         ip_display, fip, era_plus, pit_war, p_war, p_ra9_war, park_avg) = r
         out.append(PlayerAdvancedPitchingRow(
             year=int(year),
             age=int(age) if age is not None else None,
@@ -441,6 +444,8 @@ def _fetch_advanced_pitching(
             fip=float(fip) if fip is not None else None,
             era_plus=int(era_plus) if era_plus is not None else None,
             pit_war=float(pit_war) if pit_war is not None else None,
+            p_war=float(p_war) if p_war is not None else None,
+            p_ra9_war=float(p_ra9_war) if p_ra9_war is not None else None,
             park_avg=float(park_avg) if park_avg is not None else None,
         ))
     return out

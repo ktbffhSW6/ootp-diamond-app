@@ -199,10 +199,10 @@ SELECT
     CAST(pi.bb   AS BIGINT) AS p_bb,
     CAST(pi.k    AS BIGINT) AS p_so,
     -- advanced batting at current (year, league, level)
-    ab.woba, ab.wraa, ab.wrc, ab.wrc_plus, ab.ops_plus, ab.o_war,
+    ab.woba, ab.wraa, ab.wrc, ab.wrc_plus, ab.ops_plus, ab.o_war, ab.b_war,
     ab.park_avg AS bat_park_avg,
     -- advanced pitching at current (year, league, level)
-    ap.fip, ap.siera, ap.era_plus, ap.pit_war,
+    ap.fip, ap.siera, ap.era_plus, ap.pit_war, ap.p_war, ap.p_ra9_war,
     ap.park_avg AS pit_park_avg,
     -- Statcast cohort — generated as hitter
     sb.bip            AS sb_bip,
@@ -275,8 +275,8 @@ _COLUMNS: tuple[str, ...] = (
     "b_sb", "b_bb", "b_so", "b_hbp", "b_sf",
     "p_g", "p_gs", "p_w", "p_l", "p_sv", "p_outs",
     "p_h", "p_er", "p_bb", "p_so",
-    "woba", "wraa", "wrc", "wrc_plus", "ops_plus", "o_war", "bat_park_avg",
-    "fip", "siera", "era_plus", "pit_war", "pit_park_avg",
+    "woba", "wraa", "wrc", "wrc_plus", "ops_plus", "o_war", "b_war", "bat_park_avg",
+    "fip", "siera", "era_plus", "pit_war", "p_war", "p_ra9_war", "pit_park_avg",
     "sb_bip", "sb_max_ev", "sb_avg_ev",
     "sb_hard_hit_pct", "sb_barrel_pct", "sb_sweet_spot_pct",
     "sp_bip", "sp_max_ev", "sp_avg_ev",
@@ -334,6 +334,7 @@ def _batting_line(d: dict[str, Any]) -> RosterBattingLine | None:
         wrc_plus=int(d["wrc_plus"]) if d.get("wrc_plus") is not None else None,
         ops_plus=int(d["ops_plus"]) if d.get("ops_plus") is not None else None,
         o_war=float(d["o_war"]) if d.get("o_war") is not None else None,
+        b_war=float(d["b_war"]) if d.get("b_war") is not None else None,
         park_avg=(
             float(d["bat_park_avg"]) if d.get("bat_park_avg") is not None else None
         ),
@@ -377,6 +378,10 @@ def _pitching_line(d: dict[str, Any]) -> RosterPitchingLine | None:
         siera=float(d["siera"]) if d.get("siera") is not None else None,
         era_plus=int(d["era_plus"]) if d.get("era_plus") is not None else None,
         pit_war=float(d["pit_war"]) if d.get("pit_war") is not None else None,
+        p_war=float(d["p_war"]) if d.get("p_war") is not None else None,
+        p_ra9_war=(
+            float(d["p_ra9_war"]) if d.get("p_ra9_war") is not None else None
+        ),
         park_avg=(
             float(d["pit_park_avg"]) if d.get("pit_park_avg") is not None else None
         ),

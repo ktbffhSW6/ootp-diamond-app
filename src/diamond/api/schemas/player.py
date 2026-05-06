@@ -324,6 +324,7 @@ class PlayerAdvancedBattingRow(BaseModel):
     wrc_plus: int | None
     ops_plus: int | None
     o_war: float | None
+    b_war: float | None           # OOTP combined bWAR (off + def + pos)
     park_avg: float | None        # the dominant-team park factor used
 
 
@@ -348,6 +349,8 @@ class PlayerAdvancedPitchingRow(BaseModel):
     fip: float | None
     era_plus: int | None
     pit_war: float | None
+    p_war: float | None           # OOTP FIP-WAR (canonical pWAR)
+    p_ra9_war: float | None       # OOTP RA9-based WAR
     park_avg: float | None
 
 

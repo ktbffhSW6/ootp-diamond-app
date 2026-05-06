@@ -97,7 +97,10 @@ type RoleFilter = "all" | "batter" | "pitcher";
 type HandFilter = "all" | "R" | "L" | "S";
 // Three-way stat-mode toggle:
 // - basic    → counting + slash-line / counting + ERA-WHIP-K9-BB9
-// - advanced → wOBA / wRC+ / OPS+ / oWAR / FIP / SIERA / ERA+ / pWAR
+// - advanced → wOBA / wRC+ / OPS+ / bWAR / FIP / SIERA / ERA+ / pWAR
+//              (bWAR + pWAR are OOTP-canonical, IE-reconciled. The custom
+//              offense-only oWAR + flat-replacement pit_WAR remain in the
+//              warehouse for the glossary cross-reference + player page.)
 // - contact  → Statcast cohort (BIP / maxEV / avgEV / HH% / Brl% / SS%)
 type StatMode = "basic" | "advanced" | "contact";
 
@@ -304,9 +307,9 @@ function BatterTable({
                 </th>
                 <th
                   className="px-2 py-2 font-medium text-right"
-                  title="Offensive WAR ONLY — no defensive component yet (combined bWAR is on the backlog). Useful for ranking bats; don't compare to fWAR/bWAR directly."
+                  title="Combined bWAR — offense + defense (zr + framing + arm) + positional adjustment + base-running. OOTP's directly-supplied WAR field; reconciles to IE WAR as A-tier. (Diamond's offense-only oWAR is in the player page + glossary.)"
                 >
-                  oWAR
+                  bWAR
                 </th>
                 <th
                   className="px-2 py-2 font-medium text-right"
@@ -405,7 +408,7 @@ function BatterRow({
           <td className="px-2 py-1.5 text-right font-mono text-xs">{fmt1(b?.wrc ?? null)}</td>
           <td className="px-2 py-1.5 text-right font-mono text-xs font-medium">{fmtInt(b?.wrc_plus ?? null)}</td>
           <td className="px-2 py-1.5 text-right font-mono text-xs">{fmtInt(b?.ops_plus ?? null)}</td>
-          <td className="px-2 py-1.5 text-right font-mono text-xs">{fmt1(b?.o_war ?? null)}</td>
+          <td className="px-2 py-1.5 text-right font-mono text-xs font-medium">{fmt1(b?.b_war ?? null)}</td>
           <td className="px-2 py-1.5 text-right font-mono text-xs text-content-muted">
             {fmtParkAvg(b?.park_avg ?? null)}
           </td>
@@ -483,7 +486,7 @@ function PitcherTable({
                 </th>
                 <th
                   className="px-2 py-2 font-medium text-right"
-                  title="Pitching WAR — runs saved vs replacement, normalized to wins."
+                  title="FIP-WAR — OOTP's directly-supplied pitcher WAR (includes leverage adjustment for relievers). Reconciles to IE WAR as A-tier. (Diamond's custom flat-1.13-replacement pit_WAR is in the player page + glossary.)"
                 >
                   pWAR
                 </th>
@@ -580,7 +583,7 @@ function PitcherRow({
           <td className="px-2 py-1.5 text-right font-mono text-xs">{fmt2(p?.fip ?? null)}</td>
           <td className="px-2 py-1.5 text-right font-mono text-xs">{fmt2(p?.siera ?? null)}</td>
           <td className="px-2 py-1.5 text-right font-mono text-xs font-medium">{fmtInt(p?.era_plus ?? null)}</td>
-          <td className="px-2 py-1.5 text-right font-mono text-xs">{fmt1(p?.pit_war ?? null)}</td>
+          <td className="px-2 py-1.5 text-right font-mono text-xs font-medium">{fmt1(p?.p_war ?? null)}</td>
           <td className="px-2 py-1.5 text-right font-mono text-xs text-content-muted">
             {fmtParkAvg(p?.park_avg ?? null)}
           </td>

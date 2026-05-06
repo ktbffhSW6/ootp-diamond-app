@@ -991,25 +991,91 @@ _ENTRIES: list[Stat] = [
     # ─────────────────────────────────────────────────────────────────
 
     Stat(
-        id="WAR",
-        display_name="Wins Above Replacement (OOTP)",
-        short_label="WAR",
+        id="bWAR",
+        display_name="Batter Wins Above Replacement",
+        short_label="bWAR",
         category="value",
         formula_tex="",
-        formula_plain="(OOTP-computed; opaque)",
+        formula_plain="(OOTP-computed; combined offense + defense + position + base-running)",
         description=(
-            "OOTP's internal WAR field. Convenient because it's already "
-            "computed, but opaque — we don't see the formula. Diamond's "
-            "Custom oWAR / pit_WAR are the inspectable alternatives."
+            "OOTP's combined batter WAR — surfaces the same value the in-game "
+            "Roster CSV exports as `WAR`. Includes offensive runs (wRAA), "
+            "defensive runs (zr + framing + arm), positional adjustment, "
+            "and baserunning. Reconciles to IE WAR as A-tier (Mayer 3.2 = "
+            "IE 3.2, Anthony 0.9 = IE 0.9, etc.)."
         ),
         units="wins",
-        typical_range="MVP-tier: 8+; star: 5+; avg starter: ~2; replacement: 0",
-        interpretation="OOTP convention matches public-stats convention "
-                       "(replacement = 0; ~10 runs = 1 win).",
-        caveats="Black-box formula. For inspectable WAR, use oWAR / pit_WAR.",
-        source="f_player_season_batting.war / f_player_season_pitching.war",
+        typical_range="MVP-tier: 8+; star: 5+; avg full-time bat: ~2; replacement: 0",
+        interpretation="Replacement = 0; ~10 runs = 1 win. Combine vs oWAR "
+                       "to see the defensive component (`bWAR − oWAR`).",
+        caveats=(
+            "OOTP-internal formula — we don't see the exact replacement-level "
+            "scaling or positional-adjustment table. For an inspectable "
+            "alternative, see oWAR (offense-only) which is computed in-house "
+            "from wRAA."
+        ),
+        source="f_player_season_advanced_batting.b_war",
         formula_source="OOTP internal",
-        related=("oWAR", "pit_WAR"),
+        related=("oWAR", "pWAR", "wRAA"),
+        refs={"Fangraphs": f"{_FG}/misc/war/"},
+    ),
+
+    Stat(
+        id="pWAR",
+        display_name="Pitcher Wins Above Replacement (FIP)",
+        short_label="pWAR",
+        category="value",
+        formula_tex="",
+        formula_plain="(OOTP-computed; FIP-based with leverage adjustment)",
+        description=(
+            "OOTP's FIP-based pitcher WAR. Includes leverage adjustment for "
+            "relievers and OOTP's own replacement-level scaling — typically "
+            "runs ~1.5-2 wins higher than Diamond's custom `pit_WAR` for top "
+            "starters. Reconciles to IE WAR as A-tier (Crochet 5.5 = IE 5.5, "
+            "Whitlock 0.4 = IE 0.4, etc.)."
+        ),
+        units="wins",
+        typical_range="Cy-tier: 6+; ace: 4+; mid-rotation: ~2; replacement: 0",
+        interpretation="Replacement = 0; ~10 runs = 1 win. Combine with "
+                       "RA9-WAR to triangulate FIP-vs-actual-runs gap.",
+        caveats=(
+            "OOTP-internal formula. For an inspectable alternative, see "
+            "Diamond's custom `pit_WAR` (uses a flat 1.13 replacement multiplier). "
+            "For run-based pitcher value see RA9-WAR."
+        ),
+        source="f_player_season_advanced_pitching.p_war",
+        formula_source="OOTP internal",
+        related=("pit_WAR", "RA9_WAR", "FIP", "bWAR"),
+        refs={"Fangraphs": f"{_FG}/misc/war/"},
+    ),
+
+    Stat(
+        id="RA9_WAR",
+        display_name="Pitcher WAR (RA9-based)",
+        short_label="RA9-WAR",
+        category="value",
+        formula_tex="",
+        formula_plain="(OOTP-computed; runs-allowed based, sensitive to defense + sequencing)",
+        description=(
+            "OOTP's RA9-based pitching WAR — uses actual runs allowed per 9 "
+            "rather than FIP. Sensitive to team defense, sequencing, and BABIP "
+            "luck; tends to track ERA-style outcomes more than skill-isolated "
+            "FIP-WAR does. Most useful when paired with pWAR — large gap "
+            "suggests sequencing/defense rather than skill differential."
+        ),
+        units="wins",
+        typical_range="Cy-tier: 6+; ace: 4+; replacement: 0",
+        interpretation="0 = replacement-level run prevention. RA9-WAR > pWAR "
+                       "means a pitcher prevented more actual runs than their "
+                       "FIP would suggest (good defense, lucky sequencing); "
+                       "the inverse means BABIP / defense conspired against them.",
+        caveats=(
+            "Doesn't isolate pitcher skill from team context — that's the "
+            "whole point. Use pWAR for skill-isolated value."
+        ),
+        source="f_player_season_advanced_pitching.p_ra9_war",
+        formula_source="OOTP internal",
+        related=("pWAR", "ERA", "FIP"),
         refs={"Fangraphs": f"{_FG}/misc/war/"},
     ),
 
@@ -1044,7 +1110,7 @@ _ENTRIES: list[Stat] = [
         ),
         source="diamond.advanced.sabermetric.o_war_per_player",
         formula_source="Diamond (Fangraphs framework simplified)",
-        related=("wRAA", "WAR", "wRC_plus"),
+        related=("wRAA", "bWAR", "wRC_plus"),
         refs={"Fangraphs": f"{_FG}/misc/war/"},
     ),
 
@@ -1074,7 +1140,7 @@ _ENTRIES: list[Stat] = [
                 "SP slightly under-credited. Refine via gs >= g/2 split if needed.",
         source="diamond.advanced.sabermetric.pit_war_per_pitcher",
         formula_source="Diamond (Fangraphs framework simplified)",
-        related=("FIP", "ERA_plus", "WAR"),
+        related=("FIP", "ERA_plus", "pWAR", "RA9_WAR"),
         refs={"Fangraphs": f"{_FG}/misc/war/"},
     ),
 

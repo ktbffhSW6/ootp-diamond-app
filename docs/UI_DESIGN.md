@@ -433,7 +433,7 @@ feature lands in the right tab from day one.
 8. ✅ **In-app Quit + dev.bat one-shot launcher** — done 2026-05-08.
 9. ✅ **Roster page** — done 2026-05-09. `/roster` lists every active org-tree player grouped by current level. Three filter pills (Level / Role / Hand) + **three-mode stat toggle (Basic / Advanced / Contact)**. Server returns full payload in one round-trip; client-side filtering + mode switching. Names link to player page — closes the navigation loop. Backend: `routes/roster.py` + `schemas/roster.py`. Frontend: server page + `RosterClient.tsx`.
 10. ✅ **Statcast cohort + SIERA** — done 2026-05-09. Two new L3 tables (`f_player_season_statcast_batting` + `_pitching`, BIP ≥ 30, materialized from `f_pa_event`). SIERA added to `f_player_season_advanced_pitching` via Fangraphs canonical regression. Surfaced via the new Contact mode on the roster.
-11. **Combined bWAR / pWAR** *(next slice)* — half-day. Defensive runs from `zr` + `framing` + `arm` (already in fielding fact) plus positional adjustment, summed with oWAR/pit_WAR. Closes the user's original "where's WAR?" ask. Updates the dictionary's `WAR` entry to be backed by a real fact column.
+11. ✅ **Combined bWAR / pWAR** — done 2026-05-10. Reframed mid-slice once we noticed OOTP supplies WAR directly: `players_career_*.war` / `.ra9war` is already aggregated into `f_player_season_*.war` and reconciled to IE WAR as A-tier (audit since 2026-05-04). Slice was plumbing — added `b_war` / `p_war` / `p_ra9_war` to `f_player_season_advanced_*` (SUM across stints), surfaced on roster Advanced view (replacing offense-only oWAR / custom pit_war) and on player page Advanced sections (alongside the custom variants — gap reveals defensive component / leverage scaling). Verified Mayer 3.2 = IE 3.2, Anthony 0.9 = IE 0.9, Crochet 5.5 = IE 5.5, Whitlock 0.4 = IE 0.4 (all exact). Dictionary: added `bWAR` + `pWAR` + `RA9_WAR`, deprecated ambiguous `WAR` entry.
 12. **Per-position fielding view** — surface `players_fielding_snapshot.fielding_rating_pos1..9` + `_pot` + `fielding_experience0..9` on the player page (table per position: current × ceiling × experience). Highest-leverage of all the unsurfaced data found in the 2026-05-09 audit.
 13. **Service-time / arbitration clock** — surface `roster_status_current.mlb_service_years / _days_this_year` etc. on the player page. Single most-asked GM question.
 14. **Salary stream** — render `contract_current.salary0..14` + option types + no-trade clause on the player page.
@@ -472,8 +472,12 @@ Contact`. The three column sets are:
   someone used to a box score expects. AVG/OBP/SLG/OPS for batters;
   ERA / WHIP / K/9 / BB/9 for pitchers.
 - **Advanced** — the league-relative sabermetric stack. wOBA / wRAA /
-  wRC / wRC+ / OPS+ / oWAR + park factor for batters; FIP / SIERA /
-  ERA+ / pit_WAR + park factor for pitchers.
+  wRC / wRC+ / OPS+ / **bWAR** + park factor for batters; FIP / SIERA /
+  ERA+ / **pWAR** + park factor for pitchers. bWAR + pWAR are the
+  OOTP-canonical IE-reconciled values (combined; include defense /
+  positional adjustment for batters and leverage for pitchers). The
+  offense-only `oWAR` and custom-FIP `pit_WAR` live on the player page
+  Advanced sections + glossary as inspectable alternatives.
 - **Contact** — the Statcast cohort. BIP / max EV (P90) / avg EV /
   HH% / Brl% / SS%. Pitcher rows interpret all percentages as
   allowed-contact (lower = better; tooltip clarifies). Sub-30-BIP

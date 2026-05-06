@@ -1130,43 +1130,66 @@ by experience) and as a hover-flyout on roster rows. No new ingest,
 no new derivation — pure UI work over data already in L1.
 
 
-## Combined bWAR feasibility — revised down to half-day
+## Combined bWAR / pWAR — OOTP supplies WAR directly (verified 2026-05-10)
 
-Originally estimated as a multi-week build (defensive-runs model from
-scratch). Revised 2026-05-09 after fielding-fact deep-dive.
+Initially estimated as a multi-week build (defensive-runs model from
+scratch). Revised 2026-05-09 to half-day. **Then revised again 2026-05-10
+to ~2 hours** after a one-line audit query: OOTP **directly supplies**
+the canonical combined WAR.
 
-`f_player_season_fielding` already carries:
-
-- **`zr`** (DOUBLE) — OOTP Zone Rating, **already runs-style**.
-  Standard conversion: ZR → defensive runs above average via
-  ~0.077 runs per out (or whatever scaling the audit reconciliation
-  reveals).
-- **`framing`** (DOUBLE) — catcher framing runs, already in runs.
-- **`arm`** (DOUBLE) — catcher caught-stealing + OF assist runs,
-  already in runs.
-- **`opps_made_0..5` / `opps_0..5`** — six difficulty-bucketed
-  defensive opportunities. Raw inputs for a UZR-style ratio model
-  if we want to validate `zr` against an independently-computed
-  alternative.
-- **`plays` / `plays_base`** — plays vs expected baseline.
-- **`league_history_fielding_event`** carries the same columns
-  aggregated to `(year, team, league, level, position)` — enables
-  position-relative scaling.
-
-**Approach** (queued slice):
-
-```
-dWAR = (zr_runs + framing_runs + arm_runs + positional_adj) / runs_per_win
-bWAR = oWAR + dWAR
+```sql
+SELECT table_name, column_name FROM information_schema.columns
+WHERE column_name IN ('war', 'ra9war') ORDER BY table_name;
 ```
 
-Where:
-- `zr_runs` = `zr * RUNS_PER_OUT` (calibrate against IE)
-- `positional_adj` follows Fangraphs convention (C +9 /600 PA, SS +7,
-  CF +2, etc.) — derive from `players_fielding_snapshot.fielding_rating_pos*`
-  + position played.
-- `runs_per_win` already constants in `l3_advanced.py` (10).
+returns six tables — every fact table in the warehouse already has
+`war` populated. Audit (`reconcile.py` line 211 + 393) had been
+reconciling these against IE WAR as **A-tier** (direct dump field)
+since 2026-05-04 with tolerance 0.10-0.15:
 
-Reconcile against IE WAR for scaling. Updates the dictionary's `WAR`
-entry to be backed by a real fact column for the first time
-(currently the dictionary has a `WAR` entry but no underlying data).
+```
+Mayer    PA=582  warehouse 3.2 vs IE 3.2  ✓ EXACT
+Anthony  PA=535  warehouse 0.9 vs IE 0.9  ✓ EXACT
+Crochet  IP=178.2 warehouse 5.5 vs IE 5.5 ✓ EXACT
+Whitlock IP=55.0  warehouse 0.4 vs IE 0.4 ✓ EXACT
+```
+
+**What OOTP packs into the WAR field**:
+- For batters (`players_career_batting.war`): offense (wRAA) +
+  defense (`zr` + `framing` + `arm`) + positional adjustment +
+  base-running. The full bWAR equation, with OOTP's own scaling.
+- For pitchers (`players_career_pitching.war`): FIP-WAR with
+  leverage adjustment for relievers + OOTP's replacement-level
+  scaling. Runs ~1.5-2 wins higher than our custom flat-1.13
+  `pit_war` for top starters.
+- Pitchers also have `players_career_pitching.ra9war` — the
+  runs-allowed parallel (sensitive to defense + sequencing).
+
+**What was actually built** (2026-05-10):
+- `f_player_season_advanced_batting.b_war` = `SUM(f_player_season_batting.war)`
+  per (player, year, league, level), `split_id=1`.
+- `f_player_season_advanced_pitching.p_war` =
+  `SUM(f_player_season_pitching.war)` (same grain).
+- `f_player_season_advanced_pitching.p_ra9_war` = parallel for `ra9war`.
+- Surfaced on roster Advanced view (replacing the offense-only `oWAR`
+  / custom-FIP `pit_war`) and on the player page Advanced sections
+  (alongside the custom variants — gap reveals the defensive component
+  for batters / leverage + replacement-scaling differences for pitchers).
+
+**Custom WAR alternatives still live in the warehouse** for the
+glossary cross-reference. A user reading the Advanced section sees:
+- `oWAR` (offense-only, wRAA-based formula) vs `bWAR` (combined,
+  OOTP-supplied) → gap = defensive runs + positional adjustment +
+  base-running.
+- `pit_WAR` (FIP-only, flat-1.13-replacement) vs `pWAR` (FIP-WAR
+  with leverage, OOTP-supplied) → gap = leverage + scaling.
+- `pWAR` vs `RA9_WAR` → gap = sequencing/defense vs skill differential.
+
+**Defensive components remain in `f_player_season_fielding`** — `zr`
++ `framing` + `arm` + the difficulty-bucketed `opps_made_X / opps_X`
+columns are still there, just folded into the canonical WAR rather
+than recomputed. They're available for an inspectable Diamond-side
+dWAR if we ever want one (the original "build from scratch" plan).
+For now: surfacing OOTP's value gives users the IE-canonical number
+in one column with provenance documented; the inspectable variants
+sit alongside it.

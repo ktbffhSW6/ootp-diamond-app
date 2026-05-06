@@ -64,6 +64,10 @@ const BATTING_COLUMNS: Array<[keyof PlayerBattingStint, string]> = [
 // Advanced batting columns. Per-(year, league_id, level_id) grain
 // from f_player_season_advanced_batting; multi-team-same-level stints
 // collapse to one row using the dominant team's park factor.
+//
+// Order intent: counting → rate → value. bWAR (OOTP-canonical, IE-A-tier)
+// + oWAR (offense-only, custom) sit side-by-side so the defensive
+// component is the visible difference between the two columns.
 const ADV_BATTING_COLUMNS: Array<[keyof PlayerAdvancedBattingRow, string]> = [
   ["pa", "PA"],
   ["woba", "wOBA"],
@@ -72,13 +76,19 @@ const ADV_BATTING_COLUMNS: Array<[keyof PlayerAdvancedBattingRow, string]> = [
   ["wrc_plus", "wRC_plus"],
   ["ops_plus", "OPS_plus"],
   ["o_war", "oWAR"],
+  ["b_war", "bWAR"],
 ];
 
+// Advanced pitching: pWAR (OOTP-canonical, IE-A-tier) + custom pit_WAR
+// (flat-1.13-replacement) + RA9-WAR (runs-based parallel — defense /
+// sequencing-sensitive). Three views of the same season.
 const ADV_PITCHING_COLUMNS: Array<[keyof PlayerAdvancedPitchingRow, string]> = [
   ["ip_display", "IP"],
   ["fip", "FIP"],
   ["era_plus", "ERA_plus"],
   ["pit_war", "pit_WAR"],
+  ["p_war", "pWAR"],
+  ["p_ra9_war", "RA9_WAR"],
 ];
 
 // Fielding columns. The schema is keyed by (year, position, team), so
@@ -147,7 +157,11 @@ const TWO_DP_FIELDS = new Set(["era", "whip", "k_per_9", "bb_per_9", "fip"]);
 // IP / INN render as `int.frac` (Bref convention: 172.1 = 172⅓).
 const IP_FIELDS = new Set(["ip_display", "inn_display"]);
 // One-decimal stats (WAR, runs).
-const ONE_DP_FIELDS = new Set(["o_war", "pit_war", "wraa", "wrc"]);
+const ONE_DP_FIELDS = new Set([
+  "o_war", "b_war",
+  "pit_war", "p_war", "p_ra9_war",
+  "wraa", "wrc",
+]);
 
 function formatCell(field: string, value: unknown): string {
   if (value == null) return "—";
@@ -498,9 +512,13 @@ function AdvancedBattingTable({
       </div>
       <p className="mt-1 text-xs text-content-muted">
         Per-(year, level) grain. Multi-team-same-level seasons collapse
-        into one row using the dominant team&apos;s park factor. League
-        constants are 2026-2029-only in this save — earlier years show
-        &ldquo;—&rdquo; when no historical league baseline exists.
+        into one row using the dominant team&apos;s park factor.{" "}
+        <strong>oWAR</strong> is Diamond&apos;s offense-only formula
+        (wRAA-based); <strong>bWAR</strong> is OOTP&apos;s combined WAR
+        (offense + defense + position + base-running, IE-reconciled).
+        Gap = the defensive component. League constants are 2026-2029-only
+        in this save — earlier years show &ldquo;—&rdquo; when no
+        historical league baseline exists.
       </p>
     </section>
   );
@@ -570,7 +588,10 @@ function AdvancedPitchingTable({
       <p className="mt-1 text-xs text-content-muted">
         Pitchers with ≥10 IP at the level only. Park-aware: ERA+ uses
         80% park factor (audit convention); pit_WAR uses replacement
-        FIP × 1.13.
+        FIP × 1.13. <strong>pWAR</strong> is OOTP&apos;s directly-supplied
+        FIP-WAR (with leverage adjustment for relievers — IE-reconciled).
+        <strong> RA9-WAR</strong> is the runs-based parallel — gap vs
+        pWAR signals defense / sequencing rather than skill differential.
       </p>
     </section>
   );

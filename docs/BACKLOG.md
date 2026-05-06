@@ -124,10 +124,9 @@ and count-state splits).
   (FIP-based, replacement = lgFIP × 1.13) gives pitching WAR (Skubal
   4.1, McLean 4.1). Replacement constants:
   REPL_WRAA_PER_PA=20/600, RUNS_PER_WIN=10, REPL_FIP_MULT=1.13.
-  Defensive contribution NOT folded in — separate slice (see
-  "Combined bWAR / pWAR" in the UI phase below; revised to half-day
-  feasibility once we found `zr` + `framing` + `arm` already
-  populated in `f_player_season_fielding`).
+  Defensive contribution NOT folded in — these are kept as our
+  "inspectable" custom WAR variants. Combined bWAR / pWAR ships
+  via OOTP's directly-supplied WAR (see UI phase 2026-05-10 entry).
 - [x] **Refine RE24** — done 2026-05-07. `situational.re24_per_player`
   now returns full Tango formulation `(RE_after - RE_before) + rbi`
   via `LEAD()` window function on `(outs ASC, lineup_spot ASC,
@@ -437,16 +436,24 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
   Surfaced via roster Contact mode: BIP / max_EV (P90) / avg_EV /
   HH% / Brl% / SS%. Pitcher rows interpret all percentages as
   allowed-contact (lower = better).
-- [ ] **Combined bWAR / pWAR** *(next slice)* — half-day, not the
-  multi-week build I initially estimated. `f_player_season_fielding`
-  already carries `zr` (OOTP Zone Rating, runs-style), `framing`,
-  `arm`, plus 6 difficulty-bucketed `opps_made_X / opps_X` cols.
-  Add defensive runs from `zr + framing + arm` + a small positional
-  adjustment (informed by `players_fielding_snapshot.fielding_rating_pos*`).
-  Combined bWAR = oWAR + dWAR + positional_adj. Reconcile against
-  IE WAR for scaling. Updates the dictionary's `WAR` entry to be
-  backed by a real fact column for the first time.
-- [ ] **Per-position fielding view** — surface
+- [x] **Combined bWAR / pWAR** — done 2026-05-10. Reframed mid-slice
+  after audit: OOTP **directly supplies** the canonical combined WAR
+  (`players_career_batting.war` and `players_career_pitching.war` /
+  `.ra9war`), already aggregated into `f_player_season_*.war`. The
+  audit had been reconciling these as A-tier since 2026-05-04. No
+  defensive-runs build required — OOTP bakes `zr` + `framing` +
+  `arm` + positional adjustment + base-running + leverage into the
+  WAR field. Slice was plumbing: SUMed across stints into the
+  (player, year, league, level) grain in `f_player_season_advanced_*`,
+  added new schema fields (`b_war` / `p_war` / `p_ra9_war`), surfaced
+  on roster Advanced view + player page Advanced sections. Verified
+  Mayer 3.2 = IE 3.2, Anthony 0.9 = IE 0.9, Crochet 5.5 = IE 5.5,
+  Whitlock 0.4 = IE 0.4 — all exact. Deprecated the ambiguous `WAR`
+  dictionary entry; added `bWAR` / `pWAR` / `RA9_WAR` (62 entries).
+  Custom `oWAR` / `pit_WAR` stay in the warehouse as inspectable
+  alternatives (gap vs OOTP value = the defensive component for
+  batters / leverage + replacement-scaling differences for pitchers).
+- [ ] **Per-position fielding view** *(next slice)* — surface
   `players_fielding_snapshot.fielding_rating_pos1..9` +
   `_pot` + `fielding_experience0..9` on the player page (and as
   hover-flyout on roster rows). The "where should this guy actually

@@ -89,15 +89,18 @@ class RosterBattingLine(BaseModel):
     slg: float | None
     ops: float | None
     # Advanced toggle — one shared block per row, frontend swaps columns.
-    # ``o_war`` is offensive WAR ONLY (no defensive component); the
-    # frontend labels it accordingly. A combined bWAR requires a
-    # defensive-runs model that doesn't exist yet (see BACKLOG).
+    # ``b_war`` is OOTP's combined batter WAR (offense + defense + position
+    # + base-running) — A-tier reconciled to IE WAR. ``o_war`` is Diamond's
+    # offense-only formula and is kept for the "what's the bat alone worth"
+    # cut. The Advanced toggle surfaces b_war by default; o_war stays
+    # available via the dictionary cross-reference.
     woba: float | None
     wraa: float | None             # weighted Runs Above Average (raw)
     wrc: float | None              # weighted Runs Created (raw)
     wrc_plus: int | None
     ops_plus: int | None
     o_war: float | None
+    b_war: float | None            # OOTP combined bWAR (off + def + pos)
     park_avg: float | None         # dominant team's park factor (1.00 = neutral)
     # Statcast cohort — populated when the player has ≥30 BIP this
     # year at this level. ``max_ev`` is the 90th-percentile EV per
@@ -137,11 +140,16 @@ class RosterPitchingLine(BaseModel):
     bb_per_9: float | None
     # Advanced toggle. ``siera`` is the Fangraphs canonical regression
     # (Tier-2 sabermetric) — verified against IE in the audit harness
-    # to within ±0.02 for MLB-only Sox.
+    # to within ±0.02 for MLB-only Sox. ``p_war`` is OOTP's FIP-WAR
+    # (A-tier reconciled to IE; includes leverage adjustment for
+    # relievers — typically ~1.5-2 wins higher than the custom ``pit_war``
+    # for top starters). ``p_ra9_war`` is the runs-based parallel.
     fip: float | None
     siera: float | None
     era_plus: int | None
     pit_war: float | None
+    p_war: float | None            # OOTP FIP-WAR (canonical pWAR)
+    p_ra9_war: float | None        # OOTP RA9-based WAR
     park_avg: float | None         # dominant team's park factor
     # Statcast allowed-contact cohort. ``statcast_*`` here describes
     # what the pitcher allowed, not what they generated as a hitter —

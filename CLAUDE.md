@@ -15,7 +15,7 @@ The project keeps long-running engineering context in `docs/`. Always read at th
 
 These files are the source of truth for "why" — favor updating them over leaving knowledge in chat.
 
-**Current phase: Phase 3 — UI implementation, mid-build.** Phase 2 closed 2026-05-05; analytical layer + real-history backfill closed 2026-05-06; UI scaffold + player Stats tab landed 2026-05-07; 2026-05-08 shipped the IA backbone (D17), theme system (D18), movement ledger, real landing page, and in-app Quit / dev.bat launcher; **2026-05-09 shipped the roster page (`/roster` — full org tree grouped by current level, three filter pills, three-mode stat toggle Basic/Advanced/Contact), expanded the L3 advanced surface with SIERA + a Statcast cohort (two new fact tables: `f_player_season_statcast_batting` + `_pitching`), and ran a full dump-CSV vs L0 audit that surfaced the per-position fielding cube as the highest-value unexposed dataset.** Five-tab nav (Club / League / World / History / Explore) with stubs for the four non-Club tabs; dark mode is the default. **Next slice: combined bWAR / pWAR** — half-day, not multi-week (`zr` + `framing` + `arm` already in fielding fact). The reconciliation harness (`reconcile.py`) stays in the codebase as a permanent post-ingest regression check (Decision D8).
+**Current phase: Phase 3 — UI implementation, mid-build.** Phase 2 closed 2026-05-05; analytical layer + real-history backfill closed 2026-05-06; UI scaffold + player Stats tab landed 2026-05-07; 2026-05-08 shipped the IA backbone (D17), theme system (D18), movement ledger, real landing page, and in-app Quit / dev.bat launcher; 2026-05-09 shipped the roster page + L3 SIERA + a Statcast cohort + full dump-CSV vs L0 audit. **2026-05-10 shipped combined bWAR / pWAR** — closes the original "where's WAR?" ask. Discovery flipped the slice: OOTP directly supplies bWAR + pWAR + RA9-WAR via `players_career_*.war` / `.ra9war`, already aggregated into `f_player_season_*.war` and reconciled to IE WAR as A-tier (audit since 2026-05-04, `reconcile.py` line 211 + 393). The slice was plumbing-only — SUMed across stints into `f_player_season_advanced_*` as `b_war` / `p_war` / `p_ra9_war`; surfaced on roster Advanced view (replacing offense-only `oWAR` and custom-FIP `pit_war`) and on player page Advanced sections (alongside the custom variants — gap reveals the defensive component for batters / leverage + replacement-scaling differences for pitchers). Verified Mayer 3.2 = IE 3.2, Anthony 0.9 = IE 0.9, Crochet 5.5 = IE 5.5, Whitlock 0.4 = IE 0.4 (all exact). Five-tab nav (Club / League / World / History / Explore) with stubs for the four non-Club tabs; dark mode is the default. **Next slice: per-position fielding view** — surface `players_fielding_snapshot.fielding_rating_pos1..9` + `_pot` + `experience0..9` (highest-value audit find — fully populated, never surfaced). The reconciliation harness (`reconcile.py`) stays in the codebase as a permanent post-ingest regression check (Decision D8).
 
 ## Setup & commands
 
@@ -106,7 +106,8 @@ src/diamond/
     l0.py / l1_*.py / l2.py
     l3.py                   trade attribution / movements / draft / records / awards / streaks
     l3_advanced.py          per-(player, year, league, level) advanced-stats fact tables
-                            (sabermetric: woba/wraa/wrc/wrc+/ops+/owar; fip/siera/era+/pwar)
+                            (sabermetric: woba/wraa/wrc/wrc+/ops+/owar/**bwar**;
+                             fip/siera/era+/pwar/**p_war**/**p_ra9_war**)
                             + Statcast cohort tables (f_player_season_statcast_batting +
                             _pitching: bip/max_ev_p90/avg_ev/hh%/brl%/ss%, BIP ≥ 30)
     build.py                orchestrator + admin (_diamond_ingests, _diamond_settings)
@@ -180,8 +181,12 @@ L3  derived 10 tables — trade_participant, player_movements, draft_class,
                        record_player, award_career_player, award_franchise,
                        player_streak, **f_player_season_advanced_batting +
                        _advanced_pitching** (sabermetric stack per player+year+
-                       league+level: park-aware wOBA/wRAA/wRC/wRC+/OPS+/oWAR for
-                       batters; FIP/SIERA/ERA+/pit_WAR for pitchers),
+                       league+level: park-aware wOBA/wRAA/wRC/wRC+/OPS+/oWAR
+                       + **bWAR** for batters [bWAR = OOTP's directly-supplied
+                       combined WAR — offense + defense + position + base-running,
+                       IE-A-tier reconciled]; FIP/SIERA/ERA+/pit_WAR + **pWAR**
+                       + **RA9-WAR** for pitchers [pWAR = OOTP FIP-WAR with
+                       leverage adjustment; RA9-WAR = runs-based parallel]),
                        **f_player_season_statcast_batting + _pitching** (Statcast
                        cohort: BIP / max_EV_P90 / avg_EV / hard_hit% /
                        sweet_spot% / barrel%; BIP ≥ 30 quality threshold;
@@ -251,7 +256,7 @@ Four themes via CSS variables on `<html data-theme="...">` — `light`, `dark` *
 
 ### Stat dictionary (D15)
 
-`src/diamond/dictionary/STATS` is the **only** place stat metadata lives. Every column header, chart axis, glossary tooltip, and AI prompt reads from `STATS[id]` — never hand-coded. As of 2026-05-07 the dictionary covers 60 entries (slash + counting batting/pitching, fielding counting + FPCT + RF/9, the league-relative advanced stack including wOBA/wRC+/OPS+/FIP/ERA+/SIERA, custom WAR, and the Statcast EV/barrel cohort).
+`src/diamond/dictionary/STATS` is the **only** place stat metadata lives. Every column header, chart axis, glossary tooltip, and AI prompt reads from `STATS[id]` — never hand-coded. As of 2026-05-10 the dictionary covers 62 entries (slash + counting batting/pitching, fielding counting + FPCT + RF/9, the league-relative advanced stack including wOBA/wRC+/OPS+/FIP/ERA+/SIERA, custom oWAR + pit_WAR + the OOTP-supplied bWAR/pWAR/RA9_WAR triplet, and the Statcast EV/barrel cohort).
 
 Strict rule: any new UI label MUST come from the dictionary. Adding a new stat = add an entry to `_stats.py`. The smoke test's Phase G validates required-fields-non-empty + categories valid + related-id resolution + id uniqueness.
 
@@ -273,7 +278,7 @@ The glossary endpoint is the canonical reference implementation. The player endp
 The roster page introduces a **three-position stat-mode toggle** (`Basic / Advanced / Contact`) for tables that need to expose multiple personalities of stats. Reuse the pattern wherever a dense table would otherwise need a basic/advanced toggle — three slots is the natural decomposition for this codebase given the warehouse coverage:
 
 - **Basic** — counting + slash / counting + ERA-WHIP-K9-BB9.
-- **Advanced** — sabermetric stack: wOBA / wRAA / wRC / wRC+ / OPS+ / oWAR + park (batters); FIP / SIERA / ERA+ / pit_WAR + park (pitchers).
+- **Advanced** — sabermetric stack: wOBA / wRAA / wRC / wRC+ / OPS+ / **bWAR** + park (batters); FIP / SIERA / ERA+ / **pWAR** + park (pitchers). bWAR/pWAR are OOTP-canonical (IE-reconciled, A-tier); the offense-only oWAR + custom-FIP `pit_WAR` live in the player page Advanced sections + glossary as inspectable alternatives — gap reveals defensive component / leverage-replacement scaling.
 - **Contact** — Statcast cohort: BIP / max EV (P90) / avg EV / HH% / Brl% / SS%. Pitcher rows interpret all percentages as *allowed-contact* (lower = better).
 
 See `web/components/RosterClient.tsx` for the canonical implementation.
@@ -285,6 +290,7 @@ See `web/components/RosterClient.tsx` for the canonical implementation.
 - The November dump (`dump_YYYY_11`) is the end-of-season snapshot — it's the canonical source for season-stat reconciliation. Earlier monthly dumps roll over at season start (Feb-Mar).
 - DSL teams: the Red Sox have one FCL + two DSL teams; org-level rollups must include all three.
 - Park factors: **halved** for OPS+ / wRC+ (`1 + (avg-1)/2`), **80%** for ERA+ / pit_WAR (`1 + (avg-1)*0.8`). Audit-decoded; verified Crochet 2029 ERA+ 127 vs IE 127 (Fenway).
+- **OOTP supplies WAR directly** as `players_career_*.war` / `.ra9war` (A-tier reconciled to IE since 2026-05-04). Aggregated into `f_player_season_*.war` + `.ra9war`, then SUMed into `f_player_season_advanced_batting.b_war` + `f_player_season_advanced_pitching.p_war` / `.p_ra9_war`. Surfaced on roster Advanced + player page Advanced. The custom `o_war` (offense-only, wRAA-based) + `pit_war` (FIP-only, flat-1.13-replacement) are NOT the canonical IE-reconciled values — they're inspectable alternatives kept for transparency. When users ask "what's player X's WAR?", the answer is `b_war` / `p_war`.
 - League constants are per `(league_id, year, level_id)` — never roll up across levels. AAA wOBA uses AAA constants, not MLB's. (D11)
 - League history coverage in this save is **2026-2029**. Pre-2026 player rows have counting stats (OOTP imports them from real history) but no league baselines, so advanced stats render as `—` for those years. Mapping to Lahman/BREF averages is a deferred backlog item.
 - **Statcast EV scale runs ~5 mph below real Statcast.** OOTP league-avg EV ~83 mph vs real ~88-89; save's top-end avg-EV stars sit ~5-7 mph below their real counterparts. HARD_HIT_PCT scales proportionally lower (save Judge 34% vs real Judge ~65%). When `f_record_player` UNIONs save EV records with `history_statcast_*`, the source column distinguishes the two scales — don't compare them numerically without converting.
