@@ -302,12 +302,18 @@ def _build_f_player_season_advanced_pitching(con: duckdb.DuckDBPyConnection) -> 
     """Per-(player, year, league_id, level_id) pitching advanced stats.
 
     Computed:
-      outs, ip_display, fip, era_plus, pit_war
+      outs, ip_display, fip, siera, era_plus, pit_war
 
     Filters: ``split_id = 1``. Park factor is the dominant-team's park
     (most outs at this level). Quality threshold: outs >= 30 (10 IP) —
     matches the audit's `era_plus_per_pitcher` filter so headline values
     line up with the audit's IE-reconciled numbers.
+
+    SIERA formula (Fangraphs canonical) — verified against IE 2026-05-04
+    in `audit/reconcile.py`: Crochet 2.25 vs IE 2.27, 96/101 within ±0.1
+    across MLB-only Sox. Inputs are K / BB / BF / GB / FB. SIERA is null
+    when BF is zero (defensive — shouldn't happen given the outs ≥ 30
+    quality bar).
     """
     sql = f"""
         CREATE OR REPLACE TABLE f_player_season_advanced_pitching AS
@@ -319,7 +325,10 @@ def _build_f_player_season_advanced_pitching(con: duckdb.DuckDBPyConnection) -> 
                 SUM(hra)::DOUBLE  AS hra,
                 SUM(bb)::DOUBLE   AS bb,
                 SUM(hp)::DOUBLE   AS hp,
-                SUM(k)::DOUBLE    AS k
+                SUM(k)::DOUBLE    AS k,
+                SUM(bf)::DOUBLE   AS bf,
+                SUM(gb)::DOUBLE   AS gb,
+                SUM(fb)::DOUBLE   AS fb
             FROM f_player_season_pitching
             WHERE split_id = 1
             GROUP BY player_id, year, league_id, level_id
@@ -365,6 +374,22 @@ def _build_f_player_season_advanced_pitching(con: duckdb.DuckDBPyConnection) -> 
             CAST(outs AS BIGINT) AS outs,
             ROUND(FLOOR(outs / 3.0) + ((CAST(outs AS BIGINT) % 3)) * 0.1, 1) AS ip_display,
             ROUND(player_fip, 2) AS fip,
+            -- SIERA — Fangraphs canonical regression. Null when BF=0
+            -- (defensive guard; the outs >= 30 filter rules this out
+            -- in practice).
+            CASE WHEN bf = 0 THEN NULL ELSE
+                ROUND(
+                    6.145
+                    - 16.986 * (k / bf)
+                    + 11.434 * (bb / bf)
+                    - 1.858  * ((gb - fb) / bf)
+                    + 7.653  * POWER(k / bf, 2)
+                    - 6.664  * POWER((gb - fb) / bf, 2)
+                    + 10.130 * (k / bf) * ((gb - fb) / bf)
+                    - 5.195  * (bb / bf) * ((gb - fb) / bf),
+                    2
+                )
+            END AS siera,
             CAST(ROUND(
                 100.0 * lg_era / NULLIF(player_era, 0)
                 * (1.0 + (park_avg - 1.0) * 0.8),
@@ -386,6 +411,134 @@ def _build_f_player_season_advanced_pitching(con: duckdb.DuckDBPyConnection) -> 
     """)
     return con.execute(
         "SELECT COUNT(*) FROM f_player_season_advanced_pitching"
+    ).fetchone()[0]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Statcast cohort — per-(player, year, league, level) batted-ball quality
+#
+# OOTP per-PA logs carry both ``exit_velo`` and ``launch_angle`` populated
+# 100% on BIP rows (verified in audit notes 2026-05-09 — 573,958 BIP rows
+# in f_pa_event, 0 nulls). That's enough to materialize the canonical
+# Statcast cohort at the same grain as the rest of the advanced stack:
+#
+#   - **bip**            BIP count (rows with bip_flag=1)
+#   - **max_ev**         90th-percentile EV (Statcast convention; not the
+#                        absolute max, which is dominated by single-event noise)
+#   - **avg_ev**         Mean EV across all BIP
+#   - **hard_hit_pct**   % of BIP with EV ≥ 95 mph
+#   - **sweet_spot_pct** % of BIP with LA ∈ [8°, 32°]
+#   - **barrel_pct**     % of BIP meeting Statcast's expanding-window barrel
+#                        definition: EV ≥ 98 AND LA ∈ [GREATEST(8, 26-(EV-98)),
+#                        LEAST(50, 30+(EV-98))]
+#
+# Two tables — ``f_player_season_statcast_batting`` (cohort the player
+# generated as a hitter) and ``_statcast_pitching`` (cohort the player
+# allowed as a pitcher). Same grain as the sabermetric tables: per
+# (player_id, year, league_id, level_id).
+#
+# Quality threshold: BIP ≥ 30 — small samples produce noisy percentages
+# and an unstable max_ev quantile. Matches the spirit of the audit's
+# minimum-PA filter on the rest of the advanced stack.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+_STATCAST_BARREL_EXPR = """
+    -- Statcast expanding-window barrel definition. EV >= 98 is the
+    -- floor; the LA window widens as EV climbs, capping at [8, 50].
+    CASE WHEN bip_flag = 1 AND exit_velo >= 98
+              AND launch_angle >= GREATEST(8.0, 26.0 - (exit_velo - 98.0))
+              AND launch_angle <= LEAST(50.0, 30.0 + (exit_velo - 98.0))
+         THEN 1 ELSE 0 END
+"""
+
+
+def _build_f_player_season_statcast_batting(con: duckdb.DuckDBPyConnection) -> int:
+    """Per-(batter, year, league, level) Statcast cohort.
+
+    Aggregates ``f_pa_event`` by ``batter_id`` (note: not ``player_id``;
+    f_pa_event keys hitters and pitchers distinctly). Writes the same
+    six cohort columns the audit's `diamond.advanced.contact` exposes,
+    rounded to one decimal where percentages and 90th-percentile EV.
+    """
+    sql = f"""
+        CREATE OR REPLACE TABLE f_player_season_statcast_batting AS
+        WITH agg AS (
+            SELECT
+                batter_id        AS player_id,
+                year, league_id, level_id,
+                COUNT(*) FILTER (WHERE bip_flag = 1)                       AS bip,
+                ROUND(QUANTILE_CONT(exit_velo, 0.90)
+                    FILTER (WHERE bip_flag = 1 AND exit_velo > 0), 1)      AS max_ev,
+                ROUND(AVG(exit_velo) FILTER (WHERE bip_flag = 1), 1)       AS avg_ev,
+                ROUND(100.0 * COUNT(*) FILTER (WHERE bip_flag = 1 AND exit_velo >= 95)
+                       / NULLIF(COUNT(*) FILTER (WHERE bip_flag = 1), 0), 1)
+                                                                           AS hard_hit_pct,
+                ROUND(100.0 * COUNT(*) FILTER (WHERE bip_flag = 1
+                                            AND launch_angle BETWEEN 8 AND 32)
+                       / NULLIF(COUNT(*) FILTER (WHERE bip_flag = 1), 0), 1)
+                                                                           AS sweet_spot_pct,
+                ROUND(100.0 * SUM({_STATCAST_BARREL_EXPR})
+                       / NULLIF(COUNT(*) FILTER (WHERE bip_flag = 1), 0), 1)
+                                                                           AS barrel_pct
+            FROM f_pa_event
+            GROUP BY batter_id, year, league_id, level_id
+        )
+        SELECT * FROM agg
+        WHERE bip >= 30
+    """
+    con.execute(sql)
+    con.execute("""
+        ALTER TABLE f_player_season_statcast_batting
+        ADD PRIMARY KEY (player_id, year, league_id, level_id)
+    """)
+    return con.execute(
+        "SELECT COUNT(*) FROM f_player_season_statcast_batting"
+    ).fetchone()[0]
+
+
+def _build_f_player_season_statcast_pitching(con: duckdb.DuckDBPyConnection) -> int:
+    """Per-(pitcher, year, league, level) allowed-contact Statcast cohort.
+
+    Mirrors the batting builder but aggregates by ``pitcher_id`` instead.
+    Conceptually: "what kind of contact did this pitcher allow?"
+    Useful for separating BABIP/sequencing-fueled ERA noise from
+    quality-of-contact pitch outcomes — pairs with FIP / SIERA on the
+    pitcher advanced view.
+    """
+    sql = f"""
+        CREATE OR REPLACE TABLE f_player_season_statcast_pitching AS
+        WITH agg AS (
+            SELECT
+                pitcher_id       AS player_id,
+                year, league_id, level_id,
+                COUNT(*) FILTER (WHERE bip_flag = 1)                       AS bip,
+                ROUND(QUANTILE_CONT(exit_velo, 0.90)
+                    FILTER (WHERE bip_flag = 1 AND exit_velo > 0), 1)      AS max_ev,
+                ROUND(AVG(exit_velo) FILTER (WHERE bip_flag = 1), 1)       AS avg_ev,
+                ROUND(100.0 * COUNT(*) FILTER (WHERE bip_flag = 1 AND exit_velo >= 95)
+                       / NULLIF(COUNT(*) FILTER (WHERE bip_flag = 1), 0), 1)
+                                                                           AS hard_hit_pct,
+                ROUND(100.0 * COUNT(*) FILTER (WHERE bip_flag = 1
+                                            AND launch_angle BETWEEN 8 AND 32)
+                       / NULLIF(COUNT(*) FILTER (WHERE bip_flag = 1), 0), 1)
+                                                                           AS sweet_spot_pct,
+                ROUND(100.0 * SUM({_STATCAST_BARREL_EXPR})
+                       / NULLIF(COUNT(*) FILTER (WHERE bip_flag = 1), 0), 1)
+                                                                           AS barrel_pct
+            FROM f_pa_event
+            GROUP BY pitcher_id, year, league_id, level_id
+        )
+        SELECT * FROM agg
+        WHERE bip >= 30
+    """
+    con.execute(sql)
+    con.execute("""
+        ALTER TABLE f_player_season_statcast_pitching
+        ADD PRIMARY KEY (player_id, year, league_id, level_id)
+    """)
+    return con.execute(
+        "SELECT COUNT(*) FROM f_player_season_statcast_pitching"
     ).fetchone()[0]
 
 
@@ -421,6 +574,8 @@ def build_l3_advanced(
     builders = [
         ("f_player_season_advanced_batting",  _build_f_player_season_advanced_batting),
         ("f_player_season_advanced_pitching", _build_f_player_season_advanced_pitching),
+        ("f_player_season_statcast_batting",  _build_f_player_season_statcast_batting),
+        ("f_player_season_statcast_pitching", _build_f_player_season_statcast_pitching),
     ]
     for name, fn in builders:
         n = fn(con)

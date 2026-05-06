@@ -41,6 +41,14 @@ from diamond.api.schemas.player import (
     PlayerResponse,
     TeamRef,
 )
+from diamond.api.schemas.roster import (
+    RosterBattingLine,
+    RosterLevelGroup,
+    RosterPitchingLine,
+    RosterPlayer,
+    RosterResponse,
+    RosterTeamRef,
+)
 from diamond.api.schemas.save import SaveResponse
 
 __all__ = [
@@ -64,6 +72,12 @@ __all__ = [
     "PlayerPitchingSeason",
     "PlayerPitchingStint",
     "PlayerResponse",
+    "RosterBattingLine",
+    "RosterLevelGroup",
+    "RosterPitchingLine",
+    "RosterPlayer",
+    "RosterResponse",
+    "RosterTeamRef",
     "SaveResponse",
     "TeamRef",
 ]

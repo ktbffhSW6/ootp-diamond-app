@@ -19,6 +19,7 @@ import type {
   HealthResponse,
   MovementsResponse,
   PlayerResponse,
+  RosterResponse,
   SaveResponse,
 } from "@/lib/types/api";
 
@@ -72,6 +73,14 @@ export async function getMovements(
 ): Promise<MovementsResponse> {
   const qs = year !== undefined ? `?year=${year}` : "";
   return fetchJson<MovementsResponse>(`/api/movements${qs}`);
+}
+
+// Active org-tree roster — every active player grouped by current
+// level. The whole payload is one round-trip; client-side filters
+// (level pills, role pills, basic/advanced toggle) operate over the
+// in-memory result.
+export async function getRoster(): Promise<RosterResponse> {
+  return fetchJson<RosterResponse>("/api/roster");
 }
 
 // Trigger a one-click shutdown of both dev servers (Next.js :3000 and

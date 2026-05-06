@@ -427,6 +427,152 @@ export interface PlayerResponse {
   fielding_career: PlayerCareerFielding[];
 }
 /**
+ * Latest-season batting line at the player's current level.
+ *
+ * Counting stats come from ``f_player_season_batting`` filtered to
+ * ``(year=latest, league_id=current, level_id=current, team_id=current,
+ * split_id=1)``. Rate stats are computed in the route. Advanced fields
+ * (``woba`` / ``wrc_plus`` / ``ops_plus`` / ``o_war``) come from
+ * ``f_player_season_advanced_batting`` joined on (year, league, level)
+ * — the advanced fact table already collapses stints within a level.
+ *
+ * Every numeric is nullable when the denominator is zero or the
+ * advanced row didn't materialize (sub-threshold sample, pre-2026
+ * seasons with no league baselines, etc.).
+ */
+export interface RosterBattingLine {
+  g: number;
+  pa: number;
+  ab: number;
+  h: number;
+  hr: number;
+  rbi: number;
+  sb: number;
+  bb: number;
+  so: number;
+  avg: number | null;
+  obp: number | null;
+  slg: number | null;
+  ops: number | null;
+  woba: number | null;
+  wraa: number | null;
+  wrc: number | null;
+  wrc_plus: number | null;
+  ops_plus: number | null;
+  o_war: number | null;
+  park_avg: number | null;
+  statcast_bip: number | null;
+  statcast_max_ev: number | null;
+  statcast_avg_ev: number | null;
+  statcast_hard_hit_pct: number | null;
+  statcast_barrel_pct: number | null;
+  statcast_sweet_spot_pct: number | null;
+}
+/**
+ * All active org players currently at one level.
+ *
+ * ``level_id`` follows ``LEVEL_NAMES`` (1=MLB, 2=AAA, ...);
+ * ``level_name`` is pre-resolved for display. Sorted MLB first then
+ * descending by level. Within the group, ``position_players`` and
+ * ``pitchers`` are each sorted by position then descending overall
+ * rating then last name.
+ */
+export interface RosterLevelGroup {
+  level_id: number;
+  level_name: string;
+  position_players: RosterPlayer[];
+  pitchers: RosterPlayer[];
+}
+/**
+ * One player on the user's org-tree roster.
+ *
+ * Bio fields come from ``players_current``; ``overall_rating`` (20-80
+ * scale per D6) from ``players_ratings_current`` (filtered to user-org
+ * scouted view per D12). ``team`` is the current team's identity;
+ * ``batting`` and ``pitching`` carry the latest-season stats at that
+ * team's level. Both stat blocks may be null — pitchers usually have
+ * ``batting=None``, position players ``pitching=None``.
+ */
+export interface RosterPlayer {
+  player_id: number;
+  full_name: string;
+  primary_position: string;
+  role: "batter" | "pitcher";
+  age: number | null;
+  bats: string;
+  throws: string;
+  overall_rating: number | null;
+  team: RosterTeamRef | null;
+  batting: RosterBattingLine | null;
+  pitching: RosterPitchingLine | null;
+}
+/**
+ * Slim team reference — current team for a roster row.
+ *
+ * Carries league + level identifiers so the frontend can render
+ * "MLB Boston (AL)" without a second lookup. Mirrors ``TeamRef``
+ * from the player schema but stays distinct so the roster contract
+ * is self-contained (per the schemas convention).
+ */
+export interface RosterTeamRef {
+  team_id: number;
+  abbr: string | null;
+  nickname: string | null;
+  league_id: number | null;
+  league_abbr: string | null;
+  level_id: number | null;
+  level_name: string | null;
+}
+/**
+ * Latest-season pitching line at the player's current level.
+ *
+ * Same pattern as the batting line: counting + rate stats from
+ * ``f_player_season_pitching``, advanced (FIP / ERA+ / pit_WAR) from
+ * ``f_player_season_advanced_pitching``. ``ip_display`` follows the
+ * OOTP convention (517 outs → 172.1 = 172⅓); use ``outs`` for any
+ * arithmetic.
+ */
+export interface RosterPitchingLine {
+  g: number;
+  gs: number;
+  w: number;
+  l: number;
+  sv: number;
+  outs: number;
+  ip_display: number;
+  era: number | null;
+  whip: number | null;
+  k_per_9: number | null;
+  bb_per_9: number | null;
+  fip: number | null;
+  siera: number | null;
+  era_plus: number | null;
+  pit_war: number | null;
+  park_avg: number | null;
+  statcast_bip: number | null;
+  statcast_max_ev: number | null;
+  statcast_avg_ev: number | null;
+  statcast_hard_hit_pct: number | null;
+  statcast_barrel_pct: number | null;
+  statcast_sweet_spot_pct: number | null;
+}
+/**
+ * ``GET /api/roster`` response.
+ *
+ * Whole org snapshot in one round-trip; the frontend handles all
+ * filter / sort / toggle interactions client-side over this payload.
+ * With ~150-200 players in a typical org, the JSON is small enough
+ * (~50KB uncompressed) that streaming or pagination would be
+ * premature.
+ */
+export interface RosterResponse {
+  season: number;
+  org_team_id: number;
+  org_team_abbr: string | null;
+  org_team_nickname: string | null;
+  groups: RosterLevelGroup[];
+}
+/**
  * Active-save identity + ingest health + scope counts.
  */
 export interface SaveResponse {

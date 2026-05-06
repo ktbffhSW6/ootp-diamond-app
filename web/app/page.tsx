@@ -80,19 +80,19 @@ const TOOLS: Tool[] = [
   },
   {
     status: "live",
-    title: "Player page",
-    // No directory yet, so the home links to a single demo path. The
-    // roster page will replace this with org-wide navigation.
-    href: "/player/26166",
+    title: "Roster",
+    href: "/roster",
     blurb:
-      "Bref-shaped player card with a Stats tab (batting / pitching / fielding / advanced sections, multi-stint disclosure rows). Demo path: Gunnar Henderson — roster-driven navigation lands next.",
+      "Every active player in the org tree, grouped by current level (MLB / AAA / AA / A+ / A / Rk / DSL). Filter by level, role, or hand; toggle between basic and advanced stats; click any name for the full player page.",
   },
   {
-    status: "soon",
-    title: "Roster",
-    href: null,
+    status: "live",
+    title: "Player page",
+    // Now reachable via the roster — kept here as a direct link so the
+    // demo path still works (and so the cockpit cards aren't 1×N).
+    href: "/player/26166",
     blurb:
-      "Players grouped by level (MLB / AAA / AA / A+ / A / Rk / DSL) with click-through to player pages. The missing entry-point that turns the player page from a demo into a tool you can actually use.",
+      "Bref-shaped player card with a Stats tab (batting / pitching / fielding / advanced sections, multi-stint disclosure rows). Demo path: Gunnar Henderson.",
   },
   {
     status: "soon",
@@ -117,7 +117,7 @@ const TOOLS: Tool[] = [
 function StatusPill({ status }: { status: ToolStatus }) {
   if (status === "live") {
     return (
-      <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-700">
+      <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
         Live
       </span>
     );
