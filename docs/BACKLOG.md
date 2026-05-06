@@ -117,15 +117,17 @@ and count-state splits).
   audit-decoded OOTP convention (Crochet ERA+ 127 vs IE 127 for Fenway
   in `reconcile.py`). Home park comes from `players → teams → parks`;
   mid-season trades attribute to the latest team.
-- [x] **Custom WAR** — done 2026-05-07.
+- [x] **Custom WAR (offensive + pitching only)** — done 2026-05-07.
   `sabermetric.o_war_per_player` (wRAA + replacement-level adjustment
   / runs_per_win) gives Fangraphs-scale offensive WAR (Henderson 8.7,
   Kurtz 8.7, Judge 7.7 in 2029). `sabermetric.pit_war_per_pitcher`
   (FIP-based, replacement = lgFIP × 1.13) gives pitching WAR (Skubal
   4.1, McLean 4.1). Replacement constants:
   REPL_WRAA_PER_PA=20/600, RUNS_PER_WIN=10, REPL_FIP_MULT=1.13.
-  Defensive contribution NOT folded in — would need RF/9 / framing
-  conversion to runs-above-average (separate task).
+  Defensive contribution NOT folded in — separate slice (see
+  "Combined bWAR / pWAR" in the UI phase below; revised to half-day
+  feasibility once we found `zr` + `framing` + `arm` already
+  populated in `f_player_season_fielding`).
 - [x] **Refine RE24** — done 2026-05-07. `situational.re24_per_player`
   now returns full Tango formulation `(RE_after - RE_before) + rbi`
   via `LEAD()` window function on `(outs ASC, lineup_spot ASC,
@@ -363,10 +365,10 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
       pre-2026 player rows show `—` for advanced stats. Mapping
       OOTP's pre-save imported history to Lahman/BREF league averages
       is a deferred follow-on (separate scope item).
-    - Statcast advanced (MAX_EV / AVG_EV / barrel%) still deferred to
-      the Charts tab — those live in `f_pa_event` + the
-      `history_statcast_*` tables but aren't yet folded into the
-      player-page response.
+    - Statcast advanced (MAX_EV / AVG_EV / barrel%) materialized
+      2026-05-09 as two new L3 tables (`f_player_season_statcast_*`)
+      and surfaced on the roster Contact mode. Player-page version
+      is the natural follow-on.
   - [ ] **Charts tab** — radial career arc (angular = year, radius
     = headline stat: OPS+/wRC+/WAR/ERA+, color = team or level).
     Per the design discussion 2026-05-07: radial earns its keep as
@@ -409,13 +411,63 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
   doesn't reach it; web-side kills run first so even partial
   detachment is robust. `dev.bat` spawns api.bat + web.bat + opens
   browser at :3000.
-- [ ] **Roster page** *(next slice)* — list every scoped player in
-  the user's org grouped by level (MLB / AAA / AA / A+ / A / Rk /
-  DSL) with click-through to the player page. Backend: new
-  `/api/roster` endpoint joining `_scoped_players` × `players_current`
-  × `teams`, filtered to org tier. The missing entry point that
-  unblocks player navigation from Club. Needed before more
-  player-page features (Charts tab) make sense.
+- [x] **Roster page** — done 2026-05-09. `/roster` lists every active
+  org-tree player grouped by current level. Filter pills for Level /
+  Role / Hand; **three-mode stat toggle** (Basic / Advanced /
+  Contact). Server returns full ~200-player payload in one round-trip
+  (~95 KB JSON); client-side filters / sort / mode. Names link to
+  `/player/[id]`. Backend: `src/diamond/api/{routes,schemas}/roster.py`.
+  Frontend: server page + `RosterClient` component holding filter
+  state. Stats reflect the player's CURRENT-level stats only —
+  cross-level totals stay on the player page so roster grouping
+  doesn't conflate stints.
+- [x] **Surface wRAA + wRC + park_avg** in advanced batter view — done
+  2026-05-09. Were already in `f_player_season_advanced_batting`;
+  pure UI work. Roster Advanced batter columns: PA · wOBA · wRAA ·
+  wRC · wRC+ · OPS+ · oWAR · Park.
+- [x] **Materialize SIERA** in `f_player_season_advanced_pitching` —
+  done 2026-05-09. Fangraphs canonical regression on K/BB/BF/GB/FB,
+  all inputs present in `f_player_season_pitching`. Verified Crochet
+  2.25 SIERA vs IE-reconciled 2.27 (±0.02). Roster Advanced pitcher
+  columns: IP · FIP · SIERA · ERA+ · pWAR · Park.
+- [x] **Statcast cohort L3 tables** — done 2026-05-09. Two new tables
+  (`f_player_season_statcast_batting` + `_pitching`) per-(player,
+  year, league, level), BIP ≥ 30 threshold, materialized from
+  `f_pa_event` via formulas mirroring `diamond.advanced.contact.*`.
+  Surfaced via roster Contact mode: BIP / max_EV (P90) / avg_EV /
+  HH% / Brl% / SS%. Pitcher rows interpret all percentages as
+  allowed-contact (lower = better).
+- [ ] **Combined bWAR / pWAR** *(next slice)* — half-day, not the
+  multi-week build I initially estimated. `f_player_season_fielding`
+  already carries `zr` (OOTP Zone Rating, runs-style), `framing`,
+  `arm`, plus 6 difficulty-bucketed `opps_made_X / opps_X` cols.
+  Add defensive runs from `zr + framing + arm` + a small positional
+  adjustment (informed by `players_fielding_snapshot.fielding_rating_pos*`).
+  Combined bWAR = oWAR + dWAR + positional_adj. Reconcile against
+  IE WAR for scaling. Updates the dictionary's `WAR` entry to be
+  backed by a real fact column for the first time.
+- [ ] **Per-position fielding view** — surface
+  `players_fielding_snapshot.fielding_rating_pos1..9` +
+  `_pot` + `fielding_experience0..9` on the player page (and as
+  hover-flyout on roster rows). The "where should this guy actually
+  play" view. Data is fully populated and currently invisible.
+  Highest-leverage of all the unsurfaced data found in the audit.
+- [ ] **Service-time / arbitration clock** — surface
+  `roster_status_current.mlb_service_years / _days /
+  _days_this_year` + `years_protected_from_rule_5` +
+  `has_received_arbitration` + `options_used` on the player page.
+  Single most-asked GM question ("when does X hit FA?"); data is
+  already there.
+- [ ] **Salary stream** — render `contract_current.salary0..14`
+  + option types + no-trade clause on the player page. Powers
+  trade-analyzer + extension-decision tools later.
+- [ ] **Standings page** (League tab) — `team_record_snapshot`
+  carries g/w/l/t/pct/gb/streak/magic_number. Empty tab today;
+  half-day to fill it.
+- [ ] **Clutch / RISP splits on player page** — `f_pa_event` already
+  has `risp_flag`, `close_flag`, `late_close_flag` populated. One
+  SQL slice to compute per-(player, year, level) splits + add a
+  splits section on the player page.
 - [ ] **Pressure board** — companion to the movement ledger. For each
   level, players mashing relative to the level median vs. players
   struggling at the next level up. The "who *should* move" view.

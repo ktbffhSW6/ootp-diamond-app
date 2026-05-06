@@ -994,3 +994,179 @@ PK = `(source, league_id, award_id, identity_key)` where
 `identity_key = COALESCE(external_id, player_id::VARCHAR)`. DuckDB
 PKs only accept column names so identity_key is materialized as a
 post-CTAS column.
+
+
+## Statcast inputs ARE in the OOTP per-PA dump (verified 2026-05-09)
+
+I had previously implied — twice across two different planning notes —
+that OOTP's per-PA log might not carry exit velocity / launch angle and
+so a per-season Statcast cohort might not be feasible. **That was wrong
+both times.** Verified the inputs directly:
+
+- `f_pa_event.exit_velo` (DOUBLE) and `.launch_angle` (BIGINT) are
+  populated 100% on `bip_flag = 1` rows.
+- `f_pa_event` carries 877,363 PAs total in this save; **573,958 are
+  BIP** (bip_flag = 1), all 573,958 with EV + LA values.
+- EV range observed: **0.0 – 126.4 mph** (avg 81.8). LA range:
+  **-75 – +88°** (avg 9.7°). Both realistic.
+- Underlying L0 source: `l0_players_at_bat_batting_stats.exit_velo`
+  + `.launch_angle` (and the same fields on `at_bats_event` in L1).
+
+Calibration nuance carries over from the existing 2026-05-07 note on
+save-side EV records: OOTP's EV scale runs ~5 mph below real Statcast
+(save league-avg ~83 mph vs real ~88-89; save Henderson 88.5 vs real
+Judge ~95). HARD_HIT_PCT scales proportionally lower. We surface the
+save's own scale internally and call out the gap when comparing to
+real-history Statcast tables.
+
+L3 materialization shipped 2026-05-09 — `f_player_season_statcast_batting`
++ `_pitching` per (player, year, league_id, level_id) with BIP ≥ 30.
+Six cohort fields per row: bip, max_ev (90th-percentile EV per
+Statcast convention, NOT absolute peak), avg_ev, hard_hit_pct (EV ≥
+95), sweet_spot_pct (LA ∈ [8°, 32°]), barrel_pct (Statcast expanding
+window: EV ≥ 98 + LA ∈ [GREATEST(8, 26-(EV-98)), LEAST(50, 30+(EV-98))]).
+Sample (Aaron Judge 2029 MLB): 112.0 maxEV / 86.8 avgEV / 34.2% HH /
+17.1% Brl / 40.2% SS — recognizably-Judge profile on the save's
+calibrated scale.
+
+
+## players_pitching.csv — present in the dump, NOT in L0, useless in this save
+
+Discovered 2026-05-09 during a comprehensive dump-CSV vs L0 audit (70
+CSVs in dump, 69 L0 tables — one ingest gap).
+
+**The file**: `players_pitching.csv` ships in every monthly dump. 67
+columns: `player_id`, `team_id`, `league_id`, `position`, `role` plus
+62 pitching rating cols matching the structure of
+`l0_players_scouted_ratings`'s pitching subset (overall / vsR / vsL /
+talent × 8 components, + 12-pitch arsenal cube × {current, talent},
++ misc velocity / arm_slot / stamina / ground_fly / hold).
+
+**Why it exists**: OOTP exports two parallel rating views — objective
+(true hidden values) and scouted (filtered through team scout
+accuracy). `players_pitching.csv` is the objective view; the scouted
+counterpart is `players_scouted_ratings.csv` (which IS in L0 as
+`l0_players_scouted_ratings`).
+
+**Why it's not in L0**: L0 ingest spec was written when scouted-
+ratings was the focused need; objective `players_pitching.csv` was
+never picked up. Same gap doesn't exist for batting (`l0_players_batting`
+IS ingested) or fielding (`l0_players_fielding` IS ingested) — only
+pitching.
+
+**Why it doesn't matter for this save**: Verified by full-file scan
+across 3 dumps (early / mid / latest of save's 45-dump history):
+**every rating column reads `0` for every row.** OOTP zeroes the
+objective files when scouting is enabled in the league settings —
+your "Building the Green Monster" save has scouting on for the entire
+lifespan. The 5 ID/state cols that ARE populated all duplicate fields
+already in `players_current` / `roster_status_current` /
+`players_ratings_current`.
+
+**Conclusion**: defensive ingest fix only (closes the 70/69 gap, helps
+portability if scouting is ever toggled off mid-save or a different
+save is ingested with scouting disabled). No actionable data unlocks
+in this save. Queued in BACKLOG, not prioritized.
+
+**Same pattern probably applies to `players_batting.csv` /
+`l0_players_batting`**: verified non-zero values only on
+`running_ratings_*` cols (which we DO use, folded into
+`players_snapshot`). The 28 batting rating cols are likely zeroed
+for the same scouting-mode reason — the existing L1 builder only
+folds running_ratings_* into snapshots, which is correct given the
+scouting mode reality.
+
+
+## The unused per-position fielding cube in players_fielding_snapshot
+
+Discovered 2026-05-09 — same audit pass.
+
+**`players_fielding_snapshot`** (L1, materialized from `l0_players_fielding`)
+carries 19 columns we don't read anywhere:
+
+- **`fielding_rating_pos1` through `fielding_rating_pos9`** — current
+  fielding rating per position on the 20-80 scale, populated.
+  Matches the convention from `l0_players_scouted_ratings` (which has
+  the same 18 cols mirrored into `players_ratings_current`).
+- **`fielding_rating_pos1_pot` through `_pos9_pot`** — ceiling
+  fielding rating per position, populated.
+- **`fielding_experience0` through `fielding_experience9`** — plays
+  per position (objective experience metric). Index 0 is DH-ish;
+  1-9 map to standard positions per `POSITION_NAMES`. Values appear
+  to cap at ~200 (saturated experience).
+
+**Sample — Justin Gonzales** (your 2029 MLB 1B, latest dump):
+
+```
+              current   ceiling   experience
+pos1 (P)      0         60        0
+pos2 (C)      0         0         0
+pos3 (1B)    50        50       200    ← primary; saturated
+pos4 (2B)     0        20         4    ← effectively can't play
+pos5 (3B)     0        20         0
+pos6 (SS)     0         0         0
+pos7 (LF)    65        65       197    ← BETTER than 1B current
+pos8 (CF)    50        50       200
+pos9 (RF)    60        65       184
+```
+
+So Gonzales is currently a 50-rated 1B but a 65-rated LF with three
+near-saturated OF positions. The ratings + experience answer "where
+can this guy play?" definitively per player per dump.
+
+**Other 10 fielding-skill cols**
+(`fielding_ratings_infield_range` / `_arm` / `_error`,
+`fielding_ratings_outfield_range` / `_arm` / `_error`,
+`fielding_ratings_catcher_arm` / `_ability` / `_framing`,
+`fielding_ratings_turn_doubleplay`) — same scouting-mode story as
+`players_pitching.csv` above. Zeroed in this save because scouting is
+on. Equivalent values ARE available scouted in
+`players_ratings_current` / `players_ratings_snapshot`.
+
+**This is the highest-value find of the audit**. Queued as the
+"Per-position fielding view" slice — surfaces on the player page
+(table per row: position × current × ceiling × experience, sorted
+by experience) and as a hover-flyout on roster rows. No new ingest,
+no new derivation — pure UI work over data already in L1.
+
+
+## Combined bWAR feasibility — revised down to half-day
+
+Originally estimated as a multi-week build (defensive-runs model from
+scratch). Revised 2026-05-09 after fielding-fact deep-dive.
+
+`f_player_season_fielding` already carries:
+
+- **`zr`** (DOUBLE) — OOTP Zone Rating, **already runs-style**.
+  Standard conversion: ZR → defensive runs above average via
+  ~0.077 runs per out (or whatever scaling the audit reconciliation
+  reveals).
+- **`framing`** (DOUBLE) — catcher framing runs, already in runs.
+- **`arm`** (DOUBLE) — catcher caught-stealing + OF assist runs,
+  already in runs.
+- **`opps_made_0..5` / `opps_0..5`** — six difficulty-bucketed
+  defensive opportunities. Raw inputs for a UZR-style ratio model
+  if we want to validate `zr` against an independently-computed
+  alternative.
+- **`plays` / `plays_base`** — plays vs expected baseline.
+- **`league_history_fielding_event`** carries the same columns
+  aggregated to `(year, team, league, level, position)` — enables
+  position-relative scaling.
+
+**Approach** (queued slice):
+
+```
+dWAR = (zr_runs + framing_runs + arm_runs + positional_adj) / runs_per_win
+bWAR = oWAR + dWAR
+```
+
+Where:
+- `zr_runs` = `zr * RUNS_PER_OUT` (calibrate against IE)
+- `positional_adj` follows Fangraphs convention (C +9 /600 PA, SS +7,
+  CF +2, etc.) — derive from `players_fielding_snapshot.fielding_rating_pos*`
+  + position played.
+- `runs_per_win` already constants in `l3_advanced.py` (10).
+
+Reconcile against IE WAR for scaling. Updates the dictionary's `WAR`
+entry to be backed by a real fact column for the first time
+(currently the dictionary has a `WAR` entry but no underlying data).

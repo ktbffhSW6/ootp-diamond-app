@@ -15,7 +15,7 @@ The project keeps long-running engineering context in `docs/`. Always read at th
 
 These files are the source of truth for "why" — favor updating them over leaving knowledge in chat.
 
-**Current phase: Phase 3 — UI implementation, mid-build.** Phase 2 closed 2026-05-05; analytical layer + real-history backfill closed 2026-05-06; UI scaffold + player Stats tab landed 2026-05-07; **2026-05-08 shipped the IA backbone (D17), theme system (D18), movement ledger, real landing page, and in-app Quit / dev.bat launcher**. Five-tab nav (Club / League / World / History / Explore) with stubs for the four non-Club tabs; dark mode is the default. **Next slice: roster page** — the missing entry point for player-page navigation. The reconciliation harness (`reconcile.py`) stays in the codebase as a permanent post-ingest regression check (Decision D8).
+**Current phase: Phase 3 — UI implementation, mid-build.** Phase 2 closed 2026-05-05; analytical layer + real-history backfill closed 2026-05-06; UI scaffold + player Stats tab landed 2026-05-07; 2026-05-08 shipped the IA backbone (D17), theme system (D18), movement ledger, real landing page, and in-app Quit / dev.bat launcher; **2026-05-09 shipped the roster page (`/roster` — full org tree grouped by current level, three filter pills, three-mode stat toggle Basic/Advanced/Contact), expanded the L3 advanced surface with SIERA + a Statcast cohort (two new fact tables: `f_player_season_statcast_batting` + `_pitching`), and ran a full dump-CSV vs L0 audit that surfaced the per-position fielding cube as the highest-value unexposed dataset.** Five-tab nav (Club / League / World / History / Explore) with stubs for the four non-Club tabs; dark mode is the default. **Next slice: combined bWAR / pWAR** — half-day, not multi-week (`zr` + `framing` + `arm` already in fielding fact). The reconciliation harness (`reconcile.py`) stays in the codebase as a permanent post-ingest regression check (Decision D8).
 
 ## Setup & commands
 
@@ -88,7 +88,8 @@ src/diamond/
   api/                      FastAPI app (D16)
     app.py                  factory + CORS for localhost:3000 (GET + POST allowed)
     routes/                 one module per resource:
-                              health, save, glossary, players, movements, admin
+                              health, save, glossary, players, roster,
+                              movements, admin
     schemas/                Pydantic response models — single source of truth
     warehouse.py            per-process root DuckDB conn + cursor-per-request +
                             get_active_save() for save-level metadata
@@ -105,6 +106,9 @@ src/diamond/
     l0.py / l1_*.py / l2.py
     l3.py                   trade attribution / movements / draft / records / awards / streaks
     l3_advanced.py          per-(player, year, league, level) advanced-stats fact tables
+                            (sabermetric: woba/wraa/wrc/wrc+/ops+/owar; fip/siera/era+/pwar)
+                            + Statcast cohort tables (f_player_season_statcast_batting +
+                            _pitching: bip/max_ev_p90/avg_ev/hh%/brl%/ss%, BIP ≥ 30)
     build.py                orchestrator + admin (_diamond_ingests, _diamond_settings)
   dictionary/               D15 stat dictionary (60 entries — single source of truth for labels)
     __init__.py             Stat dataclass + CATEGORIES tuple
@@ -133,9 +137,12 @@ web/
     glossary/page.tsx       D15 dictionary list
     glossary/[id]/page.tsx  single-stat detail with KaTeX-rendered formulas
     player/[id]/page.tsx    Bref-style player page (Stats tab — batting/pitching/fielding/advanced)
+    roster/page.tsx         server page — fetches /api/roster, hands off to RosterClient
     movements/page.tsx      ledger — call-ups / send-downs / acquisitions / departures
   components/
     PlayerStatsTab.tsx      client component — disclosure-row tables for the player Stats tab
+    RosterClient.tsx        client component — three filter pills (Level/Role/Hand) + three-mode
+                            stat toggle (Basic/Advanced/Contact); dense Bref-style tables
     FormulaBlock.tsx        KaTeX wrapper with parse-fail fallback
     ThemeSwitcher.tsx       client component — light/dark/neutral/cb dropdown, localStorage-persisted
     QuitButton.tsx          client component — POSTs /api/admin/shutdown
@@ -149,24 +156,36 @@ web/
 
 Every data-fetching page **must** `export const dynamic = "force-dynamic"`. Without it, Next's default static prerender at `next build` time calls the API while uvicorn isn't running and fails with `ECONNREFUSED`. See `docs/DEV.md` "Adding a new API route" for the canonical recipe.
 
-**API surface today**: `/api/health`, `/api/save`, `/api/glossary`, `/api/glossary/{id}`, `/api/players/{id}`, `/api/movements?year=YYYY[&include_pending=1]`, `POST /api/admin/shutdown`.
+**API surface today**: `/api/health`, `/api/save`, `/api/glossary`, `/api/glossary/{id}`, `/api/players/{id}`, `/api/roster`, `/api/movements?year=YYYY[&include_pending=1]`, `POST /api/admin/shutdown`.
 
 ### Warehouse layers
 
 ```
 L0  raw     69 tables    one-to-one with dump CSVs (read_csv_auto, dynamic CTAS)
+                         Note: 70 CSVs in dump, 69 in L0 — `players_pitching.csv` is
+                         not ingested. All its rating cols are zeroed in this save
+                         (scouting mode), so no actionable data lost. See DATA_NOTES.
 L1  conformed
     machinery   _scoped_teams + _scoped_players (D13: org tier UNION ≥1 MLB appearance)
     reference   12 tables (teams, leagues, parks, ...)
     event       35 tables (collapsed dups; PK on natural key)
     snapshot    21 tables + 6 _current views
+                NOTE: `players_fielding_snapshot` carries per-position fielding ratings
+                (`fielding_rating_pos1..9` + `_pot`) + per-position experience
+                (`fielding_experience0..9`). Fully populated, NOT YET surfaced anywhere
+                downstream — queued as the "Per-position fielding view" slice.
 L2  facts   8 tables (f_player_season_*, f_player_career, f_team_season,
                       f_league_season, f_pa_event, f_award_event)
-L3  derived 8 tables — trade_participant, player_movements, draft_class,
+L3  derived 10 tables — trade_participant, player_movements, draft_class,
                        record_player, award_career_player, award_franchise,
                        player_streak, **f_player_season_advanced_batting +
                        _advanced_pitching** (sabermetric stack per player+year+
-                       league+level with park-aware OPS+/ERA+/FIP/wRC+/oWAR/pit_WAR)
+                       league+level: park-aware wOBA/wRAA/wRC/wRC+/OPS+/oWAR for
+                       batters; FIP/SIERA/ERA+/pit_WAR for pitchers),
+                       **f_player_season_statcast_batting + _pitching** (Statcast
+                       cohort: BIP / max_EV_P90 / avg_EV / hard_hit% /
+                       sweet_spot% / barrel%; BIP ≥ 30 quality threshold;
+                       materialized from f_pa_event)
 History (one-time) lahman / bref / statcast / mlbapi / chadwick crosswalk
 ```
 
@@ -247,7 +266,17 @@ Per `docs/DEV.md`:
 6. **Mark the page dynamic** — `export const dynamic = "force-dynamic"` on every data-fetching page (otherwise `next build` fails with ECONNREFUSED).
 7. **Use semantic theme tokens** (per D18) — `bg-surface-page`, `text-content-primary`, `border-border`, `text-link`, etc. Don't write raw slate / white classes; they break in dark/neutral/cb modes.
 
-The glossary endpoint is the canonical reference implementation. The player endpoint is the canonical reference for warehouse-backed routes (depends on `get_cursor` from `api/warehouse.py`). The movements endpoint is the canonical reference for org-scoped routes (uses `get_active_save()` to read `audit_team_id`). The save endpoint is the canonical reference for save-metadata-only routes.
+The glossary endpoint is the canonical reference implementation. The player endpoint is the canonical reference for warehouse-backed routes (depends on `get_cursor` from `api/warehouse.py`). The movements endpoint is the canonical reference for org-scoped routes (uses `get_active_save()` to read `audit_team_id`). The save endpoint is the canonical reference for save-metadata-only routes. The roster endpoint is the canonical reference for routes that return a single big JOIN payload for client-side filtering — when in doubt, ship the whole thing in one round-trip and let the client do the slicing.
+
+### Stat-mode toggle pattern (roster page)
+
+The roster page introduces a **three-position stat-mode toggle** (`Basic / Advanced / Contact`) for tables that need to expose multiple personalities of stats. Reuse the pattern wherever a dense table would otherwise need a basic/advanced toggle — three slots is the natural decomposition for this codebase given the warehouse coverage:
+
+- **Basic** — counting + slash / counting + ERA-WHIP-K9-BB9.
+- **Advanced** — sabermetric stack: wOBA / wRAA / wRC / wRC+ / OPS+ / oWAR + park (batters); FIP / SIERA / ERA+ / pit_WAR + park (pitchers).
+- **Contact** — Statcast cohort: BIP / max EV (P90) / avg EV / HH% / Brl% / SS%. Pitcher rows interpret all percentages as *allowed-contact* (lower = better).
+
+See `web/components/RosterClient.tsx` for the canonical implementation.
 
 ## Conventions and gotchas
 
@@ -258,6 +287,9 @@ The glossary endpoint is the canonical reference implementation. The player endp
 - Park factors: **halved** for OPS+ / wRC+ (`1 + (avg-1)/2`), **80%** for ERA+ / pit_WAR (`1 + (avg-1)*0.8`). Audit-decoded; verified Crochet 2029 ERA+ 127 vs IE 127 (Fenway).
 - League constants are per `(league_id, year, level_id)` — never roll up across levels. AAA wOBA uses AAA constants, not MLB's. (D11)
 - League history coverage in this save is **2026-2029**. Pre-2026 player rows have counting stats (OOTP imports them from real history) but no league baselines, so advanced stats render as `—` for those years. Mapping to Lahman/BREF averages is a deferred backlog item.
+- **Statcast EV scale runs ~5 mph below real Statcast.** OOTP league-avg EV ~83 mph vs real ~88-89; save's top-end avg-EV stars sit ~5-7 mph below their real counterparts. HARD_HIT_PCT scales proportionally lower (save Judge 34% vs real Judge ~65%). When `f_record_player` UNIONs save EV records with `history_statcast_*`, the source column distinguishes the two scales — don't compare them numerically without converting.
+- **`max_ev` in `f_player_season_statcast_batting/_pitching` is the 90th-percentile EV**, not the absolute peak — Statcast convention; absolute peak is dominated by single-event noise.
+- **`players_pitching.csv` is in the dump but not in L0.** All rating columns are zeroed in this save because scouting mode is enabled. Defensive ingest fix only; no actionable data lost. See DATA_NOTES.md "players_pitching.csv" section.
 - `audit_output/` is gitignored. Reports are regenerable from CLI; commit the *generators*, not the outputs.
 - `.env` exists locally and is gitignored — GitHub push protection has blocked it before. Don't `git add -A` blindly.
 - `docs/screenshots/` is gitignored — user-local context, not part of the repo's permanent record.

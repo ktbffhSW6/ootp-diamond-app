@@ -431,24 +431,57 @@ feature lands in the right tab from day one.
 6. ✅ **Theme system (D18)** — four themes, dark default. Done 2026-05-08.
 7. ✅ **Real landing page (Club v0)** — save header + warehouse-health grid + tools card list. Done 2026-05-08.
 8. ✅ **In-app Quit + dev.bat one-shot launcher** — done 2026-05-08.
-9. **Roster page** *(next slice)* — `/club/roster` (or as a Club section). Lists every scoped player grouped by level with click-through to player page. Unblocks player navigation from Club.
-10. **Pressure board** — companion to the movement ledger. "Who *should* move." Backed by the existing `f_player_season_advanced_*` tables.
-11. **Compare under Explore** — pick N players, side-by-side tables + overlaid trajectories. Cross-era via career-year axis. Trout-vs-Cobb is the canonical demo; forces the chart-stack decision.
-12. **Charts tab on the player page** — radial career arc visualization.
-13. **Custom leaderboards** — TanStack Table integration; curated default version in League, build-your-own in Explore.
-14. **Cockpit v2** — anomaly flags, decisions queue (regret signals + pressure-board recommendations), standings + Pythag, recent-moves feed inline. Replaces Club v0.
-15. **History view content** — port the existing CLI surfaces (`diamond records / awards / hof / streaks / draft <year>`) to web views.
-16. **League view content** — standings, leaderboards, awards races, free-agent pool.
-17. **World view content** — all-leagues browser; thin until scope expands.
-18. **Universes + chart builder + scatter** *(bundled)* — Vega-Lite + Plotly. Lives under Explore.
-19. **Color-blind mode v2** — extend the `cb` theme to swap verdict / badge palettes (currently chrome-only).
-20. **AI overlay** — settings, keyring, providers, use levels, cost layer. Cross-cutting; lights up Reviews and inline AI annotations.
-21. **Reviews** — most AI-heavy, last because it depends on everything else.
-22. **Setup wizard** — built last but visible first (the polish layer).
-23. **Sync triggers + tracked-save management** — same time as the wizard.
+9. ✅ **Roster page** — done 2026-05-09. `/roster` lists every active org-tree player grouped by current level. Three filter pills (Level / Role / Hand) + **three-mode stat toggle (Basic / Advanced / Contact)**. Server returns full payload in one round-trip; client-side filtering + mode switching. Names link to player page — closes the navigation loop. Backend: `routes/roster.py` + `schemas/roster.py`. Frontend: server page + `RosterClient.tsx`.
+10. ✅ **Statcast cohort + SIERA** — done 2026-05-09. Two new L3 tables (`f_player_season_statcast_batting` + `_pitching`, BIP ≥ 30, materialized from `f_pa_event`). SIERA added to `f_player_season_advanced_pitching` via Fangraphs canonical regression. Surfaced via the new Contact mode on the roster.
+11. **Combined bWAR / pWAR** *(next slice)* — half-day. Defensive runs from `zr` + `framing` + `arm` (already in fielding fact) plus positional adjustment, summed with oWAR/pit_WAR. Closes the user's original "where's WAR?" ask. Updates the dictionary's `WAR` entry to be backed by a real fact column.
+12. **Per-position fielding view** — surface `players_fielding_snapshot.fielding_rating_pos1..9` + `_pot` + `fielding_experience0..9` on the player page (table per position: current × ceiling × experience). Highest-leverage of all the unsurfaced data found in the 2026-05-09 audit.
+13. **Service-time / arbitration clock** — surface `roster_status_current.mlb_service_years / _days_this_year` etc. on the player page. Single most-asked GM question.
+14. **Salary stream** — render `contract_current.salary0..14` + option types + no-trade clause on the player page.
+15. **Standings page** (League tab) — `team_record_snapshot` carries everything needed.
+16. **Clutch / RISP splits** on player page — `f_pa_event.risp_flag` / `close_flag` / `late_close_flag` already populated.
+17. **Pressure board** — companion to the movement ledger. "Who *should* move." Backed by the existing `f_player_season_advanced_*` tables.
+18. **Compare under Explore** — pick N players, side-by-side tables + overlaid trajectories. Cross-era via career-year axis. Trout-vs-Cobb is the canonical demo; forces the chart-stack decision.
+19. **Charts tab on the player page** — radial career arc visualization.
+20. **Custom leaderboards** — TanStack Table integration; curated default version in League, build-your-own in Explore.
+21. **Cockpit v2** — anomaly flags, decisions queue (regret signals + pressure-board recommendations), standings + Pythag, recent-moves feed inline. Replaces Club v0.
+22. **History view content** — port the existing CLI surfaces (`diamond records / awards / hof / streaks / draft <year>`) to web views.
+23. **League view content** — standings (lights up earlier per item 15), leaderboards, awards races, free-agent pool.
+24. **World view content** — all-leagues browser; thin until scope expands.
+25. **Universes + chart builder + scatter** *(bundled)* — Vega-Lite + Plotly. Lives under Explore.
+26. **Color-blind mode v2** — extend the `cb` theme to swap verdict / badge palettes (currently chrome-only).
+27. **AI overlay** — settings, keyring, providers, use levels, cost layer. Cross-cutting; lights up Reviews and inline AI annotations.
+28. **Reviews** — most AI-heavy, last because it depends on everything else.
+29. **Setup wizard** — built last but visible first (the polish layer).
+30. **Sync triggers + tracked-save management** — same time as the wizard.
 
-Items 20 and 14 may swap order depending on energy — AI overlay is genuinely
-useful even before cockpit anomaly flags need it.
+Items 27 and 21 may swap order depending on energy — AI overlay is genuinely
+useful even before cockpit anomaly flags need it. Items 11–16 are the
+"low-hanging fruit revealed by the 2026-05-09 dump-CSV audit" cluster — all
+half-day or smaller, all surface data that's already in the warehouse but
+unexposed in the UI. Pick any of them when energy is short for a bigger
+slice.
+
+### Stat-mode toggle pattern (introduced on roster page 2026-05-09)
+
+When a single table needs to expose multiple "personalities" of stats —
+counting vs sabermetric vs Statcast contact — use a **three-position
+segmented control** in the table's filter bar: `Basic ⇄ Advanced ⇄
+Contact`. The three column sets are:
+
+- **Basic** — the counting + slash / counting + ERA-WHIP-K9-BB9 line
+  someone used to a box score expects. AVG/OBP/SLG/OPS for batters;
+  ERA / WHIP / K/9 / BB/9 for pitchers.
+- **Advanced** — the league-relative sabermetric stack. wOBA / wRAA /
+  wRC / wRC+ / OPS+ / oWAR + park factor for batters; FIP / SIERA /
+  ERA+ / pit_WAR + park factor for pitchers.
+- **Contact** — the Statcast cohort. BIP / max EV (P90) / avg EV /
+  HH% / Brl% / SS%. Pitcher rows interpret all percentages as
+  allowed-contact (lower = better; tooltip clarifies). Sub-30-BIP
+  rows render as dashes.
+
+Reuse this pattern wherever a dense table would otherwise need a
+"basic/advanced toggle" — three slots is the natural decomposition for
+this codebase given the warehouse coverage.
 
 ---
 

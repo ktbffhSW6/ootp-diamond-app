@@ -4,13 +4,13 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-08 (in-game year 2029→2030) — **Phase 3: IA backbone + movement ledger + landing page + theme system shipped.** Major day. Top-nav IA committed (D17): five tabs — **Club / League / World / History / Explore** — with the existing landing as Club and stub pages routable for the other four. New movement ledger at `/movements` covers all four direction buckets: call-ups (promotions), send-downs (demotions), acquisitions (trade in / FA sign / waiver in), and departures (released / trade out / waiver out) with level-aware verdicts (MLB ≥100 = working, lower levels ≥90) and inverted semantics on departures (player thriving elsewhere reads 🔴). Real landing page replaces the placeholder — `/api/save` surfaces save identity + warehouse health (45 dumps, 35,261 scoped players, 2029 latest season). Four-theme system shipped (D18): light, **dark (default)**, neutral (warm cream), color-blind safe; CSS-variable tokens with `[data-theme]` selector + Tailwind semantic-color extension; no-flash inline init script in `<head>`. In-app Quit button kills both servers + their cmd windows reliably (took several iterations to get the kill order + subprocess detachment right; documented in `routes/admin.py`). New one-shot `dev.bat` launcher spawns api + web + opens browser. **Next: roster page** — the missing entry point that turns the player page from a Gunnar-Henderson demo into a tool you can navigate from Club. Then pressure board, charts tab, Compare under Explore.
+**Last updated**: 2026-05-09 (in-game year 2029→2030) — **Phase 3: roster page shipped + advanced/Statcast surface expanded.** Roster page (`/roster`) closes the player-page navigation loop: every active org-tree player grouped by current level, dense Bref-style tables with three-way filters (Level / Role / Hand) and a **three-mode stat toggle (Basic / Advanced / Contact)**. Advanced view added the wRAA / wRC / park-factor columns that were sitting in `f_player_season_advanced_batting` but never surfaced. **SIERA materialized in L3** (`f_player_season_advanced_pitching.siera`, Fangraphs canonical regression — Crochet 2.25 vs IE-reconciled 2.27 ±0.02). **Two new L3 Statcast cohort tables** — `f_player_season_statcast_batting` (3,790 rows) + `_pitching` (3,880 rows) — materialized from `f_pa_event` (which had `exit_velo` + `launch_angle` populated 100% on BIP rows all along; ~574K BIP across the warehouse). Surfaced via the new Contact mode: BIP / Max EV (P90) / Avg EV / HH% / Brl% / SS%, with pitcher rows reading as "allowed contact." **Full dump-CSV audit ran 2026-05-09**: every dump CSV cross-checked against L0 + every L0 column scanned. Findings: `players_pitching.csv` not ingested (67 cols, **but all rating values zeroed in this save because scouting is enabled** — defensive ingest fix only, no actionable data); `l0_players_fielding` carries per-position fielding ratings (`fielding_rating_pos1..9`), per-position ceilings (`_pot`), and per-position experience (`fielding_experience0..9`) — fully populated in `players_fielding_snapshot` and **never read** by any L2/L3/UI surface. That's the highest-value find of the audit. **Next: combined bWAR/pWAR slice** (revised feasibility — `zr` + `framing` + `arm` already in fielding fact, half-day not multi-week) followed by per-position fielding view + service-time/contract surface.
 
 ---
 
 ## One-line summary
 
-Phases 1-2 closed; analytical CLI surface complete; real MLB history through 2025 backfilled; Phase 3 UI live — five-tab IA (Club / League / World / History / Explore) wired into the layout; Club landing renders save metadata + tools grid; movement ledger covers all four direction buckets; player page Stats tab full (batting / pitching / fielding / advanced); theme system supports light / dark / neutral / color-blind with dark as default; in-app Quit reliably kills both dev servers. Roster page is the next slice — unblocks player navigation from Club. Pressure board + Charts tab + Compare-under-Explore queued behind it.
+Phases 1-2 closed; analytical CLI surface complete; real MLB history through 2025 backfilled; Phase 3 UI live — five-tab IA (Club / League / World / History / Explore) wired into the layout; Club landing renders save metadata + tools grid; movement ledger covers all four direction buckets; **roster page shipped (2026-05-09) — full org tree grouped by level with Basic/Advanced/Contact stat-mode toggle, closes player-page navigation loop**; player page Stats tab full (batting / pitching / fielding / advanced); theme system supports light / dark / neutral / color-blind with dark as default; in-app Quit reliably kills both dev servers. **L3 Statcast cohort + SIERA materialized 2026-05-09**, surfacing the Statcast quintet (max_EV / avg_EV / HH% / Brl% / SS%) on the roster Contact mode. Combined bWAR/pWAR is the natural next slice (revised feasibility: half-day, not multi-week — `zr` + `framing` + `arm` already in fielding fact).
 
 ## What works today
 
@@ -55,11 +55,15 @@ Phases 1-2 closed; analytical CLI surface complete; real MLB history through 202
   - L1: 12 reference + 35 event + 21 state-snapshot + 6 `_current` views + 2 machinery (`_scoped_*`) + 1 admin (`_diamond_ingests`)
   - L2: 8 facts (`f_player_season_batting/pitching/fielding`, `f_player_career`,
     `f_team_season`, `f_league_season`, `f_pa_event`, `f_award_event`)
-  - L3: 8 derived (`f_trade_participant`, `player_movements` w/ `trade_id`,
+  - L3: 10 derived (`f_trade_participant`, `player_movements` w/ `trade_id`,
     `f_draft_class`, `f_record_player`, `f_award_career_player`,
     `f_award_franchise`, `f_player_streak`,
     `f_player_season_advanced_batting` + `_advanced_pitching` [the
-    sabermetric stack materialized per (player, year, league, level)])
+    sabermetric stack — wOBA/wRAA/wRC/wRC+/OPS+/oWAR for batters; FIP
+    + **SIERA** + ERA+/pit_WAR for pitchers; park_avg on both],
+    **`f_player_season_statcast_batting` + `_pitching`** [BIP / max_EV
+    P90 / avg_EV / hard_hit% / sweet_spot% / barrel% per (player, year,
+    league, level), 30-BIP minimum, materialized from `f_pa_event`])
   - History backfill (one-time): 8 `history_lahman_*` tables +
     2 `history_statcast_*` tables + 2 `history_bref_*` tables +
     2 `history_mlbapi_*` tables (awards + HOF gap-fill 2018+) +
@@ -319,17 +323,88 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
     - `dev.bat` at repo root — spawns `api.bat` + `web.bat` in
       named consoles, then opens the browser at :3000 after a
       6-second compile pause. Documented in DEV.md.
-12. **Roster page** *(next slice)* — the missing entry point. List
-    every scoped player grouped by level (MLB / AAA / AA / A+ / A /
-    Rk / DSL) with click-through to the player page. Once this
-    ships, the landing's Player-page card stops needing the
-    "demo path: Gunnar Henderson" footnote and the Player-page
-    tab in the IA becomes navigable rather than search-only.
-13. Then **pressure board** (who *should* move — companion to the
-    movement ledger), **Charts tab** (radial career arc on the
-    player page), **Compare under Explore** (Trout vs Cobb-style
-    cross-era player comparison; first live mode in the Explore
-    sandbox), and the rest of the UI_DESIGN.md ladder.
+12. ✅ **Roster page** — done 2026-05-09. `/roster` lists every active
+    org-tree player grouped by current level (MLB / AAA / AA / A+ /
+    A / Rk / DSL), separating position players + pitchers within each
+    level. Filter pills: Level (single-select; All + every level
+    present in the data), Role (All / Position / Pitchers), Hand
+    (All / R / L / S). **Three-mode stat toggle: Basic ⇄ Advanced
+    ⇄ Contact.** Server returns full ~200-player payload in one
+    round-trip (~95 KB); all filter / sort / mode interactions are
+    client-side. Names link to `/player/[id]` — closes the
+    navigation loop. Wired into Club landing's Tools grid.
+    - Backend: `src/diamond/api/routes/roster.py`,
+      `src/diamond/api/schemas/roster.py`. Single SQL JOIN pulls
+      every (player + current team + season stats + advanced +
+      Statcast cohort) tuple, then Python folds into level groups.
+    - Frontend: server component at `web/app/roster/page.tsx`
+      delegates state to `web/components/RosterClient.tsx`
+      (the client component holds filters + mode).
+13. ✅ **Advanced + Statcast surface expansion** — done 2026-05-09.
+    - **wRAA / wRC / park_avg surfaced** on the roster Advanced
+      view. Were already in `f_player_season_advanced_batting` —
+      pure UI work. Park factor renders as a small subscript per
+      row.
+    - **SIERA materialized** in `f_player_season_advanced_pitching`
+      using the Fangraphs canonical quadratic regression.
+      Inputs (K/BB/BF/GB/FB) all present in `f_player_season_pitching`.
+      Crochet 2.25 SIERA matches IE-reconciled 2.27 to ±0.02. Now
+      surfaced on the roster Advanced view.
+    - **Statcast cohort L3 build** — Two new fact tables
+      (`f_player_season_statcast_batting` 3,790 rows;
+      `_pitching` 3,880 rows). Per-(player, year, league_id,
+      level_id), BIP ≥ 30 quality threshold. max_EV is the 90th-
+      percentile EV per Statcast convention (not absolute peak).
+      Barrel uses Statcast's expanding-window definition. All
+      formulas mirror `diamond.advanced.contact.*`. Surfaced via
+      the Contact mode toggle on the roster — pitcher rows show
+      allowed-contact (lower = better), batter rows show
+      generated-contact (higher = better).
+    - **Earlier (incorrect) claim corrected**: I had said in an
+      audit-inventory pass that Statcast inputs might not exist in
+      OOTP's per-PA log. They do — verified `f_pa_event.exit_velo`
+      + `launch_angle` populated 100% on BIP rows (573,958 rows,
+      EV range 0–126.4 mph, LA range -75°–88°, all realistic).
+14. ✅ **Full dump-CSV audit pass** — done 2026-05-09 (no UI
+    output; informs the next-up list).
+    - Cross-checked every CSV in latest dump against L0 (70 vs 69):
+      one ingest gap — `players_pitching.csv` (67 cols of objective
+      pitching ratings: stuff, movement, control × overall/vsR/vsL/
+      talent + 12-pitch arsenal cube + velocity/arm_slot/stamina/
+      ground_fly/hold). **All rating columns are zeroed across all
+      148,513 rows × all 45 dumps in this save** — OOTP only
+      populates the `players_*.csv` objective files when scouting
+      is disabled. Same data IS available via `l0_players_scouted_ratings`
+      (Sox-scouted, populated). Net: no usable data; defensive
+      ingest fix only, queued.
+    - Cross-checked every L0 column against L1+ usage: highest-
+      value find is **per-position fielding cube in
+      `players_fielding_snapshot`** — `fielding_rating_pos1..9`
+      (current 20-80 per position), `fielding_rating_pos1..9_pot`
+      (ceiling per position), `fielding_experience0..9` (plays per
+      position). Fully populated, never read by any L2/L3/UI
+      surface. Sample (Justin Gonzales): pos3=50 (1B current),
+      pos7=65 (better in LF!), pos8=50 (capable CF), pos9=60
+      (high-ceiling RF), with experience 200/197/200/184 backing
+      it up. This is the "where should this guy actually play"
+      data — answers it definitively per player per dump.
+    - Combined-WAR feasibility revised from "multi-week build"
+      down to "half-day slice" — `zr` (Zone Rating, runs-style),
+      `framing`, `arm`, plus 6 difficulty-bucketed `opps_made_X /
+      opps_X` cols already in `f_player_season_fielding`. Adds
+      defensive component to oWAR for combined bWAR.
+15. **Combined bWAR / pWAR** *(next slice)* — half-day. Add
+    defensive runs from `zr` + `framing` + `arm` (already in fact)
+    plus a positional adjustment (informed by the per-position
+    fielding cube above). Reconcile against IE WAR for scaling.
+    Closes the user's original "where's WAR?" ask.
+16. Then **per-position fielding view** (player page sidebar:
+    table of position × current rating × ceiling × experience,
+    sorted by experience), **service-time / arbitration clock**
+    (`roster_status_current.mlb_service_years` etc.), **standings
+    page** (League tab content), **clutch / RISP splits** on
+    player page, then **records / awards / hof / streaks → History
+    tab**, and the rest of the UI_DESIGN.md ladder.
 
 **Open audit carry-forwards** (non-blocking, picked up opportunistically):
 multi-level OPS+/ERA+ park weighting, hit_loc-based spray, LeaderCategory codes
