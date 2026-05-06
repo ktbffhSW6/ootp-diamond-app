@@ -30,6 +30,7 @@ import type {
   PlayerFieldingRow,
   PlayerPitchingSeason,
   PlayerPitchingStint,
+  PlayerPositionFielding,
   PlayerResponse,
   TeamRef,
 } from "@/lib/types/api";
@@ -712,6 +713,123 @@ function FieldingTable({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Defensive profile — per-position scouted-rating cube
+//
+// Surfaces players_fielding_current.fielding_rating_pos1..9 + _pot +
+// fielding_experience1..9 from `position_fielding`. Sorted by experience
+// descending so the "where they actually play" view comes first.
+// Empty rows (zero rating, zero experience) collapse to a single
+// "no scouted ratings" line — keeps the table dense for the typical
+// case (~3-4 positions of real signal per player).
+// ─────────────────────────────────────────────────────────────────────────
+
+// Color hint for the 20-80 rating scale (matches scouting convention).
+// Cells stay the same width — only the text color shifts.
+function ratingClass(rating: number | null): string {
+  if (rating == null) return "text-content-muted";
+  if (rating >= 70) return "text-emerald-700 dark:text-emerald-300 font-semibold";
+  if (rating >= 60) return "text-emerald-600 dark:text-emerald-400";
+  if (rating >= 50) return "text-content-primary";
+  if (rating >= 40) return "text-amber-700 dark:text-amber-400";
+  return "text-rose-700 dark:text-rose-400";
+}
+
+function DefensiveProfileTable({
+  rows,
+}: {
+  rows: PlayerPositionFielding[];
+}) {
+  // Hide rows that have nothing to say at all (no current rating, no
+  // ceiling, no experience). For most position players this still
+  // leaves 4-7 rows; for pitchers it usually leaves just P.
+  const meaningful = rows.filter(
+    (r) =>
+      r.rating_current != null ||
+      r.rating_potential != null ||
+      r.experience != null,
+  );
+
+  if (meaningful.length === 0) {
+    return null;
+  }
+
+  // Sort by experience desc (nulls last), then by rating desc as
+  // tiebreaker — surfaces the spots the player has actually logged
+  // innings at first.
+  const sorted = [...meaningful].sort((a, b) => {
+    const expA = a.experience ?? -1;
+    const expB = b.experience ?? -1;
+    if (expB !== expA) return expB - expA;
+    return (b.rating_current ?? 0) - (a.rating_current ?? 0);
+  });
+
+  return (
+    <section>
+      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-content-muted">
+        Defensive Profile
+      </h2>
+      <div className="overflow-x-auto rounded-md border border-border bg-surface-card">
+        <table className="min-w-full text-sm">
+          <thead className="bg-surface-elevated text-xs uppercase text-content-muted">
+            <tr>
+              <th className="w-16 px-2 py-1.5 text-left font-medium">Pos</th>
+              <th
+                className="px-2 py-1.5 text-right font-medium"
+                title="Current scouted rating at this position (20-80 scale). Reflects the user's scouting view."
+              >
+                Current
+              </th>
+              <th
+                className="px-2 py-1.5 text-right font-medium"
+                title="Ceiling at this position (20-80 scale) — what the player projects to if they keep getting reps."
+              >
+                Ceiling
+              </th>
+              <th
+                className="px-2 py-1.5 text-right font-medium"
+                title="OOTP play-attempt counter at this position. A relative weight, not a sample-size threshold — useful for ranking 'where this guy actually plays' vs 'where they could play.'"
+              >
+                Plays
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r) => (
+              <tr key={r.position} className="border-t border-border">
+                <td className="px-2 py-1.5 text-left font-mono text-sm text-content-primary">
+                  {r.position_name}
+                </td>
+                <td
+                  className={`px-2 py-1.5 text-right font-mono text-sm tabular-nums ${ratingClass(r.rating_current)}`}
+                >
+                  {r.rating_current ?? "—"}
+                </td>
+                <td
+                  className={`px-2 py-1.5 text-right font-mono text-sm tabular-nums ${ratingClass(r.rating_potential)}`}
+                >
+                  {r.rating_potential ?? "—"}
+                </td>
+                <td className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-secondary">
+                  {r.experience ?? "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-1 text-xs text-content-muted">
+        20-80 scale (50 = league-average defender). Sorted by play count
+        — the spots above the table&apos;s &ldquo;—&rdquo; experience
+        rows are where the player&apos;s actually logged innings; the
+        spots below show ceiling without realized reps. Source:
+        latest{" "}
+        <code className="font-mono text-[11px]">players_fielding_current</code>.
+      </p>
+    </section>
+  );
+}
+
 function PitchingCareerRow({
   career,
   columnOrder,
@@ -793,10 +911,16 @@ export function PlayerStatsTab({
   const hasFielding = player.fielding_rows.length > 0;
   const hasAdvBatting = player.advanced_batting.length > 0;
   const hasAdvPitching = player.advanced_pitching.length > 0;
+  const hasDefensiveProfile = (player.position_fielding ?? []).some(
+    (r) =>
+      r.rating_current != null ||
+      r.rating_potential != null ||
+      r.experience != null,
+  );
 
   return (
     <div className="space-y-8">
-      {!hasBatting && !hasPitching && !hasFielding && (
+      {!hasBatting && !hasPitching && !hasFielding && !hasDefensiveProfile && (
         <p className="text-sm text-content-muted">
           No batting, pitching, or fielding stats yet for this player.
         </p>
@@ -876,6 +1000,10 @@ export function PlayerStatsTab({
           career={player.fielding_career}
           headers={fieldingHeaders}
         />
+      )}
+
+      {hasDefensiveProfile && (
+        <DefensiveProfileTable rows={player.position_fielding} />
       )}
     </div>
   );

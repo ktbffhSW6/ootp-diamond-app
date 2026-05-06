@@ -1123,11 +1123,30 @@ can this guy play?" definitively per player per dump.
 on. Equivalent values ARE available scouted in
 `players_ratings_current` / `players_ratings_snapshot`.
 
-**This is the highest-value find of the audit**. Queued as the
-"Per-position fielding view" slice — surfaces on the player page
-(table per row: position × current × ceiling × experience, sorted
-by experience) and as a hover-flyout on roster rows. No new ingest,
-no new derivation — pure UI work over data already in L1.
+**This is the highest-value find of the audit**. **Shipped 2026-05-10**
+as the "Defensive Profile" section on the player page:
+
+- New `players_fielding_current` view registered alongside the other
+  `_current` views in `l1_snapshot.py` (filters
+  `players_fielding_snapshot` to latest `dump_date`). Brings the
+  total to 7 `_current` views.
+- New `PlayerPositionFielding` Pydantic schema; route handler
+  unpivots the 9 `fielding_rating_pos1..9` + `_pot` +
+  `fielding_experience1..9` triplets into a list of 9 rows
+  (always — empty rows render as em-dashes via null normalization).
+  ``fielding_experience0`` is intentionally not exposed (DH/unused
+  bucket).
+- `DefensiveProfileTable` in `PlayerStatsTab.tsx` — Pos / Current /
+  Ceiling / Plays columns, sorted by experience desc so the spots
+  the player has actually logged innings at appear first; rows with
+  no rating + no experience are hidden. Cells color-coded by 20-80
+  rating (≥70 emerald-bold, ≥60 emerald, 50 default, 40s amber,
+  <40 rose).
+
+Hover-flyout on roster rows is deferred — the player-page section
+gives users the answer in two clicks, and a hover-flyout would
+duplicate state machinery. Re-evaluate if the roster needs a
+"defensive cohort filter" later.
 
 
 ## Combined bWAR / pWAR — OOTP supplies WAR directly (verified 2026-05-10)

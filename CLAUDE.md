@@ -15,7 +15,7 @@ The project keeps long-running engineering context in `docs/`. Always read at th
 
 These files are the source of truth for "why" — favor updating them over leaving knowledge in chat.
 
-**Current phase: Phase 3 — UI implementation, mid-build.** Phase 2 closed 2026-05-05; analytical layer + real-history backfill closed 2026-05-06; UI scaffold + player Stats tab landed 2026-05-07; 2026-05-08 shipped the IA backbone (D17), theme system (D18), movement ledger, real landing page, and in-app Quit / dev.bat launcher; 2026-05-09 shipped the roster page + L3 SIERA + a Statcast cohort + full dump-CSV vs L0 audit. **2026-05-10 shipped combined bWAR / pWAR** — closes the original "where's WAR?" ask. Discovery flipped the slice: OOTP directly supplies bWAR + pWAR + RA9-WAR via `players_career_*.war` / `.ra9war`, already aggregated into `f_player_season_*.war` and reconciled to IE WAR as A-tier (audit since 2026-05-04, `reconcile.py` line 211 + 393). The slice was plumbing-only — SUMed across stints into `f_player_season_advanced_*` as `b_war` / `p_war` / `p_ra9_war`; surfaced on roster Advanced view (replacing offense-only `oWAR` and custom-FIP `pit_war`) and on player page Advanced sections (alongside the custom variants — gap reveals the defensive component for batters / leverage + replacement-scaling differences for pitchers). Verified Mayer 3.2 = IE 3.2, Anthony 0.9 = IE 0.9, Crochet 5.5 = IE 5.5, Whitlock 0.4 = IE 0.4 (all exact). Five-tab nav (Club / League / World / History / Explore) with stubs for the four non-Club tabs; dark mode is the default. **Next slice: per-position fielding view** — surface `players_fielding_snapshot.fielding_rating_pos1..9` + `_pot` + `experience0..9` (highest-value audit find — fully populated, never surfaced). The reconciliation harness (`reconcile.py`) stays in the codebase as a permanent post-ingest regression check (Decision D8).
+**Current phase: Phase 3 — UI implementation, mid-build.** Phase 2 closed 2026-05-05; analytical layer + real-history backfill closed 2026-05-06; UI scaffold + player Stats tab landed 2026-05-07; 2026-05-08 shipped the IA backbone (D17), theme system (D18), movement ledger, real landing page, and in-app Quit / dev.bat launcher; 2026-05-09 shipped the roster page + L3 SIERA + a Statcast cohort + full dump-CSV vs L0 audit. **2026-05-10 shipped two slices**: (1) combined bWAR / pWAR — closes the original "where's WAR?" ask. OOTP directly supplies bWAR + pWAR + RA9-WAR via `players_career_*.war` / `.ra9war`, already aggregated into `f_player_season_*.war` and reconciled to IE WAR as A-tier (audit since 2026-05-04). Slice was plumbing — SUMed across stints into `f_player_season_advanced_*` as `b_war` / `p_war` / `p_ra9_war`; surfaced on roster Advanced view + player page Advanced sections. Verified Mayer 3.2 = IE 3.2, Anthony 0.9 = IE 0.9, Crochet 5.5 = IE 5.5, Whitlock 0.4 = IE 0.4 (all exact). (2) **Per-position fielding view** — closes the highest-value find from the 2026-05-09 audit. New "Defensive Profile" section on the player page surfaces the 9-position scouted-rating cube (`fielding_rating_pos1..9` + `_pot` + `fielding_experience1..9`). Backed by a new `players_fielding_current` view + `PlayerPositionFielding` schema. Real signal verified: Justin Gonzales (listed POS=1B) actually reads as a corner-OF guy — current 65 LF, 60 RF, 50 CF with ~200 plays at each. Five-tab nav (Club / League / World / History / Explore) with stubs for the four non-Club tabs; dark mode is the default. **Next slice: service-time / arbitration clock** (`roster_status_current.mlb_service_years` etc. on the player page — single most-asked GM question, data already there). The reconciliation harness (`reconcile.py`) stays in the codebase as a permanent post-ingest regression check (Decision D8).
 
 ## Setup & commands
 
@@ -142,6 +142,7 @@ web/
     movements/page.tsx      ledger — call-ups / send-downs / acquisitions / departures
   components/
     PlayerStatsTab.tsx      client component — disclosure-row tables for the player Stats tab
+                            + Defensive Profile section (per-position 20-80 cube)
     RosterClient.tsx        client component — three filter pills (Level/Role/Hand) + three-mode
                             stat toggle (Basic/Advanced/Contact); dense Bref-style tables
     FormulaBlock.tsx        KaTeX wrapper with parse-fail fallback
@@ -170,11 +171,13 @@ L1  conformed
     machinery   _scoped_teams + _scoped_players (D13: org tier UNION ≥1 MLB appearance)
     reference   12 tables (teams, leagues, parks, ...)
     event       35 tables (collapsed dups; PK on natural key)
-    snapshot    21 tables + 6 _current views
-                NOTE: `players_fielding_snapshot` carries per-position fielding ratings
-                (`fielding_rating_pos1..9` + `_pot`) + per-position experience
-                (`fielding_experience0..9`). Fully populated, NOT YET surfaced anywhere
-                downstream — queued as the "Per-position fielding view" slice.
+    snapshot    21 tables + 7 _current views
+                (incl. `players_fielding_current` over `players_fielding_snapshot`,
+                 added 2026-05-10 to back the Defensive Profile section on the
+                 player page — surfaces `fielding_rating_pos1..9` + `_pot` +
+                 `fielding_experience1..9`. Convention: zero values = "never
+                 rated / never played there" — surfaced as null in the API so
+                 the UI can render em-dashes unambiguously.)
 L2  facts   8 tables (f_player_season_*, f_player_career, f_team_season,
                       f_league_season, f_pa_event, f_award_event)
 L3  derived 10 tables — trade_participant, player_movements, draft_class,

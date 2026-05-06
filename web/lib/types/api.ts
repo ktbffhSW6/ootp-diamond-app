@@ -411,6 +411,45 @@ export interface PlayerPitchingStint {
   bb_per_9: number | null;
 }
 /**
+ * One row in the per-position fielding cube — current rating +
+ * ceiling + experience for a single defensive spot.
+ *
+ * Materialized from ``players_fielding_current`` (the latest
+ * ``players_fielding_snapshot`` row). Per-position columns are the
+ * OOTP-scouted 20-80 ratings — ``fielding_rating_pos1..9`` for current
+ * skill, ``fielding_rating_pos1..9_pot`` for ceiling. Position
+ * indexing follows the standard OOTP convention (1=P, 2=C, 3=1B,
+ * 4=2B, 5=3B, 6=SS, 7=LF, 8=CF, 9=RF — no DH at the fielding grain).
+ *
+ * ``experience`` comes from ``fielding_experience1..9`` (the
+ * 1-indexed columns; index 0 is unused / DH-bucket and isn't
+ * surfaced). Units are OOTP "play attempts" — useful as a relative
+ * weight ("this guy has 200 plays at 1B vs 4 at 2B") rather than a
+ * sample-size threshold.
+ *
+ * Conventions:
+ * - All three fields are nullable. A zero rating means "the player
+ *   has never been rated at this position in scouting"; we surface
+ *   it as ``None`` rather than ``0`` so the UI can render an
+ *   em-dash without ambiguity.
+ * - Zero experience also surfaces as ``None`` for the same reason
+ *   — distinguishes "never tried" from "tried briefly with 0 plays
+ *   somehow logged."
+ *
+ * Why surface this at all: the `fielding_rating_pos*` cube answers
+ * the GM-side question "where should this player actually play?"
+ * That info is fully populated in every dump but never reads in any
+ * L2/L3/UI surface today (highest-value find from the 2026-05-09
+ * dump-CSV audit — see PROJECT_STATUS / DATA_NOTES).
+ */
+export interface PlayerPositionFielding {
+  position: number;
+  position_name: string;
+  rating_current: number | null;
+  rating_potential: number | null;
+  experience: number | null;
+}
+/**
  * ``GET /api/players/{player_id}`` response.
  *
  * Fields are nullable when the player never accumulated stats of that
@@ -428,6 +467,7 @@ export interface PlayerResponse {
   batting_career: PlayerCareerBatting | null;
   pitching_career: PlayerCareerPitching | null;
   fielding_career: PlayerCareerFielding[];
+  position_fielding: PlayerPositionFielding[];
 }
 /**
  * Latest-season batting line at the player's current level.

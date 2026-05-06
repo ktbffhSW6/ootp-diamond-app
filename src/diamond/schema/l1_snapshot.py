@@ -263,6 +263,7 @@ def _build_players_ratings_snapshot(
 _CURRENT_VIEWS: list[tuple[str, str]] = [
     ("players_current",          "players_snapshot"),
     ("players_ratings_current",  "players_ratings_snapshot"),
+    ("players_fielding_current", "players_fielding_snapshot"),
     ("roster_status_current",    "roster_status_snapshot"),
     ("contract_current",         "contract_snapshot"),
     ("team_record_current",      "team_record_snapshot"),

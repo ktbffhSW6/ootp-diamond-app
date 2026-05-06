@@ -38,6 +38,7 @@ from diamond.api.schemas.player import (
     PlayerFieldingRow,
     PlayerPitchingSeason,
     PlayerPitchingStint,
+    PlayerPositionFielding,
     PlayerResponse,
     TeamRef,
 )
@@ -71,6 +72,7 @@ __all__ = [
     "PlayerFieldingRow",
     "PlayerPitchingSeason",
     "PlayerPitchingStint",
+    "PlayerPositionFielding",
     "PlayerResponse",
     "RosterBattingLine",
     "RosterLevelGroup",

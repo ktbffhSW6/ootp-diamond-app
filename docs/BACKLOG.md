@@ -453,13 +453,20 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
   Custom `oWAR` / `pit_WAR` stay in the warehouse as inspectable
   alternatives (gap vs OOTP value = the defensive component for
   batters / leverage + replacement-scaling differences for pitchers).
-- [ ] **Per-position fielding view** *(next slice)* — surface
-  `players_fielding_snapshot.fielding_rating_pos1..9` +
-  `_pot` + `fielding_experience0..9` on the player page (and as
-  hover-flyout on roster rows). The "where should this guy actually
-  play" view. Data is fully populated and currently invisible.
-  Highest-leverage of all the unsurfaced data found in the audit.
-- [ ] **Service-time / arbitration clock** — surface
+- [x] **Per-position fielding view** — done 2026-05-10. New
+  "Defensive Profile" section on the player page surfaces the
+  9-position scouted-rating cube. New `players_fielding_current`
+  view (latest snapshot per player) registered alongside the other
+  `_current` views in `l1_snapshot.py`. New `PlayerPositionFielding`
+  Pydantic schema; `PlayerResponse.position_fielding` is always 9
+  rows (1=P..9=RF) with zero values normalized to null so the UI
+  renders em-dashes for "never rated." Sorted by experience desc
+  in the UI so the "where they actually play" view comes first;
+  no-data rows hidden. 20-80 rating cells color-coded (emerald
+  / amber / rose). Sample signal: Justin Gonzales (POS=1B) really
+  reads as a corner-OF guy — current 65 LF, 60 RF, 50 CF with
+  ~200 plays at each, vs current 50 at his listed 1B.
+- [ ] **Service-time / arbitration clock** *(next slice)* — surface
   `roster_status_current.mlb_service_years / _days /
   _days_this_year` + `years_protected_from_rule_5` +
   `has_received_arbitration` + `options_used` on the player page.

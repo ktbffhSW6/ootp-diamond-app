@@ -354,6 +354,48 @@ class PlayerAdvancedPitchingRow(BaseModel):
     park_avg: float | None
 
 
+class PlayerPositionFielding(BaseModel):
+    """One row in the per-position fielding cube — current rating +
+    ceiling + experience for a single defensive spot.
+
+    Materialized from ``players_fielding_current`` (the latest
+    ``players_fielding_snapshot`` row). Per-position columns are the
+    OOTP-scouted 20-80 ratings — ``fielding_rating_pos1..9`` for current
+    skill, ``fielding_rating_pos1..9_pot`` for ceiling. Position
+    indexing follows the standard OOTP convention (1=P, 2=C, 3=1B,
+    4=2B, 5=3B, 6=SS, 7=LF, 8=CF, 9=RF — no DH at the fielding grain).
+
+    ``experience`` comes from ``fielding_experience1..9`` (the
+    1-indexed columns; index 0 is unused / DH-bucket and isn't
+    surfaced). Units are OOTP "play attempts" — useful as a relative
+    weight ("this guy has 200 plays at 1B vs 4 at 2B") rather than a
+    sample-size threshold.
+
+    Conventions:
+    - All three fields are nullable. A zero rating means "the player
+      has never been rated at this position in scouting"; we surface
+      it as ``None`` rather than ``0`` so the UI can render an
+      em-dash without ambiguity.
+    - Zero experience also surfaces as ``None`` for the same reason
+      — distinguishes "never tried" from "tried briefly with 0 plays
+      somehow logged."
+
+    Why surface this at all: the `fielding_rating_pos*` cube answers
+    the GM-side question "where should this player actually play?"
+    That info is fully populated in every dump but never reads in any
+    L2/L3/UI surface today (highest-value find from the 2026-05-09
+    dump-CSV audit — see PROJECT_STATUS / DATA_NOTES).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    position: int                 # 1-9 (P/C/1B/2B/3B/SS/LF/CF/RF)
+    position_name: str            # display: "P", "C", "1B", ...
+    rating_current: int | None    # 20-80 scouted rating; null when 0
+    rating_potential: int | None  # 20-80 ceiling; null when 0
+    experience: int | None        # plays at this position; null when 0
+
+
 class PlayerCareerFielding(BaseModel):
     """Career rollup per position.
 
@@ -403,3 +445,10 @@ class PlayerResponse(BaseModel):
     batting_career: PlayerCareerBatting | None
     pitching_career: PlayerCareerPitching | None
     fielding_career: list[PlayerCareerFielding]   # one row per position
+    # Per-position scouted-rating cube from the latest snapshot. Always
+    # length 9 (one entry per position 1-9), even when the player has
+    # zero rating across the board (each entry's fields will be null
+    # in that case). Order is fixed at position 1..9 server-side; the
+    # frontend can re-sort by experience for the "where they actually
+    # play" view.
+    position_fielding: list[PlayerPositionFielding]

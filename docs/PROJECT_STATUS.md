@@ -4,13 +4,13 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-10 (in-game year 2029→2030) — **Phase 3: combined bWAR / pWAR shipped — closes the original "where's WAR?" ask.** Discovery flipped the slice: OOTP **directly supplies bWAR + pWAR + RA9-WAR** as `f_player_season_*.war` / `.ra9war` columns; the audit had already reconciled them to IE WAR as A-tier (Mayer 3.2 = IE 3.2, Anthony 0.9 = IE 0.9, Crochet 5.5 = IE 5.5, Whitlock 0.4 = IE 0.4 — all exact). No defensive-runs build was needed — OOTP bakes `zr` + `framing` + `arm` + positional adjustment + base-running + leverage into the canonical WAR value. The slice was plumbing-only: pulled three new columns (`b_war` / `p_war` / `p_ra9_war`) into `f_player_season_advanced_*`, surfaced `bWAR` on the roster Advanced view (replacing the offense-only `oWAR`), surfaced `pWAR` (replacing the custom `pit_war`), added all three to the player page Advanced sections so users can see oWAR vs bWAR (the gap = defensive component) and pWAR vs RA9-WAR (gap = sequencing/defense vs skill). New dictionary entries: `bWAR`, `pWAR`, `RA9_WAR` (62 entries total). Custom `oWAR` / `pit_WAR` stay in the warehouse + glossary as inspectable alternatives. **Next: per-position fielding view** (highest-value audit find — `fielding_rating_pos1..9` / `_pot` / `experience0..9` all populated, never surfaced) followed by service-time/contract surface.
+**Last updated**: 2026-05-10 (in-game year 2029→2030) — **Phase 3: per-position fielding view shipped — closes the highest-value find from the 2026-05-09 dump-CSV audit.** New "Defensive Profile" section on the player page surfaces the per-position scouted-rating cube (`fielding_rating_pos1..9` + `_pot` + `fielding_experience1..9`) sitting in `players_fielding_snapshot` and never read by any L2/L3/UI surface until now. Sample signal: Justin Gonzales (listed POS=1B) — current 50 at 1B but 65 in LF, 60 in RF, 50 in CF; 197/200/184 plays of OF experience. Marcelo Mayer (listed POS=2B) — current 65 at 2B, 45 at 3B (124 plays), 30 at SS (58 plays), with ceilings at 65/65/60. The "where should this guy actually play?" view is now a single section on every player page. **Earlier today**: combined bWAR / pWAR shipped — OOTP-canonical WAR via `f_player_season_*.war` / `.ra9war`, IE-A-tier reconciled (Mayer 3.2 = IE 3.2, Crochet 5.5 = IE 5.5 — all exact). **Next: service-time / arbitration clock** (`roster_status_current.mlb_service_years` etc. on the player page — single most-asked GM question, data is already there).
 
 ---
 
 ## One-line summary
 
-Phases 1-2 closed; analytical CLI surface complete; real MLB history through 2025 backfilled; Phase 3 UI live — five-tab IA (Club / League / World / History / Explore) wired into the layout; Club landing renders save metadata + tools grid; movement ledger covers all four direction buckets; roster page (2026-05-09) — full org tree grouped by level with Basic/Advanced/Contact stat-mode toggle; player page Stats tab full (batting / pitching / fielding / advanced); theme system supports light / dark / neutral / color-blind with dark as default; in-app Quit reliably kills both dev servers. L3 Statcast cohort + SIERA materialized 2026-05-09. **Combined bWAR / pWAR shipped 2026-05-10** — OOTP directly supplies the canonical WAR; we surface `b_war` / `p_war` / `p_ra9_war` from the L2 facts (sum across stints into `f_player_season_advanced_*`) and reconcile to IE WAR exactly (Mayer 3.2, Anthony 0.9, Crochet 5.5, Whitlock 0.4). Closes the original "where's WAR?" ask.
+Phases 1-2 closed; analytical CLI surface complete; real MLB history through 2025 backfilled; Phase 3 UI live — five-tab IA (Club / League / World / History / Explore) wired into the layout; Club landing renders save metadata + tools grid; movement ledger covers all four direction buckets; roster page (2026-05-09) — full org tree grouped by level with Basic/Advanced/Contact stat-mode toggle; player page Stats tab full (batting / pitching / fielding / advanced + **Defensive Profile** per-position cube as of 2026-05-10); theme system supports light / dark / neutral / color-blind with dark as default; in-app Quit reliably kills both dev servers. L3 Statcast cohort + SIERA materialized 2026-05-09. **Combined bWAR / pWAR + per-position fielding view shipped 2026-05-10** — OOTP directly supplies the canonical WAR (Mayer 3.2 = IE 3.2 etc.); the per-position cube is sourced from a new `players_fielding_current` view over the snapshot. Both close longstanding "data sitting in warehouse but invisible" gaps.
 
 ## What works today
 
@@ -423,16 +423,44 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
     - **Dictionary** — added `bWAR`, `pWAR`, `RA9_WAR`; deprecated
       the ambiguous `WAR` entry in favor of the role-specific pair.
       62 dictionary entries total.
-16. **Per-position fielding view** *(next slice)* — sidebar table on
-    player page: position × current rating × ceiling × experience,
-    sorted by experience. Highest-value audit find — fully populated
-    in `players_fielding_snapshot`, never surfaced. Sample: Justin
-    Gonzales 1B-current=50 / LF-current=65 / RF-ceiling=60.
-17. Then **service-time / arbitration clock**
-    (`roster_status_current.mlb_service_years` etc.), **standings
-    page** (League tab content), **clutch / RISP splits** on
-    player page, then **records / awards / hof / streaks → History
-    tab**, and the rest of the UI_DESIGN.md ladder.
+16. ✅ **Per-position fielding view** — done 2026-05-10. New
+    "Defensive Profile" section on the player page surfaces the
+    9-position scouted-rating cube (current × ceiling × experience).
+    Sorted by experience descending so the spots the player has
+    actually logged innings at appear first; sub-meaningful rows
+    (no rating + no experience) are hidden. Real signal verified:
+    - Justin Gonzales (POS=1B): 1B current 50 / LF 65 / RF 60 /
+      CF 50 — 197 LF plays, 200 CF plays, 184 RF plays.
+    - Marcelo Mayer (POS=2B): 2B current 65 (200 plays) / 3B 45
+      (124 plays) / SS 30 (58 plays); ceilings 65 / 65 / 60.
+    - Crochet (POS=P): P current 45 only; everything else null.
+
+    Implementation:
+    - **L1**: new `players_fielding_current` view (filters
+      `players_fielding_snapshot` to latest dump_date) added to
+      `_CURRENT_VIEWS` in `l1_snapshot.py`.
+    - **API**: new `PlayerPositionFielding` schema
+      (position / position_name / rating_current / rating_potential
+      / experience), `position_fielding: list[PlayerPositionFielding]`
+      added to `PlayerResponse`. Route handler unpivots the 9
+      `_pos1..9` columns into a 9-row block, normalizing zero ratings
+      / experience to `null` so the UI renders em-dashes (OOTP encodes
+      "never rated / never played there" as 0).
+    - **UI**: `DefensiveProfileTable` in `PlayerStatsTab.tsx` —
+      Pos / Current / Ceiling / Plays columns, color-coded by 20-80
+      rating (≥70 emerald-bold, 60+ emerald, 50 default, 40s amber,
+      <40 rose). Footer note explains the 20-80 scale + sort
+      convention.
+17. **Service-time / arbitration clock** *(next slice)* —
+    `roster_status_current.mlb_service_years` / `_days` /
+    `_days_this_year` + `years_protected_from_rule_5` +
+    `has_received_arbitration` + `options_used` on the player page.
+    Single most-asked GM question ("when does X hit FA?"); data is
+    already there — sidebar block on the player page header.
+18. Then **standings page** (League tab content),
+    **clutch / RISP splits** on player page, then
+    **records / awards / hof / streaks → History tab**, and the
+    rest of the UI_DESIGN.md ladder.
 
 **Open audit carry-forwards** (non-blocking, picked up opportunistically):
 multi-level OPS+/ERA+ park weighting, hit_loc-based spray, LeaderCategory codes

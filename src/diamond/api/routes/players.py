@@ -42,6 +42,7 @@ from diamond.api.schemas import (
     PlayerFieldingRow,
     PlayerPitchingSeason,
     PlayerPitchingStint,
+    PlayerPositionFielding,
     PlayerResponse,
     TeamRef,
 )
@@ -719,6 +720,69 @@ def _build_fielding_career(rows: list[dict[str, Any]]) -> list[PlayerCareerField
     return out
 
 
+def _fetch_position_fielding(
+    con: duckdb.DuckDBPyConnection, player_id: int,
+) -> list[PlayerPositionFielding]:
+    """Per-position fielding cube from the latest snapshot.
+
+    Pulls one ``players_fielding_current`` row, then unpivots the nine
+    ``fielding_rating_pos1..9`` + ``_pot`` + ``fielding_experience1..9``
+    triplets into a list of ``PlayerPositionFielding`` rows. Position
+    indexing is 1-based (P/C/1B/2B/3B/SS/LF/CF/RF); the unused
+    ``fielding_experience0`` column (DH-bucket / no-position) is
+    intentionally not exposed.
+
+    Zero values are normalized to ``None`` — OOTP encodes "never rated"
+    / "never played there" as 0, and the UI wants an em-dash for those
+    cells. A genuinely-zero rating doesn't exist on the 20-80 scale
+    (the floor is 20), so the conversion is lossless.
+
+    Always returns 9 rows, in position order (1..9). Frontends can
+    re-sort by experience to surface the "where they actually play"
+    view.
+    """
+    rating_cols = ", ".join(f"fielding_rating_pos{i}" for i in range(1, 10))
+    pot_cols = ", ".join(f"fielding_rating_pos{i}_pot" for i in range(1, 10))
+    exp_cols = ", ".join(f"fielding_experience{i}" for i in range(1, 10))
+    row = con.execute(
+        f"""
+        SELECT {rating_cols}, {pot_cols}, {exp_cols}
+        FROM players_fielding_current
+        WHERE player_id = ?
+        """,
+        [player_id],
+    ).fetchone()
+    if row is None:
+        # Player has no fielding-snapshot row in the latest dump
+        # (retired / never on a roster / data gap). Surface as the
+        # standard 9-row block with all-null fields so the frontend
+        # always has a stable shape.
+        return [
+            PlayerPositionFielding(
+                position=i,
+                position_name=POSITION_NAMES.get(i, f"P{i}"),
+                rating_current=None,
+                rating_potential=None,
+                experience=None,
+            )
+            for i in range(1, 10)
+        ]
+
+    out: list[PlayerPositionFielding] = []
+    for i in range(1, 10):
+        rating = row[i - 1]
+        pot = row[9 + (i - 1)]
+        exp = row[18 + (i - 1)]
+        out.append(PlayerPositionFielding(
+            position=i,
+            position_name=POSITION_NAMES.get(i, f"P{i}"),
+            rating_current=int(rating) if rating else None,
+            rating_potential=int(pot) if pot else None,
+            experience=int(exp) if exp else None,
+        ))
+    return out
+
+
 def _build_pitching_career(stints: list[dict[str, Any]]) -> PlayerCareerPitching | None:
     if not stints:
         return None
@@ -765,6 +829,7 @@ def get_player(
     fld_rows = _fetch_fielding_rows(con, player_id)
     advanced_bat = _fetch_advanced_batting(con, player_id)
     advanced_pit = _fetch_advanced_pitching(con, player_id)
+    position_fielding = _fetch_position_fielding(con, player_id)
     return PlayerResponse(
         bio=bio,
         batting_seasons=_build_batting_seasons(bat_stints),
@@ -775,4 +840,5 @@ def get_player(
         batting_career=_build_batting_career(bat_stints),
         pitching_career=_build_pitching_career(pit_stints),
         fielding_career=_build_fielding_career(fld_rows),
+        position_fielding=position_fielding,
     )
