@@ -318,3 +318,48 @@ The expansion landed in lockstep with the player Stats tab so every column heade
   - shadcn/ui not initialized yet — drop in via `pnpm dlx shadcn@latest init` when the player page needs Card / Tabs / etc.
   - Vega-Embed and Plotly not installed yet — add when chart builder lands.
   - TanStack Table not installed yet — add when leaderboards land.
+
+## D17 — Information architecture: five-tab scope+purpose nav
+
+**Date**: 2026-05-08
+**Decision**: Top-level navigation is **Club / League / World / History / Explore** with **Glossary** as cross-cutting reference and a search box (planned) as a cross-cutting Player lookup. Settings + (future) Reviews live in a corner menu rather than as peer tabs.
+
+The first three (Club / League / World) are **scope** lenses — concentric: your org → the leagues you scope to → every league in the save. The fourth (History) is a **time** lens orthogonal to scope. The fifth (Explore) is the **interaction-mode** lens — the open-ended sandbox where you bring the question and the view brings the primitives. Each tab is its own URL prefix (`/`, `/league`, `/world`, `/history`, `/explore`). Player pages, the glossary, and (future) cohort pages are reachable from any tab and don't get peer status.
+
+**Why**: UI_DESIGN.md §1 originally put a "Front-Office Cockpit" as the home with the build order putting it at item 8 — "emerges naturally from previous components." In practice that meant we shipped four standalone tools (glossary, player, demotion-promotion ledger, save-aware landing) without any of the screens that organize them. Pulse-check 2026-05-08: build features as orphan routes long enough and the IA never forms. So we committed the IA *now*, with stubbed routes for the four tabs that don't have content yet, and from this point every new feature lands in the right slot rather than as another `/some-tool` orphan.
+
+**How to apply**:
+- New top-level routes go under one of the five tab prefixes. Roster lives at `/club/roster` (or as a Club section once the cockpit grows). Leaderboards live at `/league/leaderboards` (curated) and `/explore/leaderboards` (build-your-own); same component, different defaults. Records / awards / HoF / streaks (already in the CLI) port to `/history/...` web views.
+- Player pages stay at `/player/[id]` — they're a target, not a peer view; reachable from Club roster, League leaderboards, History HoF list, etc.
+- World View is **kept as a peer** even though this save's scope already covers MLB + DSL + AFL — UI_DESIGN.md §1 audience covers users who follow international ball / KBO / NPB; promoting World back later if scope expands is harder than leaving the slot in place now.
+- Each tab's stub renders a `TabStub` component with a header + section grid showing planned content with `Live` / `Soon` pills. Future sections light up by flipping their status and adding an `href`.
+
+**Alternatives considered**:
+- *Cockpit-first as the home, no peer scope tabs* — what UI_DESIGN.md originally implied. Rejected because the cockpit's full content (anomaly flags, decisions queue, standings) depends on data sources we haven't built; in the meantime a cockpit page is just the landing-with-extra-cards shape, and we still need the peer tabs to host other content.
+- *Drop World View, only ship Club + League + History + Explore* — explicitly rejected per user request: "some people follow all leagues."
+- *Make Player a peer tab* — rejected; player is a target reachable from many places, not a destination you "go to" without a specific player in mind. Search box (cross-cutting) covers the entry case.
+- *Flat-URL preserve (keep `/movements`, `/glossary` at top level instead of nesting under `/club/...`)* — chose flat for now. The nesting can land alongside the roster page if we decide URL-as-IA is worth the migration cost.
+
+## D18 — UI theme system: CSS-variable semantic tokens, four themes, dark default
+
+**Date**: 2026-05-08
+**Decision**: Diamond ships with **four themes** — `light` / `dark` / `neutral` (warm cream) / `cb` (Wong-palette color-blind safe) — switched via a `data-theme` attribute on `<html>` and persisted to `localStorage["diamond.theme"]`. **Dark is the default.** Themes are defined as CSS custom properties under `:root` and `[data-theme="..."]` selectors in `web/app/globals.css`; the Tailwind config exposes them as semantic tokens (`bg-surface-page`, `text-content-primary`, `border-border`, `text-link`, etc.) so components write theme-agnostic class names.
+
+**Why**: UI_DESIGN.md "Open questions" originally listed theming as "skip until UI matures." In practice the user worked the app on monthly-dump cadence and white was eye-burning. Shipping a theme system before more pages get built makes every subsequent page automatically theme-correct rather than requiring a per-page retrofit. The CSS-variable approach was picked over Tailwind's `dark:` utility prefix because we want more than two themes (Tailwind's `dark:` only supports one alternate).
+
+The `neutral` warm-cream theme exists specifically because "the app is too bright for me" — pure white induces eye strain in long sessions. The `cb` theme is Wong (2011) palette + IBM CB-safe — chrome only in v1 (accent + link colors swap to safe blue/orange), with the verdict glyph + move-type badge palettes still using the green/amber/rose convention; full CB-safe accent migration is a backlog item.
+
+**How to apply**:
+- Surface colors: `bg-surface-page` (body), `bg-surface-card` (raised), `bg-surface-elevated` (hover / table head).
+- Text colors: `text-content-primary` (body / data), `text-content-secondary` (descriptions), `text-content-muted` (labels / captions).
+- Borders: `border-border` (default), `border-border-strong` (career-totals separator).
+- Accent / links: `text-link` / `hover:text-link-hover` / `text-accent`.
+- For the move-type badges in the movement ledger and the Free Agent / HoF chips on the player page, we kept the named-Tailwind palette (emerald / amber / indigo / sky / rose) but added `dark:` overrides per badge — `dark:bg-emerald-900/40 dark:text-emerald-300` etc. Tailwind config has `darkMode: ["class", '[data-theme="dark"]']` so the `dark:` prefix fires when the dark theme is active.
+- **No-flash init**: an inline `<script>` in `<head>` reads `localStorage["diamond.theme"]` synchronously before body paints and stamps the attribute. Without it, every reload flashes the default theme for ~50ms before settling.
+- New pages: write semantic-token class names from the start. If a stat color is verdict-specific (working / struggling / etc.), use the existing badge convention with `dark:` overrides rather than introducing new tokens — adding tokens is a global decision, badges are local accents.
+
+**Alternatives considered**:
+- *Tailwind's built-in `dark:` strategy alone* — rejected. Only supports one alternate; we wanted four.
+- *CSS-in-JS / styled-components* — rejected. Tailwind is already the project's styling language; swapping it out for a multi-theme system would be a huge migration for a small benefit.
+- *Light as default* — rejected per user preference (2026-05-08 chat: "Dark mode should be default I think").
+- *Defer color-blind support to v2* — rejected as a complete miss. Even a chrome-only CB theme is meaningfully better than no CB support, and the architecture supports lighting up the verdicts/badges later without a migration.

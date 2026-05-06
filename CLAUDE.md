@@ -7,15 +7,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 The project keeps long-running engineering context in `docs/`. Always read at the start of a session:
 
 - `docs/PROJECT_STATUS.md` — current phase, what works, what was last done, what's next.
-- `docs/DECISIONS.md` — append-only log of architectural/scope decisions with rationale (D1–D16).
+- `docs/DECISIONS.md` — append-only log of architectural/scope decisions with rationale (D1–D18).
 - `docs/DATA_NOTES.md` — empirical findings about the OOTP dump shape, codebooks, and IE display conventions.
 - `docs/BACKLOG.md` — prioritized open work, grouped by phase (Schema/Ingest → Analysis → UI).
-- `docs/UI_DESIGN.md` — UI build order + design conventions for the player/leaderboards/cockpit pages.
+- `docs/UI_DESIGN.md` — UI build order + design conventions; committed five-tab IA + theme system live here.
 - `docs/DEV.md` — two-process dev workflow (FastAPI + Next.js), `make` targets, troubleshooting.
 
 These files are the source of truth for "why" — favor updating them over leaving knowledge in chat.
 
-**Current phase: Phase 3 — UI implementation.** Phase 2 (schema/ingest) closed 2026-05-05; analytical layer + real-history backfill closed 2026-05-06; UI scaffold + player page (Stats tab: batting / pitching / fielding / advanced) all live as of 2026-05-07. The reconciliation harness (`reconcile.py`) stays in the codebase as a permanent post-ingest regression check (Decision D8).
+**Current phase: Phase 3 — UI implementation, mid-build.** Phase 2 closed 2026-05-05; analytical layer + real-history backfill closed 2026-05-06; UI scaffold + player Stats tab landed 2026-05-07; **2026-05-08 shipped the IA backbone (D17), theme system (D18), movement ledger, real landing page, and in-app Quit / dev.bat launcher**. Five-tab nav (Club / League / World / History / Explore) with stubs for the four non-Club tabs; dark mode is the default. **Next slice: roster page** — the missing entry point for player-page navigation. The reconciliation harness (`reconcile.py`) stays in the codebase as a permanent post-ingest regression check (Decision D8).
 
 ## Setup & commands
 
@@ -34,6 +34,9 @@ make api          # or: api.bat            (Windows-friendly)
 
 # Terminal 2 — frontend (Next.js dev server)
 make web          # or: web.bat            (Windows-friendly)
+
+# Windows one-shot launcher — spawns both in their own windows + opens the browser
+dev.bat
 
 # After Pydantic schema changes — regenerate web/lib/types/api.ts
 make types
@@ -83,10 +86,12 @@ The wire format is JSON; the Pydantic models in `src/diamond/api/schemas/` are t
 ```
 src/diamond/
   api/                      FastAPI app (D16)
-    app.py                  factory + CORS for localhost:3000
-    routes/                 one module per resource (glossary, players, health)
+    app.py                  factory + CORS for localhost:3000 (GET + POST allowed)
+    routes/                 one module per resource:
+                              health, save, glossary, players, movements, admin
     schemas/                Pydantic response models — single source of truth
-    warehouse.py            per-process root DuckDB conn + cursor-per-request
+    warehouse.py            per-process root DuckDB conn + cursor-per-request +
+                            get_active_save() for save-level metadata
   audit/                    discovery + per-column reconciliation harness (D8)
     reconcile.py            permanent regression check vs IE roster CSVs
     decode.py / decode_codes.py    empirical codebook discovery
@@ -117,19 +122,34 @@ Other top-level modules (`records.py`, `awards.py`, `hof.py`, `streaks.py`, `glo
 ```
 web/
   app/                      Next.js App Router (file-system-based routing)
-    page.tsx                home with feature links
+    layout.tsx              top-nav (Club / League / World / History / Explore +
+                            Glossary + ThemeSwitcher + Quit), no-flash theme init
+    globals.css             theme tokens (light/dark/neutral/cb) under :root + [data-theme]
+    page.tsx                Club landing — save header + warehouse-status grid + tools
+    league/page.tsx         TabStub (planned content w/ status pills)
+    world/page.tsx          TabStub
+    history/page.tsx        TabStub
+    explore/page.tsx        TabStub
     glossary/page.tsx       D15 dictionary list
     glossary/[id]/page.tsx  single-stat detail with KaTeX-rendered formulas
     player/[id]/page.tsx    Bref-style player page (Stats tab — batting/pitching/fielding/advanced)
+    movements/page.tsx      ledger — call-ups / send-downs / acquisitions / departures
   components/
     PlayerStatsTab.tsx      client component — disclosure-row tables for the player Stats tab
     FormulaBlock.tsx        KaTeX wrapper with parse-fail fallback
+    ThemeSwitcher.tsx       client component — light/dark/neutral/cb dropdown, localStorage-persisted
+    QuitButton.tsx          client component — POSTs /api/admin/shutdown
+    TabStub.tsx             header + section grid for the four IA stubs
   lib/
     api.ts                  typed fetch helpers (one per endpoint; throw on non-2xx)
     types/api.ts            AUTO-GENERATED — do not hand-edit
+  tailwind.config.ts        semantic-color extension (surface/content/border/accent/link)
+                            + darkMode: ["class", '[data-theme="dark"]']
 ```
 
 Every data-fetching page **must** `export const dynamic = "force-dynamic"`. Without it, Next's default static prerender at `next build` time calls the API while uvicorn isn't running and fails with `ECONNREFUSED`. See `docs/DEV.md` "Adding a new API route" for the canonical recipe.
+
+**API surface today**: `/api/health`, `/api/save`, `/api/glossary`, `/api/glossary/{id}`, `/api/players/{id}`, `/api/movements?year=YYYY[&include_pending=1]`, `POST /api/admin/shutdown`.
 
 ### Warehouse layers
 
@@ -181,6 +201,35 @@ When adding a new `FileSpec`:
 
 Don't introduce magic numbers in derivation SQL — reference the `IntEnum`. When `decode-codes` discovers a new mapping, add it with a docstring noting how it was verified (exact aggregate match, cross-ref against another file, etc.).
 
+### Information architecture (D17)
+
+Top-nav structure committed 2026-05-08 — five tabs that everything else hangs off:
+
+- **Club** (`/`) — your org. Default landing today renders save header + warehouse-status grid + tools card list. Will grow into the cockpit (UI_DESIGN.md §1) as roster / decisions queue / anomaly flags / standings land.
+- **League** (`/league`) — your scoped leagues. Stub today; standings + leaderboards + awards races + free agents land here.
+- **World** (`/world`) — every league in the save. Stub; for users who follow international ball.
+- **History** (`/history`) — past seasons. Stub; will absorb the existing CLI surfaces (`diamond records / awards / hof / streaks / draft <year>`).
+- **Explore** (`/explore`) — sandbox. Stub; Compare / distributions / spray charts / EV-LA scatter / chart builder / cohorts.
+
+Plus **Glossary** (cross-cutting reference), **Player pages** (`/player/[id]` — a *target*, not a peer view; reachable from Club roster, League leaderboards, History HoF list, etc.), **ThemeSwitcher**, and **Quit** in the header.
+
+Build rule: **new top-level features land under one of the five prefixes** (or as cross-cutting like glossary). Don't create more `/some-tool` orphan routes. Existing flat routes (`/movements`, `/glossary`, `/player/[id]`) can be renested when their natural parent tab gets richer content.
+
+### Theme system (D18)
+
+Four themes via CSS variables on `<html data-theme="...">` — `light`, `dark` *(default)*, `neutral` (warm cream), `cb` (Wong-palette color-blind safe). Tailwind config exposes semantic tokens via `colors:` extension:
+
+- Surface: `bg-surface-page` / `bg-surface-card` / `bg-surface-elevated`
+- Text: `text-content-primary` / `text-content-secondary` / `text-content-muted`
+- Border: `border-border` / `border-border-strong`
+- Accent: `text-accent` / `bg-accent` / `text-link` / `hover:text-link-hover`
+
+**Convention**: write semantic tokens, not raw `slate-*` / `white` / etc. The exception is verdict-color badges (emerald / amber / rose / indigo / sky for working / down / struggling / trade / FA) which keep the named-Tailwind palette but pair with `dark:` overrides per badge — `dark:bg-emerald-900/40 dark:text-emerald-300` etc. Tailwind config has `darkMode: ["class", '[data-theme="dark"]']` so the `dark:` prefix fires on the dark theme.
+
+**No-flash init**: an inline `<script>` in `<head>` (in `app/layout.tsx`) reads `localStorage["diamond.theme"]` synchronously before body paints and stamps `data-theme`. Don't remove it; without it every reload flashes the default theme for ~50ms.
+
+**v1 limitation**: CB mode is chrome-only — accent + link colors are Wong-safe blue/orange, but verdict glyphs and move-type badges still use the green/amber/rose convention. Full CB swap is a backlog item.
+
 ### Stat dictionary (D15)
 
 `src/diamond/dictionary/STATS` is the **only** place stat metadata lives. Every column header, chart axis, glossary tooltip, and AI prompt reads from `STATS[id]` — never hand-coded. As of 2026-05-07 the dictionary covers 60 entries (slash + counting batting/pitching, fielding counting + FPCT + RF/9, the league-relative advanced stack including wOBA/wRC+/OPS+/FIP/ERA+/SIERA, custom WAR, and the Statcast EV/barrel cohort).
@@ -194,10 +243,11 @@ Per `docs/DEV.md`:
 2. Create `src/diamond/api/routes/<resource>.py` with a `router: APIRouter` and your handler functions.
 3. Wire `app.include_router(<resource>.router, prefix="/api", tags=[...])` in `src/diamond/api/app.py`.
 4. Run `make types` to regenerate `web/lib/types/api.ts`.
-5. Add a typed fetch helper in `web/lib/api.ts`, then consume it from a server component at `web/app/<resource>/page.tsx`.
+5. Add a typed fetch helper in `web/lib/api.ts`, then consume it from a server component under the appropriate IA tab (per D17: Club / League / World / History / Explore — don't create new top-level orphan routes).
 6. **Mark the page dynamic** — `export const dynamic = "force-dynamic"` on every data-fetching page (otherwise `next build` fails with ECONNREFUSED).
+7. **Use semantic theme tokens** (per D18) — `bg-surface-page`, `text-content-primary`, `border-border`, `text-link`, etc. Don't write raw slate / white classes; they break in dark/neutral/cb modes.
 
-The glossary endpoint is the canonical reference implementation; the player endpoint is the canonical reference for warehouse-backed routes (depends on `get_cursor` from `api/warehouse.py`).
+The glossary endpoint is the canonical reference implementation. The player endpoint is the canonical reference for warehouse-backed routes (depends on `get_cursor` from `api/warehouse.py`). The movements endpoint is the canonical reference for org-scoped routes (uses `get_active_save()` to read `audit_team_id`). The save endpoint is the canonical reference for save-metadata-only routes.
 
 ## Conventions and gotchas
 

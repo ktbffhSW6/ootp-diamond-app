@@ -377,15 +377,87 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
     Stats tab v2.
   - [ ] **Right-rail AI assistant** (per D14) — defer until AI
     overlay scaffolding lands.
-- [ ] **Promotion/demotion decision tool** — flagship "GM sidekick" feature.
+- [x] **Movement ledger** (the v1 form of the GM-sidekick demotion/
+  promotion tool) — done 2026-05-08. `/movements` page + `GET /api/
+  movements?year=YYYY` endpoint. Four direction buckets — internal
+  (promotion/demotion), incoming (trade/signed/waiver_or_other from
+  outside), outgoing (released/trade/waiver to outside) — with
+  level-aware verdicts (MLB ≥100 = working, lower levels ≥90) and
+  inverted semantics on departures. Pending-rows (too-small sample)
+  hidden by default with a `?include_pending=1` toggle. Real signal
+  surfaced six 🔴 departures in 2029 Red Sox (Bello 163 ERA+,
+  Cespedes 146 OPS+, Ehrlicher 142 ERA+, Fis 186 ERA+, Primera 151
+  OPS+, Urbina 141 OPS+).
+- [x] **IA backbone** (D17) — done 2026-05-08. Five-tab nav: Club /
+  League / World / History / Explore + Glossary + ThemeSwitcher + Quit.
+  League / World / History / Explore are routable stubs via the
+  shared `TabStub` component; each lights up section-by-section as
+  content lands.
+- [x] **Real landing page (Club view v0)** — done 2026-05-08.
+  `/api/save` returns save identity + warehouse health; `/` renders
+  org header + status grid + tools card list with `Live` / `Soon`
+  pills. The placeholder three-link home is gone.
+- [x] **Theme system** (D18) — done 2026-05-08. Light / Dark / Neutral
+  / CB themes via CSS-variable tokens + Tailwind semantic-color
+  extension. Dark is the default. `<ThemeSwitcher />` in header
+  with no-flash init script. CB mode is chrome-only in v1 — see
+  next item.
+- [x] **In-app Quit + dev.bat one-shot launcher** — done 2026-05-08.
+  `POST /api/admin/shutdown` reliably kills uvicorn + Next dev (all
+  three pnpm-spawned node processes) + their cmd parents. Fully
+  detached subprocess via `cmd /c start /B` so the kill cascade
+  doesn't reach it; web-side kills run first so even partial
+  detachment is robust. `dev.bat` spawns api.bat + web.bat + opens
+  browser at :3000.
+- [ ] **Roster page** *(next slice)* — list every scoped player in
+  the user's org grouped by level (MLB / AAA / AA / A+ / A / Rk /
+  DSL) with click-through to the player page. Backend: new
+  `/api/roster` endpoint joining `_scoped_players` × `players_current`
+  × `teams`, filtered to org tier. The missing entry point that
+  unblocks player navigation from Club. Needed before more
+  player-page features (Charts tab) make sense.
+- [ ] **Pressure board** — companion to the movement ledger. For each
+  level, players mashing relative to the level median vs. players
+  struggling at the next level up. The "who *should* move" view.
+  Lives under Club (Decisions queue section per UI_DESIGN.md §1) or
+  as a peer page; data exists in `f_player_season_advanced_*`.
+- [ ] **Compare under Explore** — pick N players, render side-by-side
+  stat tables + overlaid trajectories. Cross-era support via
+  career-year axis. Trout-vs-Cobb is the canonical demo. First live
+  mode in the Explore sandbox; forces the chart-stack decision
+  (Vega-Lite vs Plotly).
 - [ ] **Custom leaderboards** — Fangraphs-style sortable filterable tables.
+  TanStack Table integration, filter strip across year/level/age/min-PA/
+  position, save-to-URL. Curated default version under League;
+  build-your-own under Explore.
+- [ ] **Color-blind mode v2** — extend the `cb` theme to swap verdict
+  glyphs and move-type badges away from green/amber/rose. Currently
+  only chrome (page bg, accent, links) is CB-safe. Touches every
+  badge in the movements page + the Free Agent / HoF pills on the
+  player bio header.
+- [ ] **Distributions / Spray charts / EV-LA scatter / Chart builder
+  / Cohorts** — under Explore. Each is its own slice. Listed in
+  Explore stub page.
 - [ ] **Universes + chart builder + scatter** *(bundled)* — Vega-Lite spec
   artifact, no-size-limit cohorts (Plotly WebGL fallback at scale), set ops,
   cross-era support.
 - [ ] **AI overlay** (per D14) — keyring-stored keys, pluggable provider
   adapters, OpenRouter live pricing, four use levels (Off/On-demand/Smart/
   Always-on), per-feature overrides, daily-cap auto-degrade.
-- [ ] **Cockpit dashboard** — front-office home screen with anomaly flags.
+- [ ] **Cockpit dashboard v2** — Club v0 today is just save header +
+  tools grid. Cockpit v2 adds anomaly flags, decisions queue
+  (top regret signals + promotion/demotion candidates from the
+  pressure board), standings + Pythag, recent-moves feed embedded
+  inline.
+- [ ] **History view content** — port the existing CLI surfaces
+  (`diamond records`, `awards`, `hof`, `streaks`, `draft <year>`) to
+  web views under `/history/...`. Stub page already lists the
+  planned sections.
+- [ ] **League view content** — Standings, leaderboards, awards
+  races, free-agent pool. Stub page lists the sections.
+- [ ] **World view content** — All-leagues browser, cross-league
+  movements, world rankings, international prospects. Forward-
+  looking; thin until scope expands.
 - [ ] **Monthly + annual reviews** — long-form AI-augmented narrative pages.
 - [ ] **Setup wizard** — first-launch onboarding (per UI_DESIGN.md "Cross-cutting
   infrastructure"). Includes save-setup picker (D3 v2 fulfillment).

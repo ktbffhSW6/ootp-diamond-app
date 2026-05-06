@@ -4,13 +4,13 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-07 (in-game year 2029→2030) — **Phase 3: player page Stats tab now full — batting + pitching + fielding + advanced stats.** Diamond surfaces wOBA / wRAA / wRC / wRC+ / OPS+ / FIP / ERA+ / oWAR / pit_WAR per (player, year, league, level), pre-materialized into two new L3 tables (`f_player_season_advanced_batting`, `f_player_season_advanced_pitching`) — park-aware (halved for OPS+, 80% for ERA+ per OOTP convention), league-constants-aware (per (league, year, level) — D11). Numbers cross-checked: Crochet 2029 ERA+=127 ✓ (matches IE-reconciled audit value), Skubal 2029 FIP=2.65 ✓, Gunnar Henderson 2029 oWAR=8.7 ✓. Pre-2026 rows show `—` for advanced stats since the save's league_history coverage starts in 2026. Cross-level rollups intentionally omitted (different league constants). **Next: Charts tab** (radial career arc) **or pivot to demotion/promotion review**.
+**Last updated**: 2026-05-08 (in-game year 2029→2030) — **Phase 3: IA backbone + movement ledger + landing page + theme system shipped.** Major day. Top-nav IA committed (D17): five tabs — **Club / League / World / History / Explore** — with the existing landing as Club and stub pages routable for the other four. New movement ledger at `/movements` covers all four direction buckets: call-ups (promotions), send-downs (demotions), acquisitions (trade in / FA sign / waiver in), and departures (released / trade out / waiver out) with level-aware verdicts (MLB ≥100 = working, lower levels ≥90) and inverted semantics on departures (player thriving elsewhere reads 🔴). Real landing page replaces the placeholder — `/api/save` surfaces save identity + warehouse health (45 dumps, 35,261 scoped players, 2029 latest season). Four-theme system shipped (D18): light, **dark (default)**, neutral (warm cream), color-blind safe; CSS-variable tokens with `[data-theme]` selector + Tailwind semantic-color extension; no-flash inline init script in `<head>`. In-app Quit button kills both servers + their cmd windows reliably (took several iterations to get the kill order + subprocess detachment right; documented in `routes/admin.py`). New one-shot `dev.bat` launcher spawns api + web + opens browser. **Next: roster page** — the missing entry point that turns the player page from a Gunnar-Henderson demo into a tool you can navigate from Club. Then pressure board, charts tab, Compare under Explore.
 
 ---
 
 ## One-line summary
 
-Phases 1-2 closed; analytical CLI surface complete; real MLB history through 2025 backfilled; Phase 3 UI live — the FastAPI + Next.js scaffold renders the glossary and a Bref-shaped player page (Stats tab: batting + pitching + fielding + advanced — wOBA / wRC+ / OPS+ / FIP / ERA+ / WAR all park-aware and audit-cross-checked). Charts tab + demotion/promotion review are the candidate next moves.
+Phases 1-2 closed; analytical CLI surface complete; real MLB history through 2025 backfilled; Phase 3 UI live — five-tab IA (Club / League / World / History / Explore) wired into the layout; Club landing renders save metadata + tools grid; movement ledger covers all four direction buckets; player page Stats tab full (batting / pitching / fielding / advanced); theme system supports light / dark / neutral / color-blind with dark as default; in-app Quit reliably kills both dev servers. Roster page is the next slice — unblocks player navigation from Club. Pressure board + Charts tab + Compare-under-Explore queued behind it.
 
 ## What works today
 
@@ -246,14 +246,90 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
      so pre-2026 player rows show `—` for advanced stats. Mapping
      OOTP's pre-save imported player history to historical Lahman/
      BREF league averages is deferred (separate scope).
-7. **Player page Charts tab** — radial career arc visualization
-   (angular axis = year, radius = headline stat: OPS+/wRC+/WAR/ERA+).
-   Per the design discussion 2026-05-07: radial earns its keep as
-   a viz, not a navigation aid; the Stats tab disclosure rows are
-   the foundation, the chart adds visual signature.
-8. Then per UI_DESIGN.md: demotion/promotion → custom leaderboards →
-   universes + chart-builder → AI overlay → cockpit → reviews →
-   setup wizard → sync triggers.
+7. ✅ **Movement ledger** — done 2026-05-08.
+   - New L0/L1/L2 paths weren't needed; entire feature consumes the
+     existing `player_movements` (L3) joined to
+     `f_player_season_advanced_*`. Single endpoint
+     `GET /api/movements?year=YYYY` returns four direction buckets:
+     internal (promotion/demotion), incoming (trade/signed/
+     waiver_or_other from outside), outgoing (released/trade/waiver
+     to outside). Verdict logic in Python: level-aware thresholds
+     (MLB ≥100 = working, ≥120 = thriving; lower levels ≥90/130);
+     inverted for departures (player mashing elsewhere = 🔴 we let
+     someone good go).
+   - Frontend `/movements` page sections all four buckets with
+     Bref-style flat tables, per-row verdict glyphs (🟢🟡🔴⚪),
+     pending-rows toggle (`?include_pending=1` reveals the
+     too-small-sample rows hidden by default — EOS roster swarms
+     are noisy), year picker, links to player pages.
+   - Real signal surfaced 2029 Red Sox: six 🔴 departures
+     (Brayan Bello released → 163 ERA+ elsewhere; Yoeilin Cespedes
+     released → 146 OPS+ in 453 PA; Austin Ehrlicher released →
+     142 ERA+; Isael Fis released → 186 ERA+; Franklin Primera
+     waivered → 151 OPS+; Anderber Urbina waivered → 141 OPS+).
+8. ✅ **Real landing page (Club view v0)** — done 2026-05-08.
+   - `GET /api/save` returns active-save identity (save_name,
+     org_team, latest_dump_date, dump_count, scope counts, season
+     range). Pydantic schema in `src/diamond/api/schemas/save.py`,
+     route at `routes/save.py`.
+   - `/` page renders save header (BOS Red Sox · 2029 season) +
+     warehouse-status grid (45 dumps, last sync 2029-11-01, 35,261
+     players in scope across 264 teams, seasons 1871–2029) + Tools
+     grid with `Live` / `Soon` status pills (Movement ledger,
+     Glossary, Player page live; Roster, Pressure board, Charts
+     tab queued).
+9. ✅ **IA backbone (D17)** — done 2026-05-08.
+   - Top nav: **Club** (`/`) · **League** (`/league`) ·
+     **World** (`/world`) · **History** (`/history`) ·
+     **Explore** (`/explore`) · Glossary · ThemeSwitcher · Quit
+   - Four `TabStub` pages (League / World / History / Explore) —
+     each renders a section grid showing planned content with
+     status pills. Future features land in the right tab from
+     day one rather than as orphan top-level routes.
+10. ✅ **Theme system (D18)** — done 2026-05-08.
+    - Four themes: light / dark / neutral (warm cream) / cb
+      (Wong-palette color-blind safe). CSS variables under
+      `:root` and `[data-theme="..."]` selectors in
+      `web/app/globals.css`. Tailwind config exposes semantic
+      tokens (`bg-surface-page`, `text-content-primary`,
+      `border-border`, `text-link`, etc.) so components are
+      theme-agnostic.
+    - **Dark is the default.** No-flash inline `<script>` in
+      `<head>` reads `localStorage["diamond.theme"]` and stamps
+      `data-theme` before body paints.
+    - `<ThemeSwitcher />` dropdown in the layout header. CB mode
+      is "chrome only" in v1 — accent + link colors swap to
+      Wong-safe blue/orange, but verdict glyphs and move-type
+      badges still use the green/amber/rose palette. Full CB
+      verdict swap is a backlog item.
+    - Migrated to tokens: layout, landing, movements page (all
+      four sections), glossary list + detail, FormulaBlock,
+      player bio header, PlayerStatsTab (batting / pitching /
+      fielding / advanced).
+11. ✅ **In-app Quit button + dev.bat one-shot launcher** — done
+    2026-05-08.
+    - `POST /api/admin/shutdown` — kills both servers + their cmd
+      windows. Five-stage kill: web nodes (pnpm + next CLI +
+      start-server.js worker, all three needed because pnpm spawns
+      them in detached process groups) → port 3000 → web cmd → API
+      uvicorn → API cmd → port 8000. Subprocess fully detached via
+      `cmd /c start /B` so taskkill cascade can't reach it. End-to-
+      end verified: real `pnpm dev` + uvicorn → click Quit → both
+      cmd windows close, both ports free.
+    - `dev.bat` at repo root — spawns `api.bat` + `web.bat` in
+      named consoles, then opens the browser at :3000 after a
+      6-second compile pause. Documented in DEV.md.
+12. **Roster page** *(next slice)* — the missing entry point. List
+    every scoped player grouped by level (MLB / AAA / AA / A+ / A /
+    Rk / DSL) with click-through to the player page. Once this
+    ships, the landing's Player-page card stops needing the
+    "demo path: Gunnar Henderson" footnote and the Player-page
+    tab in the IA becomes navigable rather than search-only.
+13. Then **pressure board** (who *should* move — companion to the
+    movement ledger), **Charts tab** (radial career arc on the
+    player page), **Compare under Explore** (Trout vs Cobb-style
+    cross-era player comparison; first live mode in the Explore
+    sandbox), and the rest of the UI_DESIGN.md ladder.
 
 **Open audit carry-forwards** (non-blocking, picked up opportunistically):
 multi-level OPS+/ERA+ park weighting, hit_loc-based spray, LeaderCategory codes

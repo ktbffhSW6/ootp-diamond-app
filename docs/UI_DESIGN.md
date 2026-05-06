@@ -74,6 +74,26 @@ filterable by date range; **stat-name hover tooltips with formulas**.
 
 ---
 
+## Information architecture (committed 2026-05-08, [D17](DECISIONS.md#d17-information-architecture-five-tab-scopepurpose-nav))
+
+Top-level navigation is **five tabs** in the layout header:
+
+- **Club** (`/`) — your org. Default landing. Roster, recent moves, decisions queue, standings, anomaly flags.
+- **League** (`/league`) — your scoped leagues (MLB tree + DSL + AFL). Standings, curated leaderboards, awards races, free agents.
+- **World** (`/world`) — every league in the save, scoped or not. For users who follow international ball / KBO / NPB / indy.
+- **History** (`/history`) — past seasons across any scope. Records, awards, HoF, streaks, past draft classes.
+- **Explore** (`/explore`) — sandbox for max-the-data analysis. Compare, custom leaderboards, distributions, spray charts, EV/LA scatter, chart builder, cohorts.
+
+Plus three cross-cutting surfaces:
+
+- **Glossary** (`/glossary`) — stat dictionary, reachable from any tab via header link.
+- **Player** (`/player/[id]`) — a *target*, not a peer view. Reached from Club roster, League leaderboards, History HoF list, etc. Search box (planned) is the cross-cutting entry point.
+- **Settings + Quit + ThemeSwitcher** — corner controls, not peer tabs.
+
+The first three tabs (Club / League / World) are concentric **scope** lenses. History is a **time** lens. Explore is the **interaction-mode** lens. This carving was committed mid-Phase-3 — the original build order put a Cockpit at item 8 with the rationale that it would "emerge naturally," but in practice that meant features were shipping as orphan top-level routes (`/movements`, `/glossary`) without any IA. From 2026-05-08 onward every new feature lands in the right tab from day one.
+
+The 8 product areas below describe **what content goes in each tab**, not a peer-tab list.
+
 ## Major areas of the app
 
 Diamond has **8 areas** that combine into a cohesive product. Each is its
@@ -320,6 +340,21 @@ Two distinct buttons because the failure modes are different.
 
 `[+ Add save]` button re-runs wizard steps 2-4 inline as a modal.
 
+### Theme system (committed 2026-05-08, [D18](DECISIONS.md#d18-ui-theme-system-css-variable-semantic-tokens-four-themes-dark-default))
+
+Four themes selectable from a `<ThemeSwitcher />` in the layout header:
+
+- **Light** — default white-paper look.
+- **Dark** *(default)* — slate-based, easy on eyes for long sessions.
+- **Neutral** — warm cream / off-white for users who find pure white too bright but want a light theme.
+- **Color-blind** — Wong (2011) palette + IBM CB-safe accents. v1 swaps page chrome + accent + link only; verdict glyphs and move-type badges still use green/amber/rose. Full CB-safe accent migration is a backlog item.
+
+**Implementation**: CSS custom properties under `:root` and `[data-theme="..."]` selectors in `web/app/globals.css`. The Tailwind config exposes them as semantic tokens (`bg-surface-page`, `text-content-primary`, `border-border`, `text-link`, etc.) so components write theme-agnostic class names. Tailwind's `dark:` prefix is configured against `[data-theme="dark"]` — used sparingly for accent-heavy badges that need a dark-mode-specific tint (e.g., `bg-emerald-50 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300`).
+
+**No-flash on first paint**: an inline `<script>` in `<head>` reads `localStorage["diamond.theme"]` synchronously before body paints and stamps the `data-theme` attribute. Without it, every reload flashes the default theme for ~50ms.
+
+**Convention for new pages**: write semantic tokens from the start. Don't introduce raw `slate-*` / `white` / etc. unless the use case is genuinely theme-agnostic (verdict-color badges that already encode meaning via color).
+
 ### Stat dictionary architecture
 
 See [D15](DECISIONS.md#d15). Implementation:
@@ -382,22 +417,37 @@ Full reasoning in D16.
 
 ## Build order
 
-Roughly in priority. Each phase is a meaningful artifact; later phases
-share components with earlier ones.
+Phase 3 build order — revised 2026-05-08 to reflect the IA-first pivot.
+Original ordering put cockpit at item 8 with the assumption it would
+"emerge naturally"; in practice we shipped features as orphan routes
+without any IA, so we committed the IA mid-phase and now every new
+feature lands in the right tab from day one.
 
-1. **Reference scope expansion** *(small)* — D13 implementation
-2. **Stat dictionary + glossary** — infrastructure for everything else
-3. **Player page** — first user-facing feature; consumes glossary tooltips
-4. **Promotion/demotion tool** — actively useful; reuses player page components
-5. **Leaderboards** — Fangraphs-style; column headers from glossary
-6. **Universes + chart builder + scatter** *(bundled)* — Vega-Lite + Plotly
-7. **AI overlay** — settings, keyring, providers, use levels, cost layer
-8. **Cockpit dashboard** — emerges naturally from previous components
-9. **Reviews** — most AI-heavy, last because it depends on everything else
-10. **Setup wizard** — built last but visible first (the polish layer)
-11. **Sync triggers + tracked-save management** — same time as the wizard
+1. ✅ **Reference scope expansion** *(small)* — D13 implementation. Done 2026-05-07.
+2. ✅ **Stat dictionary + glossary** — infrastructure for everything else. Done 2026-05-07; 60 entries today.
+3. ✅ **Player page Stats tab** — Bref-shaped batting / pitching / fielding / advanced; disclosure rows for multi-stint years. Done 2026-05-07.
+4. ✅ **Movement ledger** *(v1 of the GM-sidekick promotion/demotion tool)* — call-ups / send-downs / acquisitions / departures with level-aware verdicts. Done 2026-05-08.
+5. ✅ **IA backbone (D17)** — five-tab nav, four stub routes, Glossary + ThemeSwitcher + Quit in the header. Done 2026-05-08.
+6. ✅ **Theme system (D18)** — four themes, dark default. Done 2026-05-08.
+7. ✅ **Real landing page (Club v0)** — save header + warehouse-health grid + tools card list. Done 2026-05-08.
+8. ✅ **In-app Quit + dev.bat one-shot launcher** — done 2026-05-08.
+9. **Roster page** *(next slice)* — `/club/roster` (or as a Club section). Lists every scoped player grouped by level with click-through to player page. Unblocks player navigation from Club.
+10. **Pressure board** — companion to the movement ledger. "Who *should* move." Backed by the existing `f_player_season_advanced_*` tables.
+11. **Compare under Explore** — pick N players, side-by-side tables + overlaid trajectories. Cross-era via career-year axis. Trout-vs-Cobb is the canonical demo; forces the chart-stack decision.
+12. **Charts tab on the player page** — radial career arc visualization.
+13. **Custom leaderboards** — TanStack Table integration; curated default version in League, build-your-own in Explore.
+14. **Cockpit v2** — anomaly flags, decisions queue (regret signals + pressure-board recommendations), standings + Pythag, recent-moves feed inline. Replaces Club v0.
+15. **History view content** — port the existing CLI surfaces (`diamond records / awards / hof / streaks / draft <year>`) to web views.
+16. **League view content** — standings, leaderboards, awards races, free-agent pool.
+17. **World view content** — all-leagues browser; thin until scope expands.
+18. **Universes + chart builder + scatter** *(bundled)* — Vega-Lite + Plotly. Lives under Explore.
+19. **Color-blind mode v2** — extend the `cb` theme to swap verdict / badge palettes (currently chrome-only).
+20. **AI overlay** — settings, keyring, providers, use levels, cost layer. Cross-cutting; lights up Reviews and inline AI annotations.
+21. **Reviews** — most AI-heavy, last because it depends on everything else.
+22. **Setup wizard** — built last but visible first (the polish layer).
+23. **Sync triggers + tracked-save management** — same time as the wizard.
 
-Items 7 and 8 may swap order depending on energy — AI overlay is genuinely
+Items 20 and 14 may swap order depending on energy — AI overlay is genuinely
 useful even before cockpit anomaly flags need it.
 
 ---
@@ -417,7 +467,7 @@ Not yet decided; flagged here so they don't get lost.
   Treat as their own artifact.
 - **Onboarding analytics** — opt-in? If sharing with community, useful
   to know which features get used; respect privacy as a default.
-- **Theming** — light/dark/system, or skip until UI matures.
+- ~~**Theming** — light/dark/system, or skip until UI matures.~~ Closed 2026-05-08 — shipped four themes (light / dark / neutral / cb) per D18. Dark is the default.
 
 Closed:
 - ~~Tech stack pick~~ — locked 2026-05-07: FastAPI + Next.js per [D16](DECISIONS.md#d16).
@@ -432,6 +482,8 @@ Architectural decisions extracted from this design:
 - [D14 — AI overlay architecture](DECISIONS.md#d14-ai-overlay-architecture-keyring-pluggable-providers-four-tier-use-levels)
 - [D15 — Stat dictionary as single source of truth](DECISIONS.md#d15-stat-dictionary-as-single-source-of-truth)
 - [D16 — Tech stack: FastAPI + Next.js](DECISIONS.md#d16-tech-stack-fastapi--nextjs-app-router-pydantic-derived-ts-types)
+- [D17 — Information architecture: five-tab scope+purpose nav](DECISIONS.md#d17-information-architecture-five-tab-scopepurpose-nav)
+- [D18 — UI theme system: CSS-variable semantic tokens, four themes, dark default](DECISIONS.md#d18-ui-theme-system-css-variable-semantic-tokens-four-themes-dark-default)
 
 Decisions still to be recorded as they crystallize:
 - Specific anomaly-detection algorithms
