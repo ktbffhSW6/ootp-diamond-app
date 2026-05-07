@@ -1212,3 +1212,74 @@ dWAR if we ever want one (the original "build from scratch" plan).
 For now: surfacing OOTP's value gives users the IE-canonical number
 in one column with provenance documented; the inspectable variants
 sit alongside it.
+
+
+## Service-time encoding in `roster_status_current` (decoded 2026-05-10)
+
+`roster_status_snapshot.mlb_service_years` + `mlb_service_days` follow
+the MLB / MLBPA convention exactly:
+
+- **172 service days = 1 service year**. Players accrue up to 172 days
+  per season (the regular-season day count); Sept call-ups can finish
+  with <172 even if rostered all month.
+- `mlb_service_years` = `floor(mlb_service_days / 172)`. Whole years.
+- `mlb_service_days` = total accumulated days, career-to-date.
+- `mlb_service_days_this_year` = days credited in the current calendar
+  year (the in-season component of total days).
+
+**Display convention** (Bref / MLBPA): "Xy Yd" where Y = leftover days
+= `mlb_service_days - 172 * mlb_service_years`. Examples:
+
+```
+Mayer:    years=4,  days=816   → "4y 128d"   (816 - 4*172 = 128)
+Crochet:  years=9,  days=1576  → "9y 28d"    (1576 - 9*172 = 28)
+Devers:   years=12, days=2134  → "12y 70d"   (2134 - 12*172 = 70)
+```
+
+**FA / arb boundaries** — service days drive contract status:
+
+```
+< 516 days  (3.000y)  → pre-arb        (renewable contract)
+< 1032 days (6.000y)  → arb-eligible   (3 arb years before FA)
+≥ 1032 days (6.000y)  → FA-eligible    (free agency at end of contract / season)
+```
+
+The route's `_service_class()` helper bucket-maps total days to a
+class id (`pre_arb` / `arb_y1` / `arb_y2` / `arb_y3` / `fa_eligible`)
+and a display label.
+
+**Super-Two qualifiers** — the early-arb edge case for high-service-day
+pre-arb players (typically the top ~22% of 2-3y players by service
+days each year) — are NOT modeled in v1. OOTP handles internally and
+exposes no public flag on `roster_status_*` that I've found. A small
+fraction of "Pre-arb" labels in the UI will technically be Super-Two
+arb-eligible; the gap is one year of arbitration leverage and the
+display class doesn't drive any computation. Revisit if Diamond ever
+ships a salary-projection / arb-decision tool.
+
+**Options** — `options_used` follows MLB's 3-options-per-player
+convention: once a player has been optioned to AAA/MiLB across 3
+distinct years, they're out of options. `options_used_this_year`
+ticks up only on the first option of a calendar year. Distribution
+across the warehouse: 0 (most), 1, 2, 3 — matches expectation. After
+3 options used, a player can no longer be sent down without DFA;
+this is what makes "out of options" a roster-construction constraint
+worth surfacing on the player page.
+
+**Status flags** (`is_active` / `is_on_secondary` / `is_on_dl` /
+`is_on_dl60` / `designated_for_assignment` / `is_on_waivers`) — all
+booleans (BIGINT 0/1 in the warehouse, normalized to bool in the API).
+The November end-of-season snapshot has every transactional flag
+cleared (DL/DFA/waivers all 0). In-season ingests will surface them.
+The UI renders only truthy flags as small color-coded chips so the
+header stays calm in the offseason.
+
+**Fields not surfaced (semantics unclear)**:
+- `years_protected_from_rule_5` — every row in this save reads 4 or
+  5; could be "years remaining of Rule 5 protection" or a related
+  cap, but I haven't been able to verify the semantics from data
+  alone. Skip for v1.
+- `has_received_arbitration` — every row reads 0 in the November
+  snapshot. Likely a flag/count tied to the in-season arb hearing
+  cycle (February-March); skip until a winter ingest surfaces nonzero
+  values.

@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-10 (in-game year 2029→2030) — **Phase 3: per-position fielding view shipped — closes the highest-value find from the 2026-05-09 dump-CSV audit.** New "Defensive Profile" section on the player page surfaces the per-position scouted-rating cube (`fielding_rating_pos1..9` + `_pot` + `fielding_experience1..9`) sitting in `players_fielding_snapshot` and never read by any L2/L3/UI surface until now. Sample signal: Justin Gonzales (listed POS=1B) — current 50 at 1B but 65 in LF, 60 in RF, 50 in CF; 197/200/184 plays of OF experience. Marcelo Mayer (listed POS=2B) — current 65 at 2B, 45 at 3B (124 plays), 30 at SS (58 plays), with ceilings at 65/65/60. The "where should this guy actually play?" view is now a single section on every player page. **Earlier today**: combined bWAR / pWAR shipped — OOTP-canonical WAR via `f_player_season_*.war` / `.ra9war`, IE-A-tier reconciled (Mayer 3.2 = IE 3.2, Crochet 5.5 = IE 5.5 — all exact). **Next: service-time / arbitration clock** (`roster_status_current.mlb_service_years` etc. on the player page — single most-asked GM question, data is already there).
+**Last updated**: 2026-05-10 (in-game year 2029→2030) — **Phase 3: service-time / arb clock shipped on the player page — closes the single most-asked GM question.** New "Service & Status" card under the player bio header surfaces MLB service time (Bref-formatted "4y 128d" + total days), service class (Pre-arb / Arb Y1-Y3 / FA-eligible), days-to-FA estimate, options used (n/3 + this-season delta), and the active/40-man/IL/DFA/waivers flag block. Verified: Mayer 4y 128d Arb (Y2) FA in 216d / Anthony 4y 95d Arb (Y2) / Crochet 9y 28d FA-eligible / Gonzales 1y 94d Pre-arb FA in 766d. **Today's three-slice run**: combined bWAR / pWAR (OOTP-canonical WAR, IE-A-tier reconciled), per-position fielding view (scouted-rating cube on player page), and now service-time / arb clock — three slices that surfaced data already in the warehouse but invisible in the UI. **Next: standings page** (League tab content — `team_record_snapshot` carries g/w/l/t/pct/gb/streak/magic_number, half-day to fill it).
 
 ---
 
@@ -451,16 +451,45 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
       rating (≥70 emerald-bold, 60+ emerald, 50 default, 40s amber,
       <40 rose). Footer note explains the 20-80 scale + sort
       convention.
-17. **Service-time / arbitration clock** *(next slice)* —
-    `roster_status_current.mlb_service_years` / `_days` /
-    `_days_this_year` + `years_protected_from_rule_5` +
-    `has_received_arbitration` + `options_used` on the player page.
-    Single most-asked GM question ("when does X hit FA?"); data is
-    already there — sidebar block on the player page header.
-18. Then **standings page** (League tab content),
-    **clutch / RISP splits** on player page, then
-    **records / awards / hof / streaks → History tab**, and the
-    rest of the UI_DESIGN.md ladder.
+17. ✅ **Service-time / arbitration clock** — done 2026-05-10. New
+    "Service & Status" card on the player page (between bio header
+    and tab strip). Shows:
+    - **MLB service**: "Xy Yd" with Y = days into current year
+      (Bref / MLBPA convention; 172 service days = 1 year).
+    - **Service class**: Pre-arb / Arb (Y1/Y2/Y3) / FA-eligible —
+      computed from total service days (3.000y / 6.000y boundaries).
+      Color-coded chip: emerald (FA), sky (arb), neutral (pre-arb).
+    - **Days to FA**: max(0, 1032 - mlb_service_days). Hidden when
+      already FA-eligible.
+    - **Options**: "n/3 used" + "+m this season" delta when nonzero.
+    - **Status flags**: Active / 40-man / 10-day IL / 60-day IL /
+      DFA / Waivers. Color-coded; only renders flags that are true,
+      so the November snapshot reads clean (Active + 40-man only).
+      Mid-season ingests will surface DL / DFA / waivers.
+
+    Verified: Mayer 4y 128d Arb(Y2) FA-216d / Anthony 4y 95d Arb(Y2) /
+    Casas 7y 21d FA-eligible / Devers 12y 70d FA-eligible / Crochet
+    9y 28d FA-eligible / Gonzales 1y 94d Pre-arb FA-766d.
+
+    Implementation:
+    - **API**: new `PlayerRosterStatus` Pydantic schema + fetcher;
+      `_service_class()` + `_service_display()` helpers in
+      `routes/players.py`. Constants `_DAYS_PER_SERVICE_YEAR=172` +
+      `_DAYS_TO_FREE_AGENCY=1032`.
+    - **UI**: inline JSX in `web/app/player/[id]/page.tsx` — a small
+      card under the bio header. Tooltips explain Pre-arb / Arb /
+      FA boundaries + options semantics.
+    - Fields not surfaced (semantics unclear): `years_protected_from_rule_5`
+      + `has_received_arbitration`. Add when needed.
+    - Super-Two qualifiers (early-arb edge case for high-service-day
+      pre-arb players) are NOT modeled — OOTP handles internally
+      and exposes no public flag.
+18. **Standings page** *(next slice)* — League tab content.
+    `team_record_snapshot` carries g/w/l/t/pct/gb/streak/magic_number;
+    half-day to fill the empty stub.
+19. Then **clutch / RISP splits** on player page (`f_pa_event` already
+    has flags), then **records / awards / hof / streaks → History tab**,
+    and the rest of the UI_DESIGN.md ladder.
 
 **Open audit carry-forwards** (non-blocking, picked up opportunistically):
 multi-level OPS+/ERA+ park weighting, hit_loc-based spray, LeaderCategory codes

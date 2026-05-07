@@ -466,12 +466,18 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
   / amber / rose). Sample signal: Justin Gonzales (POS=1B) really
   reads as a corner-OF guy — current 65 LF, 60 RF, 50 CF with
   ~200 plays at each, vs current 50 at his listed 1B.
-- [ ] **Service-time / arbitration clock** *(next slice)* — surface
-  `roster_status_current.mlb_service_years / _days /
-  _days_this_year` + `years_protected_from_rule_5` +
-  `has_received_arbitration` + `options_used` on the player page.
-  Single most-asked GM question ("when does X hit FA?"); data is
-  already there.
+- [x] **Service-time / arbitration clock** — done 2026-05-10. New
+  "Service & Status" card on the player page (between bio header and
+  tab strip). MLB service formatted Bref-style ("4y 128d"; 172 service
+  days = 1 year), computed service class (Pre-arb / Arb Y1-Y3 / FA-
+  eligible) with color-coded chip, days-to-FA estimate, options-used
+  block, and a status-flag row (Active / 40-man / IL / DFA / waivers
+  — only renders truthy ones). Backed by a new `PlayerRosterStatus`
+  Pydantic schema + `_fetch_roster_status()` route handler. `years_protected_from_rule_5`
+  + `has_received_arbitration` not surfaced (semantics unclear from
+  data alone). Super-Two qualifiers not modeled in v1 (OOTP handles
+  internally; no public flag). Verified Mayer 4y 128d Arb(Y2) FA-216d
+  / Crochet 9y 28d FA-eligible / Gonzales 1y 94d Pre-arb FA-766d.
 - [ ] **Salary stream** — render `contract_current.salary0..14`
   + option types + no-trade clause on the player page. Powers
   trade-analyzer + extension-decision tools later.

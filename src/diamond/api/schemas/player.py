@@ -354,6 +354,75 @@ class PlayerAdvancedPitchingRow(BaseModel):
     park_avg: float | None
 
 
+class PlayerRosterStatus(BaseModel):
+    """Service-time / arbitration / options / roster-status block.
+
+    Sourced from the latest ``roster_status_current`` row. The
+    canonical "when does this guy hit FA?" answer + the GM-side
+    flags (active / DL / DFA / waivers) used to read player
+    availability at a glance.
+
+    Semantics:
+    - **MLB service time** — OOTP credits 172 days per season-year.
+      ``mlb_service_days`` is total accumulated days; whole years =
+      ``mlb_service_years`` (= ``floor(days / 172)``); leftover days =
+      ``mlb_service_days - 172 * mlb_service_years``. The header
+      conventionally displays "Xy Yd" where Y is leftover days
+      (Bref / MLBPA convention).
+    - **Service class** is computed in the route: ``pre_arb`` (<3y),
+      ``arb_y1`` / ``arb_y2`` / ``arb_y3`` (3-6y, by full year), or
+      ``fa_eligible`` (≥6y). 6.000 = free-agent eligible at end of
+      season unless extended.
+    - **Days-to-FA** = max(0, 6 × 172 - mlb_service_days). The
+      remaining service days the player needs before reaching free
+      agency. Zero when already FA-eligible.
+    - **Options** — minor-league options. OOTP's convention matches
+      MLB's: a player has 3 option years; ``options_used`` counts how
+      many have been burned career-to-date (0-3+). Once exhausted, a
+      player can no longer be sent to AAA/MiLB without DFA.
+    - **Status flags** — ``is_active`` is on the active 26-man;
+      ``is_on_secondary`` is the 40-man / reserve placeholder;
+      ``is_on_dl`` / ``_dl60`` mark IL placements (10-day / 60-day);
+      ``designated_for_assignment`` / ``is_on_waivers`` are the
+      transactional out-of-roster states. Most flags are zero in the
+      November end-of-season snapshot — they light up in mid-season
+      ingests.
+
+    Fields not surfaced (semantics unclear without further audit):
+    ``years_protected_from_rule_5``, ``has_received_arbitration``.
+    Add when needed.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    # Raw service counters (for power-user inspection)
+    mlb_service_years: int                     # whole years (floor)
+    mlb_service_days: int                      # total days accumulated
+    mlb_service_days_this_year: int            # days credited this calendar year
+
+    # Display-formatted service time: "4y 128d" (Bref/MLBPA convention)
+    service_display: str
+
+    # Computed eligibility
+    service_class: str                         # "pre_arb" | "arb_y1/y2/y3" | "fa_eligible"
+    service_class_label: str                   # display: "Pre-arb" / "Arb (Y2)" / "FA-eligible"
+    days_to_free_agency: int                   # remaining; 0 when FA-eligible
+    is_free_agent_eligible: bool
+
+    # Options
+    options_used: int
+    options_used_this_year: int
+    options_remaining: int                     # max(0, 3 - options_used); -1 if over (rare edge)
+
+    # Status flags
+    is_active: bool                            # on the active 26-man
+    is_on_secondary: bool                      # 40-man / reserve roster
+    is_on_dl: bool                             # 10-day IL
+    is_on_dl60: bool                           # 60-day IL
+    designated_for_assignment: bool
+    is_on_waivers: bool
+
+
 class PlayerPositionFielding(BaseModel):
     """One row in the per-position fielding cube — current rating +
     ceiling + experience for a single defensive spot.
@@ -452,3 +521,7 @@ class PlayerResponse(BaseModel):
     # frontend can re-sort by experience for the "where they actually
     # play" view.
     position_fielding: list[PlayerPositionFielding]
+    # Service-time + roster status from latest roster_status_current.
+    # None when the player has no roster row in the current snapshot
+    # (retired, never on a roster, etc.).
+    roster_status: PlayerRosterStatus | None

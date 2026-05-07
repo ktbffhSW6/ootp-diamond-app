@@ -58,7 +58,18 @@ export default async function PlayerPage({ params }: Props) {
     throw err;
   }
 
-  const { bio } = player;
+  const { bio, roster_status: rs } = player;
+
+  // Service-class color hint — emerald (FA-eligible / vet) ~ accent-blue
+  // (arb-eligible) ~ neutral (pre-arb). Cap the choice list small so the
+  // header stays calm.
+  const serviceClassClass = !rs
+    ? ""
+    : rs.is_free_agent_eligible
+      ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
+      : rs.service_class.startsWith("arb_")
+        ? "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300"
+        : "bg-surface-elevated text-content-secondary";
 
   return (
     <article className="space-y-6">
@@ -130,6 +141,97 @@ export default async function PlayerPage({ params }: Props) {
           )}
         </dl>
       </header>
+
+      {/* Service & Status — small card under the bio header. Skipped
+          for retired / never-rostered players (rs is null). Shows MLB
+          service time, arb/FA class, options, and any non-active
+          status flags (DL / DFA / waivers). The November snapshot
+          tends to have all status flags off (offseason) — they light
+          up in mid-season ingests. */}
+      {rs && (
+        <section className="rounded-md border border-border bg-surface-card px-4 py-3">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+            <div>
+              <span className="text-content-muted">MLB service:</span>{" "}
+              <span className="font-mono font-semibold text-content-primary">
+                {rs.service_display}
+              </span>
+              <span className="ml-1 text-xs text-content-muted">
+                ({rs.mlb_service_days}d)
+              </span>
+            </div>
+            <span
+              className={`rounded px-2 py-0.5 text-xs font-medium ${serviceClassClass}`}
+              title={
+                rs.is_free_agent_eligible
+                  ? "Player has reached 6.000 years of MLB service — eligible for free agency at end of contract / season."
+                  : rs.service_class === "pre_arb"
+                    ? "Pre-arbitration: less than 3.000 years of MLB service. Renewable contract; no salary leverage. (Super-Two qualifiers not modeled in v1.)"
+                    : "Arbitration-eligible: 3 to 6 years of MLB service. Three arb years before reaching free agency."
+              }
+            >
+              {rs.service_class_label}
+            </span>
+            {!rs.is_free_agent_eligible && (
+              <div>
+                <span className="text-content-muted">FA in</span>{" "}
+                <span className="font-mono text-content-primary">
+                  {rs.days_to_free_agency}d
+                </span>
+              </div>
+            )}
+            <div title="Minor-league options used. Players have 3 option years; once exhausted, they can't be sent to MiLB without DFA.">
+              <span className="text-content-muted">Options:</span>{" "}
+              <span className="font-mono text-content-primary">
+                {rs.options_used}/3
+              </span>
+              {rs.options_used_this_year > 0 && (
+                <span className="ml-1 text-xs text-content-muted">
+                  (+{rs.options_used_this_year} this season)
+                </span>
+              )}
+            </div>
+            {/* Status flags — only render when truthy. Most are zero
+                on the offseason November dump; in-season ingests will
+                light them up. */}
+            <div className="ml-auto flex flex-wrap gap-1.5">
+              {rs.is_active && (
+                <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+                  Active
+                </span>
+              )}
+              {rs.is_on_secondary && (
+                <span
+                  className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-800 dark:bg-sky-900/40 dark:text-sky-300"
+                  title="On the 40-man / reserve roster"
+                >
+                  40-man
+                </span>
+              )}
+              {rs.is_on_dl && (
+                <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-rose-800 dark:bg-rose-900/40 dark:text-rose-300">
+                  10-day IL
+                </span>
+              )}
+              {rs.is_on_dl60 && (
+                <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-rose-800 dark:bg-rose-900/40 dark:text-rose-300">
+                  60-day IL
+                </span>
+              )}
+              {rs.designated_for_assignment && (
+                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                  DFA
+                </span>
+              )}
+              {rs.is_on_waivers && (
+                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                  Waivers
+                </span>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Tab strip — only Stats is wired in v1; others are placeholders.
           Sticky-position lands when we add scrollable per-tab content. */}

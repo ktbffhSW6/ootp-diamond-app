@@ -44,6 +44,7 @@ from diamond.api.schemas import (
     PlayerPitchingStint,
     PlayerPositionFielding,
     PlayerResponse,
+    PlayerRosterStatus,
     TeamRef,
 )
 from diamond.api.warehouse import get_cursor
@@ -783,6 +784,114 @@ def _fetch_position_fielding(
     return out
 
 
+# MLB credits exactly 172 days of service per full season-year. 6 full
+# years (1,032 days) puts a player at free-agent eligibility.
+_DAYS_PER_SERVICE_YEAR = 172
+_DAYS_TO_FREE_AGENCY = 6 * _DAYS_PER_SERVICE_YEAR  # 1032
+
+
+def _service_display(years: int, total_days: int) -> str:
+    """Format MLB service as Bref-style "Xy Yd" (Y = days into current year).
+
+    Convention matches MLBPA / Baseball-Reference — leftover_days =
+    total_days - 172 * years. Examples:
+        years=4, days=816  → "4y 128d"   (816 - 4*172 = 128)
+        years=0, days=45   → "0y 45d"
+        years=9, days=1576 → "9y 28d"    (1576 - 9*172 = 28)
+    """
+    leftover = total_days - _DAYS_PER_SERVICE_YEAR * years
+    # Defensive: occasionally OOTP rounds slightly off — clamp to [0, 171]
+    # so the display never reads 4y 173d (= 5y 1d).
+    if leftover < 0:
+        leftover = 0
+    return f"{years}y {leftover}d"
+
+
+def _service_class(total_days: int) -> tuple[str, str]:
+    """Return (class_id, display_label) for the player's service time.
+
+    Pre-arb / arb-eligible Y1-Y3 / FA-eligible. Boundaries at 3.000 and
+    6.000 years (3 × 172 = 516 days; 6 × 172 = 1032 days) — Super-Two
+    qualifiers (the early-arb edge case for high-service-day pre-arb
+    players) are NOT modeled in v1; they're a separate convention OOTP
+    handles internally and there's no public flag we surface.
+    """
+    if total_days < 3 * _DAYS_PER_SERVICE_YEAR:
+        return ("pre_arb", "Pre-arb")
+    if total_days < _DAYS_TO_FREE_AGENCY:
+        # 3 arb-eligible years; 1 = first arb year.
+        arb_year = (total_days // _DAYS_PER_SERVICE_YEAR) - 2  # 3y → 1, 4y → 2, 5y → 3
+        if arb_year < 1:
+            arb_year = 1
+        if arb_year > 3:
+            arb_year = 3
+        return (f"arb_y{arb_year}", f"Arb (Y{arb_year})")
+    return ("fa_eligible", "FA-eligible")
+
+
+def _fetch_roster_status(
+    con: duckdb.DuckDBPyConnection, player_id: int,
+) -> PlayerRosterStatus | None:
+    """Pull the latest roster_status row + format service-time fields.
+
+    Returns None when the player has no row in the current snapshot
+    (retired pre-save / never on a roster / data gap). The frontend
+    uses the null to skip rendering the Service & Status block.
+    """
+    row = con.execute(
+        """
+        SELECT
+            mlb_service_years,
+            mlb_service_days,
+            mlb_service_days_this_year,
+            options_used,
+            options_used_this_year,
+            is_active,
+            is_on_secondary,
+            is_on_dl,
+            is_on_dl60,
+            designated_for_assignment,
+            is_on_waivers
+        FROM roster_status_current
+        WHERE player_id = ?
+        """,
+        [player_id],
+    ).fetchone()
+    if row is None:
+        return None
+
+    (years, days, days_this_year, options, options_this_year,
+     active, secondary, dl, dl60, dfa, waivers) = row
+    years = int(years or 0)
+    days = int(days or 0)
+    days_this_year = int(days_this_year or 0)
+    options = int(options or 0)
+
+    klass, label = _service_class(days)
+    days_to_fa = max(0, _DAYS_TO_FREE_AGENCY - days)
+    options_remaining = max(0, 3 - options)
+
+    return PlayerRosterStatus(
+        mlb_service_years=years,
+        mlb_service_days=days,
+        mlb_service_days_this_year=days_this_year,
+        service_display=_service_display(years, days),
+        service_class=klass,
+        service_class_label=label,
+        days_to_free_agency=days_to_fa,
+        is_free_agent_eligible=days >= _DAYS_TO_FREE_AGENCY,
+        options_used=options,
+        options_used_this_year=int(options_this_year or 0),
+        options_remaining=options_remaining,
+        is_active=bool(active),
+        is_on_secondary=bool(secondary),
+        is_on_dl=bool(dl),
+        is_on_dl60=bool(dl60),
+        designated_for_assignment=bool(dfa),
+        is_on_waivers=bool(waivers),
+    )
+
+
 def _build_pitching_career(stints: list[dict[str, Any]]) -> PlayerCareerPitching | None:
     if not stints:
         return None
@@ -830,6 +939,7 @@ def get_player(
     advanced_bat = _fetch_advanced_batting(con, player_id)
     advanced_pit = _fetch_advanced_pitching(con, player_id)
     position_fielding = _fetch_position_fielding(con, player_id)
+    roster_status = _fetch_roster_status(con, player_id)
     return PlayerResponse(
         bio=bio,
         batting_seasons=_build_batting_seasons(bat_stints),
@@ -841,4 +951,5 @@ def get_player(
         pitching_career=_build_pitching_career(pit_stints),
         fielding_career=_build_fielding_career(fld_rows),
         position_fielding=position_fielding,
+        roster_status=roster_status,
     )
