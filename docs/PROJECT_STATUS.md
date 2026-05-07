@@ -52,10 +52,10 @@ Phases 1-2 closed; analytical CLI surface complete; real MLB history through 202
   asserting layer invariants (PK enforcement, scope filters, dim flatten,
   D12 scouted-rating filter, idempotency). Layer counts:
   - L0: **69 raw tables** (5.76M rows from one dump)
-  - L1: 12 reference + 35 event + 21 state-snapshot + 6 `_current` views + 2 machinery (`_scoped_*`) + 1 admin (`_diamond_ingests`)
+  - L1: 12 reference + 35 event + 21 state-snapshot + 7 `_current` views + 2 machinery (`_scoped_*`) + 1 admin (`_diamond_ingests`)
   - L2: 8 facts (`f_player_season_batting/pitching/fielding`, `f_player_career`,
     `f_team_season`, `f_league_season`, `f_pa_event`, `f_award_event`)
-  - L3: 10 derived (`f_trade_participant`, `player_movements` w/ `trade_id`,
+  - L3: 11 derived (`f_trade_participant`, `player_movements` w/ `trade_id`,
     `f_draft_class`, `f_record_player`, `f_award_career_player`,
     `f_award_franchise`, `f_player_streak`,
     `f_player_season_advanced_batting` + `_advanced_pitching` [the

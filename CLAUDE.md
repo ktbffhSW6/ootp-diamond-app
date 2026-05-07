@@ -180,7 +180,7 @@ L1  conformed
                  the UI can render em-dashes unambiguously.)
 L2  facts   8 tables (f_player_season_*, f_player_career, f_team_season,
                       f_league_season, f_pa_event, f_award_event)
-L3  derived 10 tables — trade_participant, player_movements, draft_class,
+L3  derived 11 tables — trade_participant, player_movements, draft_class,
                        record_player, award_career_player, award_franchise,
                        player_streak, **f_player_season_advanced_batting +
                        _advanced_pitching** (sabermetric stack per player+year+
