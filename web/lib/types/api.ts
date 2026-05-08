@@ -692,3 +692,89 @@ export interface SaveResponse {
   scoped_player_count: number;
   scoped_team_count: number;
 }
+/**
+ * A division — a list of team rows ordered by ``pos`` ascending.
+ *
+ * For leagues with no divisions (AFL) the route still emits a single
+ * placeholder division with ``division_id=0`` and ``division_name=None``
+ * so the rendering stays uniform.
+ */
+export interface StandingsDivision {
+  division_id: number;
+  division_name: string | null;
+  teams: StandingsTeamRow[];
+}
+/**
+ * One team line in the standings table.
+ *
+ * ``pos`` is the position within division (1 = leader). ``gb`` is
+ * games behind the division leader (0.0 for the leader). ``streak``
+ * is signed: positive integer = current win streak length, negative
+ * = loss streak length, zero = no streak (e.g., season hasn't started
+ * or last result was a tie).
+ *
+ * ``magic_number`` is null when OOTP's "1000" sentinel applied
+ * (out of contention / not yet meaningful); ``clinched`` is true
+ * when OOTP's "-1" sentinel applied (division clinched). The two
+ * flags are mutually exclusive — at most one is set on any row.
+ * ``is_user_org`` flags the row for the audit team (Boston) so the
+ * UI can highlight it without needing to know the team_id.
+ */
+export interface StandingsTeamRow {
+  team_id: number;
+  abbr: string | null;
+  nickname: string | null;
+  g: number;
+  w: number;
+  l: number;
+  t: number;
+  pct: number;
+  gb: number;
+  streak: number;
+  magic_number: number | null;
+  clinched: boolean;
+  pos: number;
+  is_user_org: boolean;
+}
+/**
+ * Lightweight league handle — used in both the headline and the
+ * league-picker payload. ``league_level`` mirrors OOTP's level numeric
+ * (1 = MLB, 2 = AAA, 3 = AA, 4 = A+/A, 6 = Rk/Complex/DSL, 9 = AFL).
+ */
+export interface StandingsLeagueRef {
+  league_id: number;
+  abbr: string | null;
+  name: string | null;
+  league_level: number;
+}
+/**
+ * Whole payload for the standings tab.
+ *
+ * ``available_leagues`` and ``available_years`` let the page render
+ * both pickers without round-trips. ``dump_date`` is the resolved
+ * snapshot date (MAX dump within the chosen year) — shown in the
+ * header so the user knows whether they're looking at end-of-season
+ * or a mid-season cut.
+ */
+export interface StandingsResponse {
+  league: StandingsLeagueRef;
+  year: number;
+  dump_date: string;
+  available_leagues: StandingsLeagueRef[];
+  available_years: number[];
+  org_team_id: number;
+  sub_leagues: StandingsSubLeague[];
+}
+/**
+ * A sub-league — one or more divisions stacked vertically in the UI.
+ *
+ * For leagues with no sub-leagues (AAA / AA / A* / DSL etc.) the route
+ * emits a single placeholder sub-league with ``sub_league_id=0`` and
+ * ``sub_league_name=None``. The frontend hides the sub-league header
+ * in that case to avoid an empty band.
+ */
+export interface StandingsSubLeague {
+  sub_league_id: number;
+  sub_league_name: string | null;
+  divisions: StandingsDivision[];
+}

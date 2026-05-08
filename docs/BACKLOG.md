@@ -481,9 +481,17 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
 - [ ] **Salary stream** — render `contract_current.salary0..14`
   + option types + no-trade clause on the player page. Powers
   trade-analyzer + extension-decision tools later.
-- [ ] **Standings page** (League tab) — `team_record_snapshot`
-  carries g/w/l/t/pct/gb/streak/magic_number. Empty tab today;
-  half-day to fill it.
+- [x] **Standings page** (League tab) — done 2026-05-11. Replaced the
+  `/league` `TabStub` with a real server-rendered standings view.
+  `GET /api/standings?league_id=&year=` returns sub-league × division ×
+  team rows from `team_record_snapshot` at MAX(dump_date) within the
+  chosen year. League picker grouped by level (MLB / AAA / AA / A+ A
+  / Rk DSL); year picker as a strip; user's org row highlighted with
+  a left-border accent + "You" pill. Magic-number sentinels (`-1` =
+  clinched, `1000` = N/A) collapse into `magic_number: int | None` +
+  `clinched: bool`. Streak signed int → "W9"/"L4"/—. Sub-league/division
+  null cases (AAA divisions only, AFL flat) handled. Pythagorean / RS /
+  RA columns deferred (snapshot carries W-L-Pct only).
 - [ ] **Clutch / RISP splits on player page** — `f_pa_event` already
   has `risp_flag`, `close_flag`, `late_close_flag` populated. One
   SQL slice to compute per-(player, year, level) splits + add a
@@ -525,8 +533,9 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
   (`diamond records`, `awards`, `hof`, `streaks`, `draft <year>`) to
   web views under `/history/...`. Stub page already lists the
   planned sections.
-- [ ] **League view content** — Standings, leaderboards, awards
-  races, free-agent pool. Stub page lists the sections.
+- [ ] **League view content** — Standings shipped 2026-05-11; remaining:
+  leaderboards, awards races, free-agent pool. Stub-strip below the
+  standings block lists what's still pending.
 - [ ] **World view content** — All-leagues browser, cross-league
   movements, world rankings, international prospects. Forward-
   looking; thin until scope expands.

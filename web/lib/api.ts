@@ -21,6 +21,7 @@ import type {
   PlayerResponse,
   RosterResponse,
   SaveResponse,
+  StandingsResponse,
 } from "@/lib/types/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -81,6 +82,21 @@ export async function getMovements(
 // in-memory result.
 export async function getRoster(): Promise<RosterResponse> {
   return fetchJson<RosterResponse>("/api/roster");
+}
+
+// League standings at one dump_date snapshot. Both args are optional:
+// backend defaults to MLB / latest year. Resolution falls back to the
+// closest valid value when args don't match available data, so deep-
+// linked URLs stay forgiving.
+export async function getStandings(
+  leagueId?: number,
+  year?: number,
+): Promise<StandingsResponse> {
+  const params: string[] = [];
+  if (leagueId !== undefined) params.push(`league_id=${leagueId}`);
+  if (year !== undefined) params.push(`year=${year}`);
+  const qs = params.length === 0 ? "" : `?${params.join("&")}`;
+  return fetchJson<StandingsResponse>(`/api/standings${qs}`);
 }
 
 // Trigger a one-click shutdown of both dev servers (Next.js :3000 and

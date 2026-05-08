@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-10 (in-game year 2029→2030) — **Phase 3: service-time / arb clock shipped on the player page — closes the single most-asked GM question.** New "Service & Status" card under the player bio header surfaces MLB service time (Bref-formatted "4y 128d" + total days), service class (Pre-arb / Arb Y1-Y3 / FA-eligible), days-to-FA estimate, options used (n/3 + this-season delta), and the active/40-man/IL/DFA/waivers flag block. Verified: Mayer 4y 128d Arb (Y2) FA in 216d / Anthony 4y 95d Arb (Y2) / Crochet 9y 28d FA-eligible / Gonzales 1y 94d Pre-arb FA in 766d. **Today's three-slice run**: combined bWAR / pWAR (OOTP-canonical WAR, IE-A-tier reconciled), per-position fielding view (scouted-rating cube on player page), and now service-time / arb clock — three slices that surfaced data already in the warehouse but invisible in the UI. **Next: standings page** (League tab content — `team_record_snapshot` carries g/w/l/t/pct/gb/streak/magic_number, half-day to fill it).
+**Last updated**: 2026-05-11 (in-game year 2029→2030) — **Phase 3: standings page shipped — fills the `/league` tab stub with real content.** `GET /api/standings?league_id=&year=` returns sub-league × division × team rows from `team_record_snapshot` at the resolved MAX(dump_date) within the chosen year. Defaults to MLB / latest year (2029-11-01 = end-of-season). Picker grouped by level (MLB / AAA / AA / A+ / A / Rk / DSL); user's org row gets a left-border accent + "You" pill. Clinched flag (OOTP `magic_number=-1` sentinel) renders as an emerald pill. Streak signed integer renders as W9 (emerald) / L4 (rose) / em-dash. Verified end-to-end: 2029 BOS Red Sox 93-69 in AL East (clinched), CHC 96-66 NL Central +9 streak, all 30 MLB teams + 100+ minor-league teams partition correctly. AAA (sub-league null, 2 divisions) and AFL (no league-meta row) edge cases handled. **Next: clutch / RISP splits on player page** — `f_pa_event` already has `risp_flag`, would add a Situational disclosure row to the Stats tab.
 
 ---
 
@@ -484,12 +484,62 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
     - Super-Two qualifiers (early-arb edge case for high-service-day
       pre-arb players) are NOT modeled — OOTP handles internally
       and exposes no public flag.
-18. **Standings page** *(next slice)* — League tab content.
-    `team_record_snapshot` carries g/w/l/t/pct/gb/streak/magic_number;
-    half-day to fill the empty stub.
-19. Then **clutch / RISP splits** on player page (`f_pa_event` already
-    has flags), then **records / awards / hof / streaks → History tab**,
-    and the rest of the UI_DESIGN.md ladder.
+18. ✅ **Standings page** — done 2026-05-11. Fills the `/league` tab
+    stub with real content. New endpoint
+    `GET /api/standings?league_id=&year=` returns sub-league × division
+    × team rows from `team_record_snapshot` at the MAX(dump_date)
+    snapshot within the chosen year. Defaults: MLB (203) / latest year
+    with data. Routing falls back to first-available rather than 404
+    on bad query strings (deep-link forgiving).
+
+    Implementation:
+    - **Schemas**: `StandingsResponse` (league + year + dump_date +
+      pickers + sub_leagues), `StandingsSubLeague`, `StandingsDivision`,
+      `StandingsTeamRow`, `StandingsLeagueRef` in
+      `src/diamond/api/schemas/standings.py`. Magic-number sentinels
+      (`-1` clinched, `1000` not-applicable) collapse into
+      `magic_number: int | None` + `clinched: bool`. Streak surfaced
+      as signed int.
+    - **Route**: `src/diamond/api/routes/standings.py`. Three queries
+      per request — available-leagues (15 scoped, JOIN to `leagues`),
+      available-years for the chosen league, the standings query
+      itself. Filter `g > 0` drops the All-Star teams (they slot into
+      `allstar_team_id0/1` but don't play a real schedule).
+    - **Frontend**: `web/app/league/page.tsx` rebuilt as a real server
+      component (was a `TabStub`). League picker grouped by level
+      header (MLB / AAA / AA / A+ A / Rk DSL); year picker as a year
+      strip. Sub-leagues stacked vertically (AL/NL on MLB); divisions
+      laid out 2-up on lg+ breakpoints, 1-up on smaller. User's org
+      row uses `border-l-2 border-l-accent` + a "You" pill so it's
+      findable at a glance. Streak color-coded (emerald W / rose L /
+      muted —). Clinched division leaders get an emerald "Clinched"
+      pill. Below the standings: slim "Coming to League" stubs for
+      Leaderboards / Awards races / FA pool so the IA stays scannable.
+
+    Verified end-to-end: 2029 BOS Red Sox 93-69 in AL East (clinched
+    with -1 streak); CHC 96-66 NL Central +9 streak (clinched); TEX
+    AL West clinched -4 streak; full sub-league × division × team
+    partition for MLB (30 + 100+ minor-league teams). AAA (1 sub-
+    league with null name + 2 divisions) and AFL (absent from
+    `leagues` reference table — niche limitation noted) handled.
+
+    Known v1 limitations:
+    - **AFL not in picker** — league_id=70 has team rows but no
+      `leagues` reference row, so the JOIN drops it from
+      `available_leagues`. AFL is a 30-game niche fall league;
+      surfacing it requires a different query path.
+    - **No Pythagorean / run differential** — `team_record_snapshot`
+      carries W-L-Pct only; RS / RA would need a separate per-team-
+      season aggregate.
+    - **No team-page deep links** — abbr is shown but not yet
+      clickable. Lands when team page ships.
+
+19. **Clutch / RISP splits** on player page *(next slice)* —
+    `f_pa_event` already has `risp_flag`, would add a Situational
+    disclosure row to the Stats tab.
+20. Then **records / awards / hof / streaks → History tab** (port
+    the existing CLI surfaces under `/history`), and the rest of the
+    UI_DESIGN.md ladder.
 
 **Open audit carry-forwards** (non-blocking, picked up opportunistically):
 multi-level OPS+/ERA+ park weighting, hit_loc-based spray, LeaderCategory codes

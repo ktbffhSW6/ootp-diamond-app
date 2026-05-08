@@ -15,7 +15,7 @@ The project keeps long-running engineering context in `docs/`. Always read at th
 
 These files are the source of truth for "why" — favor updating them over leaving knowledge in chat.
 
-**Current phase: Phase 3 — UI implementation, mid-build.** Phase 2 closed 2026-05-05; analytical layer + real-history backfill closed 2026-05-06; UI scaffold + player Stats tab landed 2026-05-07; 2026-05-08 shipped the IA backbone (D17), theme system (D18), movement ledger, real landing page, and in-app Quit / dev.bat launcher; 2026-05-09 shipped the roster page + L3 SIERA + a Statcast cohort + full dump-CSV vs L0 audit. **2026-05-10 shipped three player-page slices in one day** — all "data already in the warehouse but invisible in the UI": (1) **Combined bWAR / pWAR** — OOTP-canonical WAR via `f_player_season_*.war` / `.ra9war` (IE-A-tier reconciled — Mayer 3.2 = IE 3.2, Crochet 5.5 = IE 5.5, all exact). Surfaced as `b_war` / `p_war` / `p_ra9_war` on roster Advanced + player Advanced. (2) **Per-position fielding view** — Defensive Profile section on the player page surfaces the 9-position scouted-rating cube (current × ceiling × experience) backed by a new `players_fielding_current` view + `PlayerPositionFielding` schema. Justin Gonzales (listed 1B) really reads as a corner-OF guy (current 65 LF / 60 RF / 50 CF). (3) **Service-time / arb clock** — Service & Status card on the player page (between bio header and tab strip) shows MLB service ("4y 128d"), service class (Pre-arb / Arb Y1-Y3 / FA-eligible), days-to-FA, options used, and status flags (Active / 40-man / IL / DFA / waivers). Backed by a new `PlayerRosterStatus` schema. Verified Mayer 4y 128d Arb(Y2) FA-216d / Crochet 9y 28d FA-eligible / Gonzales 1y 94d Pre-arb FA-766d. Five-tab nav (Club / League / World / History / Explore) with stubs for the four non-Club tabs; dark mode is the default. **Next slice: standings page** (League tab content — `team_record_snapshot` has everything needed). The reconciliation harness (`reconcile.py`) stays in the codebase as a permanent post-ingest regression check (Decision D8).
+**Current phase: Phase 3 — UI implementation, mid-build.** Phase 2 closed 2026-05-05; analytical layer + real-history backfill closed 2026-05-06; UI scaffold + player Stats tab landed 2026-05-07; 2026-05-08 shipped the IA backbone (D17), theme system (D18), movement ledger, real landing page, and in-app Quit / dev.bat launcher; 2026-05-09 shipped the roster page + L3 SIERA + a Statcast cohort + full dump-CSV vs L0 audit. **2026-05-10 shipped three player-page slices in one day** — combined bWAR / pWAR (OOTP-canonical, IE-A-tier reconciled), per-position fielding view (Defensive Profile section), and service-time / arb clock (Service & Status card). **2026-05-11 shipped the standings page** — first real content on the `/league` tab (was a stub). New `GET /api/standings?league_id=&year=` returns sub-league × division × team rows from `team_record_snapshot` at MAX(dump_date) within the chosen year; defaults to MLB / latest. League picker grouped by level header (MLB / AAA / AA / A+ A / Rk DSL); year picker as a strip; user's org row gets a left-border accent + "You" pill. Magic-number sentinels (`-1`/`1000`) collapse into `clinched: bool` + nullable `magic_number`; streak rendered "W9"/"L4"/— with emerald/rose color. Five-tab nav (Club / League / World / History / Explore) with stubs for World / History / Explore; dark mode is the default. **Next slice: clutch / RISP splits on player page** (`f_pa_event` already has `risp_flag` / `close_flag` / `late_close_flag`). The reconciliation harness (`reconcile.py`) stays in the codebase as a permanent post-ingest regression check (Decision D8).
 
 ## Setup & commands
 
@@ -89,7 +89,7 @@ src/diamond/
     app.py                  factory + CORS for localhost:3000 (GET + POST allowed)
     routes/                 one module per resource:
                               health, save, glossary, players, roster,
-                              movements, admin
+                              movements, standings, admin
     schemas/                Pydantic response models — single source of truth
     warehouse.py            per-process root DuckDB conn + cursor-per-request +
                             get_active_save() for save-level metadata
@@ -131,7 +131,10 @@ web/
                             Glossary + ThemeSwitcher + Quit), no-flash theme init
     globals.css             theme tokens (light/dark/neutral/cb) under :root + [data-theme]
     page.tsx                Club landing — save header + warehouse-status grid + tools
-    league/page.tsx         TabStub (planned content w/ status pills)
+    league/page.tsx         standings — sub-league × division × team
+                            from `team_record_snapshot`, picker grouped
+                            by level + year strip; org-row highlight.
+                            Slim "Coming to League" stub strip below.
     world/page.tsx          TabStub
     history/page.tsx        TabStub
     explore/page.tsx        TabStub
@@ -148,7 +151,9 @@ web/
     FormulaBlock.tsx        KaTeX wrapper with parse-fail fallback
     ThemeSwitcher.tsx       client component — light/dark/neutral/cb dropdown, localStorage-persisted
     QuitButton.tsx          client component — POSTs /api/admin/shutdown
-    TabStub.tsx             header + section grid for the four IA stubs
+    TabStub.tsx             header + section grid for IA stubs (now used
+                            by world/history/explore — League graduated
+                            to a real page on 2026-05-11)
   lib/
     api.ts                  typed fetch helpers (one per endpoint; throw on non-2xx)
     types/api.ts            AUTO-GENERATED — do not hand-edit
@@ -158,7 +163,7 @@ web/
 
 Every data-fetching page **must** `export const dynamic = "force-dynamic"`. Without it, Next's default static prerender at `next build` time calls the API while uvicorn isn't running and fails with `ECONNREFUSED`. See `docs/DEV.md` "Adding a new API route" for the canonical recipe.
 
-**API surface today**: `/api/health`, `/api/save`, `/api/glossary`, `/api/glossary/{id}`, `/api/players/{id}` (now also returns per-position fielding cube + service-time/roster-status block), `/api/roster`, `/api/movements?year=YYYY[&include_pending=1]`, `POST /api/admin/shutdown`.
+**API surface today**: `/api/health`, `/api/save`, `/api/glossary`, `/api/glossary/{id}`, `/api/players/{id}` (now also returns per-position fielding cube + service-time/roster-status block), `/api/roster`, `/api/movements?year=YYYY[&include_pending=1]`, `/api/standings?league_id=&year=`, `POST /api/admin/shutdown`.
 
 ### Warehouse layers
 

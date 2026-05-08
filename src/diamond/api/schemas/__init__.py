@@ -52,6 +52,13 @@ from diamond.api.schemas.roster import (
     RosterTeamRef,
 )
 from diamond.api.schemas.save import SaveResponse
+from diamond.api.schemas.standings import (
+    StandingsDivision,
+    StandingsLeagueRef,
+    StandingsResponse,
+    StandingsSubLeague,
+    StandingsTeamRow,
+)
 
 __all__ = [
     "GlossaryEntry",
@@ -83,5 +90,10 @@ __all__ = [
     "RosterResponse",
     "RosterTeamRef",
     "SaveResponse",
+    "StandingsDivision",
+    "StandingsLeagueRef",
+    "StandingsResponse",
+    "StandingsSubLeague",
+    "StandingsTeamRow",
     "TeamRef",
 ]
