@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: History tab fully drained + Pressure board live + Cockpit v2 + visual polish.** Single push today: all five History stubs (Records / Awards / HoF / Streaks / Draft), the Pressure board, then a three-slice visual upgrade — heat-scale gradient on every league-relative metric, Sparkline + CareerArc components on the player page, and a real cockpit dashboard at `/` composing standings + pressure summary + spotlight cards (with inline career-arc sparklines + auto-generated insights) + recent moves into one round-trip. Backed by `GET /api/records?scope=&discipline=&category=&era=` — UNIONs save data + Lahman 1871-2019 + BREF 2020-2025 + cross-source merged career rollups + Statcast 2015-2025 batted-ball quality. Three flat picker rows (Scope / Discipline / Era) + a Category strip dynamically populated from the available leaderboards in `f_record_player`. Source chips color-coded (emerald=save, indigo=lahman, sky=bref, violet=merged, amber=statcast); rows clickable through to `/player/<id>` when the underlying record carries an OOTP player_id, plain-text otherwise. Server re-ranks rows globally when era=all so duplicates between `save` (OOTP-imported) and `lahman` (real-life) sit adjacent — confirms the data integration story (Bonds 73 / 73, McGwire 70 / 70, etc.). Earlier today shipped the situational-splits stack (5 slices, 14 splits per year/level) + the **D20 pre-save MLB baselines maintenance pass** that drains `—` from advanced stats on every imported real-history player-season.
+**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: History tab fully drained + Pressure board + Cockpit v2 + visual polish + Salary stream + Compare + Headshots.** Marathon push today: all five History stubs (Records / Awards / HoF / Streaks / Draft), the Pressure board, three visual primitives (heat-scale + Sparkline + CareerArc), real Cockpit dashboard at `/`, then three more — Salary stream on the player page (contract bar viz + options + no-trade), Compare under `/explore/compare` (4-up side-by-side career cards with WAR sparkline overlay), and PlayerAvatar headshots streaming OOTP-generated face PNGs across player page / cockpit / roster. Backed by `GET /api/records?scope=&discipline=&category=&era=` — UNIONs save data + Lahman 1871-2019 + BREF 2020-2025 + cross-source merged career rollups + Statcast 2015-2025 batted-ball quality. Three flat picker rows (Scope / Discipline / Era) + a Category strip dynamically populated from the available leaderboards in `f_record_player`. Source chips color-coded (emerald=save, indigo=lahman, sky=bref, violet=merged, amber=statcast); rows clickable through to `/player/<id>` when the underlying record carries an OOTP player_id, plain-text otherwise. Server re-ranks rows globally when era=all so duplicates between `save` (OOTP-imported) and `lahman` (real-life) sit adjacent — confirms the data integration story (Bonds 73 / 73, McGwire 70 / 70, etc.). Earlier today shipped the situational-splits stack (5 slices, 14 splits per year/level) + the **D20 pre-save MLB baselines maintenance pass** that drains `—` from advanced stats on every imported real-history player-season.
 
 Maintenance slice — **D20 pre-save MLB baselines** (closed earlier today): The `_lg_constants_advanced` view is now a UNION of `_native` (OOTP `league_history_*` — save years only) and `_imported` (Lahman 1871-2019 + BREF 2020-2025, summed across AL/NL into MLB league_id=203, level_id=1). `f_player_season_advanced_batting` jumped from 30k → **244,183 rows** — every imported MLB player-season pre-2026 now resolves wOBA / wRC+ / OPS+ / FIP / ERA+ / b_WAR. Headline spot-checks: Bonds 2001 wOBA .550 / OPS+ 257 / b_WAR 12.5 (vs BBR 259 / 12.5); Pujols 2003 OPS+ 189 (BBR 189 — exact); Trout 2018 OPS+ 198 (real 198 — exact); Pedro 2000 ERA+ 285 (BBR 291); Mantle 1956 OPS+ 220 (BBR 210, modern Yankee Stadium PF gap). Soft-skip on missing history tables means smoke / fresh warehouses still build cleanly. Park factors for pre-2026 use the team's *current-day* park (deferred follow-on); minor-league pre-save baselines stay null (Lahman doesn't carry them). Reconcile harness clean — no save-side regression.
 
@@ -15,7 +15,7 @@ Earlier-today slices (situational stack) in order:
 4. **Bases + platoon splits** — added `bases_empty` / `bases_loaded` (off `base1/2/3`) and `vs_left` / `vs_right` (LEFT JOIN to `players_current` for handedness; switch-hitters resolve to opposite of pitcher's hand). Side-aware labels: batter card "vs LHP/RHP", pitcher card "vs LHB/RHB". Sanity invariant: `vs_left + vs_right = all` ✓.
 5. **Counts + spray splits** — added `first_pitch` / `two_strike` / `full_count` (count BEFORE the resolving pitch) and `pull` / `center` / `oppo` (BIP-only spray; UI skips color coding since denominators differ). Empirically verified `hit_xy` is **batter-relative**, not field-absolute (mean hit_xy on HRs ≈71 for both LHB and RHB — same pull-side band), corrected DATA_NOTES.
 
-**Next**: with Cockpit + visual upgrade landed, the Club tab is now a real GM dashboard. Remaining picks: **Salary stream** on player page (`contract_current.salary0..14` + option types + no-trade clause; powers trade-analyzer + extension-decision tools later) or **Compare** under Explore (first live mode in the Explore sandbox; forces the chart-stack decision Vega-Lite vs Plotly).
+**Next**: ladder is mostly drained. Remaining picks from UI_DESIGN.md: **Custom leaderboards** under Explore (Fangraphs-style sortable + filterable, TanStack Table), **Spray charts / EV-LA scatter** under Explore (forces the chart-stack decision Vega-Lite vs Plotly), **AI overlay** (D14), **Setup wizard** (D3 v2 — save-setup picker), or **historical park factors** (D20 follow-on for pre-2026 OPS+/ERA+ accuracy).
 
 ---
 
@@ -823,20 +823,45 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
     pressure; Garcia 130 / Rodriguez 129 / White 127 as AAA
     promotion candidates. Sample bars: 50 PA / 20 IP. Org scope
     auto-derived from `audit_team_id` (no client filter needed).
-30. **Next slice candidates**:
-    a. **Salary stream** on player page —
-       `contract_current.salary0..14` + option types + no-trade
-       clause; powers trade-analyzer + extension-decision tools.
-    b. **Compare** under Explore — first live mode in the Explore
-       sandbox; forces the chart-stack decision (Vega-Lite vs
-       Plotly).
-    c. **Cockpit dashboard v2** — Club v0 today is just save
-       header + tools grid. Cockpit v2 adds anomaly flags,
-       decisions queue (top regret signals + promotion/demotion
-       candidates from the pressure board), standings + Pythag,
-       recent-moves feed embedded inline. Now that Pressure +
-       Movements + Standings are all live, this is mostly
-       composition.
+31. **Salary stream** ✅ (2026-05-12) — Contract section on player
+    page. `PlayerContract` Pydantic schema flows from the L1
+    `contract_current` view; resolves option years (team / player /
+    vesting), buyouts, opt-out clauses, no-trade flags. Renders as
+    a CSS-bar chart with one column per year, current-year highlight,
+    option badges (TO / PO / VO) below the year label. Total +
+    remaining USD totals in the header. Crochet 7y/$185M (curr year
+    4 of 7, opt-out 2030, $5M buyout on 2032 TO); Henderson 8y/$388.5M
+    no-trade (just signed); Judge 9y/$360M (curr year 7).
+32. **Compare under Explore** ✅ (2026-05-12) — `/explore/compare?ids=`
+    renders up to 4 players side-by-side. `GET /api/compare?ids=`
+    returns slim cards (career batting/pitching lines + WAR sparkline
+    series + headline metric) — slim by design; ≤4 cap for legibility.
+    Empty state surfaces three demo deep-links (Bonds·Aaron·Ruth,
+    Trout·Ohtani·Judge, Pedro·Maddux·Clemens). Cross-era is fair
+    game thanks to D20 baselines.
+33. **Player headshots** ✅ (2026-05-12) — `PlayerAvatar` component
+    streams `news/html/images/person_pictures/player_{id}.png` from
+    the active save via `GET /api/photos/players/{id}.png`. Per-image
+    onError fallback to a deterministic-color initials disc keeps
+    layouts stable when OOTP didn't generate a face (most pre-1990
+    real-history players). Sizes xs/sm/md/lg; wired into player page
+    header (lg), cockpit spotlight cards (sm), roster name cells
+    (xs), compare cards (md).
+34. **Next slice candidates**:
+    a. **Custom leaderboards** under Explore — Fangraphs-style
+       sortable + filterable. TanStack Table integration; filter
+       strip across year / level / age / min-PA / position; columns
+       drawn from the data dictionary; save-to-URL.
+    b. **Spray charts + EV-LA scatter** under Explore — forces the
+       chart-stack decision (Vega-Lite vs Plotly). Once chosen,
+       half a dozen viz slices unlock.
+    c. **Historical park factors** (D20 follow-on) — fix pre-2026
+       OPS+/ERA+ to use the team's actual contemporary park
+       factor instead of the modern-stadium proxy.
+    d. **AI overlay** (D14) — keyring-stored keys, four-tier use
+       levels, daily-cap auto-degrade.
+    e. **Setup wizard** (D3 v2 hard requirement) — first-launch
+       save-setup picker.
 
 **Open audit carry-forwards** (non-blocking, picked up opportunistically):
 multi-level OPS+/ERA+ park weighting, hit_loc-based spray, LeaderCategory codes

@@ -13,6 +13,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { CareerArc } from "@/components/CareerArc";
+import { PlayerAvatar } from "@/components/PlayerAvatar";
+import { PlayerContractCard } from "@/components/PlayerContractCard";
 import { PlayerStatsTab } from "@/components/PlayerStatsTab";
 import { getGlossary, getPlayer } from "@/lib/api";
 
@@ -75,26 +77,32 @@ export default async function PlayerPage({ params }: Props) {
   return (
     <article className="space-y-6">
       {/* Bio header — mirrors Bref's player-page top strip */}
-      <header className="border-b border-border pb-4">
-        <p className="text-xs uppercase tracking-wide text-content-muted">
-          {bio.position_name}
-          {bio.bats_throws && bio.bats_throws !== "?/?" && (
-            <span className="ml-2">
-              <span className="text-content-muted">·</span> Bats/Throws{" "}
-              <span className="font-mono text-content-secondary">
-                {bio.bats_throws}
+      <header className="flex flex-wrap items-start gap-4 border-b border-border pb-4">
+        <PlayerAvatar
+          playerId={playerId}
+          displayName={bio.full_name}
+          size="lg"
+        />
+        <div className="min-w-[200px] flex-1">
+          <p className="text-xs uppercase tracking-wide text-content-muted">
+            {bio.position_name}
+            {bio.bats_throws && bio.bats_throws !== "?/?" && (
+              <span className="ml-2">
+                <span className="text-content-muted">·</span> Bats/Throws{" "}
+                <span className="font-mono text-content-secondary">
+                  {bio.bats_throws}
+                </span>
               </span>
-            </span>
-          )}
-        </p>
-        <h1 className="mt-1 text-3xl font-bold tracking-tight text-content-primary">
-          {bio.full_name}
-          {bio.uniform_number != null && (
-            <span className="ml-3 font-mono text-xl font-normal text-content-muted">
-              #{bio.uniform_number}
-            </span>
-          )}
-        </h1>
+            )}
+          </p>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight text-content-primary">
+            {bio.full_name}
+            {bio.uniform_number != null && (
+              <span className="ml-3 font-mono text-xl font-normal text-content-muted">
+                #{bio.uniform_number}
+              </span>
+            )}
+          </h1>
         <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm text-content-secondary">
           {bio.current_team && (
             <div>
@@ -141,6 +149,7 @@ export default async function PlayerPage({ params }: Props) {
             </div>
           )}
         </dl>
+        </div>
       </header>
 
       {/* Service & Status — small card under the bio header. Skipped
@@ -244,6 +253,11 @@ export default async function PlayerPage({ params }: Props) {
           pitching={player.advanced_pitching}
         />
       </section>
+
+      {/* Contract — salary-by-year bar chart with options + no-trade.
+          Skipped for players without an active contract row (amateurs,
+          retirees, FAs). */}
+      {player.contract && <PlayerContractCard contract={player.contract} />}
 
       {/* Tab strip — only Stats is wired in v1; others are placeholders.
           Sticky-position lands when we add scrollable per-tab content. */}

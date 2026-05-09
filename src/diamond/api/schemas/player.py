@@ -38,6 +38,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict
 
+from diamond.api.schemas.contract import PlayerContract
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Bio
@@ -618,6 +620,10 @@ class PlayerResponse(BaseModel):
     # None when the player has no roster row in the current snapshot
     # (retired, never on a roster, etc.).
     roster_status: PlayerRosterStatus | None
+    # Active contract (salary by year + options + no-trade) from
+    # latest contract_current row. None for players without an active
+    # MLB/MiLB contract — amateurs, retirees, free agents.
+    contract: PlayerContract | None
     # Per-(year, level, split) situational batting from f_pa_event. Empty
     # for pitchers (zero batter PAs) and pre-warehouse imported players
     # (no at-bat log). Sorted year DESC, level (MLB first), split

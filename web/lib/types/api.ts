@@ -197,6 +197,91 @@ export interface CockpitSpotlightCard {
   insight: string | null;
 }
 /**
+ * One player's compare card payload.
+ *
+ * All career counters are sums across stints. ``career_avg/obp/slg``
+ * are recomputed from totals (not averaged from per-season rates),
+ * which matches the canonical Bref career line.
+ *
+ * ``career_years`` + ``career_war`` are parallel arrays for the
+ * overlay sparkline — same shape as
+ * ``CockpitSpotlightCard.career_*`` so the frontend can reuse
+ * Sparkline directly. Years with no advanced data render as null
+ * in the WAR list (gap in the line).
+ *
+ * ``latest_year`` is the most recent season the player appeared
+ * in. ``latest_ops_plus`` / ``latest_era_plus`` are the headline
+ * rate metric for that year (when populated); the frontend picks
+ * one based on which is non-null.
+ */
+export interface ComparePlayer {
+  player_id: number;
+  display_name: string;
+  position_name: string;
+  bats_throws: string | null;
+  age: number | null;
+  current_team_abbr: string | null;
+  is_retired: boolean;
+  is_hall_of_fame: boolean;
+  career_g_bat: number;
+  career_pa: number;
+  career_ab: number;
+  career_h: number;
+  career_hr: number;
+  career_rbi: number;
+  career_sb: number;
+  career_avg: number | null;
+  career_obp: number | null;
+  career_slg: number | null;
+  career_g_pit: number;
+  career_w: number;
+  career_l: number;
+  career_sv: number;
+  career_outs: number;
+  career_so: number;
+  career_era: number | null;
+  career_whip: number | null;
+  career_years: number[];
+  career_war: (number | null)[];
+  career_total_war: number;
+  latest_year: number | null;
+  latest_ops_plus: number | null;
+  latest_era_plus: number | null;
+  latest_war: number | null;
+}
+/**
+ * Whole compare payload.
+ *
+ * ``players`` is in the same order the user passed IDs; missing
+ * IDs surface in ``not_found`` so the frontend can render an
+ * "X not in scope" hint without breaking the layout.
+ */
+export interface CompareResponse {
+  players: ComparePlayer[];
+  not_found: number[];
+}
+/**
+ * One year of a multi-year deal.
+ *
+ * ``year`` is the actual season; ``season_index`` is 0-based offset
+ * from contract start (useful for the UI's bar-chart x-axis).
+ * Option flags are mutually exclusive across the three types but
+ * co-exist with ``has_buyout`` when the option is bought out
+ * instead of exercised.
+ */
+export interface ContractYear {
+  year: number;
+  season_index: number;
+  salary: number;
+  is_current: boolean;
+  is_team_option: boolean;
+  is_player_option: boolean;
+  is_vesting_option: boolean;
+  has_buyout: boolean;
+  buyout_amount: number;
+  can_opt_out: boolean;
+}
+/**
  * One outcome bucket, with its picks ordered by overall pick ASC.
  *
  * Per-bucket count surfaced separately so the UI can render
@@ -668,6 +753,30 @@ export interface PlayerCareerPitching {
   bb_per_9: number | null;
 }
 /**
+ * The active contract for a player.
+ *
+ * Aggregate fields (``total_value``, ``remaining_value``) are
+ * server-computed sums so the UI doesn't have to sum across the
+ * rows array. Both are in raw USD.
+ *
+ * ``contract_team_abbr`` is the team that's actually paying the
+ * salary (the team that signed the deal); usually equals the
+ * player's current team but can differ after a trade with retained
+ * salary — captured in the ``retained`` flag.
+ */
+export interface PlayerContract {
+  contract_team_id: number | null;
+  contract_team_abbr: string | null;
+  start_year: number;
+  years: number;
+  current_year_index: number;
+  no_trade: boolean;
+  retained_by_prior_team: boolean;
+  total_value: number;
+  remaining_value: number;
+  rows: ContractYear[];
+}
+/**
  * One fielding row at (year, league, level, team, position) grain.
  *
  * `inn_outs` is the total defensive outs (`ip*3 + ipf`); `inn_display`
@@ -787,6 +896,7 @@ export interface PlayerResponse {
   fielding_career: PlayerCareerFielding[];
   position_fielding: PlayerPositionFielding[];
   roster_status: PlayerRosterStatus | null;
+  contract: PlayerContract | null;
   situational_batting: PlayerSituationalRow[];
   situational_pitching: PlayerSituationalRow[];
 }

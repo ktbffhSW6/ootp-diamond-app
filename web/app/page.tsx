@@ -13,6 +13,7 @@
 
 import Link from "next/link";
 
+import { PlayerAvatar } from "@/components/PlayerAvatar";
 import { Sparkline } from "@/components/Sparkline";
 import { plusMinusClass } from "@/lib/heatscale";
 import { getCockpit, getSave } from "@/lib/api";
@@ -217,7 +218,12 @@ function SpotlightCard({ card }: { card: CockpitSpotlightCard }) {
       href={`/player/${card.player_id}`}
       className="block rounded-md border border-border bg-surface-card p-3 transition hover:border-border-strong hover:bg-surface-elevated"
     >
-      <div className="flex items-baseline gap-2">
+      <div className="flex items-center gap-2">
+        <PlayerAvatar
+          playerId={card.player_id}
+          displayName={card.display_name}
+          size="sm"
+        />
         <span className="rounded bg-surface-elevated px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-content-muted">
           {positionLabel}
         </span>

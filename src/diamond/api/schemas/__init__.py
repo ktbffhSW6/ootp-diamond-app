@@ -23,6 +23,7 @@ from diamond.api.schemas.awards import (
     AwardLeagueRef,
     AwardsResponse,
 )
+from diamond.api.schemas.compare import ComparePlayer, CompareResponse
 from diamond.api.schemas.cockpit import (
     CockpitMovementRow,
     CockpitPressureRow,
@@ -32,6 +33,7 @@ from diamond.api.schemas.cockpit import (
     CockpitStandingsBlock,
     CockpitStandingsRow,
 )
+from diamond.api.schemas.contract import ContractYear, PlayerContract
 from diamond.api.schemas.draft import (
     DraftBucket,
     DraftClassResponse,
@@ -110,6 +112,9 @@ __all__ = [
     "CockpitSpotlightCard",
     "CockpitStandingsBlock",
     "CockpitStandingsRow",
+    "ComparePlayer",
+    "CompareResponse",
+    "ContractYear",
     "DraftBucket",
     "DraftClassResponse",
     "DraftClassSummary",
@@ -129,6 +134,7 @@ __all__ = [
     "PlayerBattingSeason",
     "PlayerBattingStint",
     "PlayerBio",
+    "PlayerContract",
     "PlayerCareerBatting",
     "PlayerCareerFielding",
     "PlayerCareerPitching",

@@ -16,6 +16,7 @@
 import type {
   AwardsResponse,
   CockpitResponse,
+  CompareResponse,
   DraftClassResponse,
   GlossaryEntry,
   GlossaryListResponse,
@@ -222,6 +223,16 @@ export async function getPressure(args: {
 // live on /league, /pressure, /movements per their own pickers.
 export async function getCockpit(): Promise<CockpitResponse> {
   return fetchJson<CockpitResponse>("/api/cockpit");
+}
+
+// Compare payload — slim card data for ≤4 players, side-by-side.
+// `ids` is a comma-separated list; the route caps + dedupes server-side
+// so over-N or duplicate IDs are handled silently.
+export async function getCompare(ids: number[]): Promise<CompareResponse> {
+  const idStr = ids.join(",");
+  return fetchJson<CompareResponse>(
+    `/api/compare?ids=${encodeURIComponent(idStr)}`,
+  );
 }
 
 // Trigger a one-click shutdown of both dev servers (Next.js :3000 and

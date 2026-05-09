@@ -14,9 +14,10 @@ export default function ExplorePage() {
       sections={[
         {
           title: "Compare",
-          status: "soon",
+          status: "live",
+          href: "/explore/compare",
           blurb:
-            "Pick N players (or teams, or seasons), render side-by-side stat tables + overlaid trajectories. Cross-era support via career-year axis. Trout vs Cobb is the canonical demo.",
+            "Pick up to 4 players via ?ids=. Side-by-side career stat blocks + overlaid WAR sparklines. Cross-era is fair game — D20 baselines mean Bonds 2001 / Trout 2018 / Skubal 2029 all carry full advanced numbers.",
         },
         {
           title: "Custom leaderboards",

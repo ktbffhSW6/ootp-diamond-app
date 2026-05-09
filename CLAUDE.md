@@ -190,7 +190,7 @@ web/
 
 Every data-fetching page **must** `export const dynamic = "force-dynamic"`. Without it, Next's default static prerender at `next build` time calls the API while uvicorn isn't running and fails with `ECONNREFUSED`. See `docs/DEV.md` "Adding a new API route" for the canonical recipe.
 
-**API surface today**: `/api/health`, `/api/save`, `/api/cockpit`, `/api/glossary`, `/api/glossary/{id}`, `/api/players/{id}` (also returns per-position fielding cube + service-time/roster-status block + situational-batting splits), `/api/roster`, `/api/movements?year=YYYY[&include_pending=1]`, `/api/standings?league_id=&year=`, `/api/records?scope=&discipline=&category=&era=&limit=`, `/api/awards?league_id=&award_id=&era=&limit=`, `/api/hof?view=&limit=`, `/api/streaks?streak_id=&scope=&limit=`, `/api/draft?year=`, `/api/pressure?year=&limit=`, `POST /api/admin/shutdown`.
+**API surface today**: `/api/health`, `/api/save`, `/api/cockpit`, `/api/glossary`, `/api/glossary/{id}`, `/api/players/{id}` (also returns per-position fielding cube + service-time/roster-status block + situational-batting splits + active contract block), `/api/roster`, `/api/movements?year=YYYY[&include_pending=1]`, `/api/standings?league_id=&year=`, `/api/records?scope=&discipline=&category=&era=&limit=`, `/api/awards?league_id=&award_id=&era=&limit=`, `/api/hof?view=&limit=`, `/api/streaks?streak_id=&scope=&limit=`, `/api/draft?year=`, `/api/pressure?year=&limit=`, `/api/compare?ids=`, `/api/photos/players/{id}.png`, `POST /api/admin/shutdown`.
 
 ### Warehouse layers
 
@@ -281,23 +281,23 @@ Build rule: **new top-level features land under one of the five prefixes** (or a
 
 ### Visual primitives (2026-05-12)
 
-Three reusable building blocks for richer table rendering, all in
+Reusable building blocks for richer table + card rendering, all in
 `web/`. Use these instead of one-off color logic / inline SVG when
-adding new tables, leaderboards, or hero cards.
+adding new tables, leaderboards, hero cards, or player references.
 
 - **`lib/heatscale.ts`** — `plusMinusClass(value)` for any 100-relative
   metric (OPS+ / wRC+ / ERA+ / FIP+) and `warSeasonClass(war)` for
   single-season WAR cells. Five-tier gradient per side with bg-fill
   at the extremes. Apply via Tailwind className concat:
   ``className={`px-2 py-1.5 ${plusMinusClass(row.ops_plus)}`}``.
-  Already wired into roster Advanced view, player Advanced section,
+  Wired into roster Advanced view, player Advanced section,
   pressure board metric column, cockpit pressure summary +
-  spotlight headline numbers.
+  spotlight headline numbers, compare card headline metric.
 - **`components/Sparkline.tsx`** — tiny inline SVG trend chart. Pure
   polyline + dots, auto-trend coloring (emerald rising, rose falling,
   sky flat). Drop into any row that wants a "trajectory at a glance":
   `<Sparkline values={[3.1, 4.5, 6.2, 5.8]} width={120} height={32} />`.
-  Used on cockpit spotlight cards.
+  Used on cockpit spotlight cards + compare cards.
 - **`components/CareerArc.tsx`** — full SVG line chart of career
   WAR by year, with dot fills picked from heat-scale, peak-tier
   reference band, year-axis ticks, and HTML tooltips per dot.
@@ -308,6 +308,18 @@ adding new tables, leaderboards, or hero cards.
   and will land when we need spray charts / EV-LA scatters /
   distribution viz; until then, hand-rolled SVG is the convention
   for the simpler trend shapes.
+- **`components/PlayerAvatar.tsx`** *(2026-05-12)* — circular
+  headshot with initials fallback. Streams the OOTP-generated face
+  PNG via `/api/photos/players/{id}.png`; on 404 renders a
+  deterministic-color initials disc. Sizes: xs (20px) / sm (32px)
+  / md (48px) / lg (80px). Wired into player page header,
+  cockpit spotlight cards, roster name cells, compare cards.
+- **`components/PlayerContractCard.tsx`** *(2026-05-12)* — salary-by-
+  year bar viz with option badges, no-trade chip, and total /
+  remaining USD totals. Renders the active contract from
+  `PlayerContract` payload on the player page (between CareerArc
+  and the tab strip). Skipped for players without an active
+  contract row (amateurs / FAs / retirees).
 
 ### Theme system (D18)
 

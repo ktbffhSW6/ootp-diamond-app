@@ -28,6 +28,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import { PlayerAvatar } from "@/components/PlayerAvatar";
 import { plusMinusClass, warSeasonClass } from "@/lib/heatscale";
 
 import type {
@@ -198,12 +199,19 @@ function StatModeToggle({
 function NameCell({ player }: { player: RosterPlayer }) {
   return (
     <td className="px-3 py-1.5 align-middle whitespace-nowrap">
-      <Link
-        href={`/player/${player.player_id}`}
-        className="font-medium text-link underline-offset-2 hover:text-link-hover hover:underline"
-      >
-        {player.full_name}
-      </Link>
+      <div className="flex items-center gap-2">
+        <PlayerAvatar
+          playerId={player.player_id}
+          displayName={player.full_name}
+          size="xs"
+        />
+        <Link
+          href={`/player/${player.player_id}`}
+          className="font-medium text-link underline-offset-2 hover:text-link-hover hover:underline"
+        >
+          {player.full_name}
+        </Link>
+      </div>
     </td>
   );
 }

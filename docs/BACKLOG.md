@@ -485,9 +485,13 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
   data alone). Super-Two qualifiers not modeled in v1 (OOTP handles
   internally; no public flag). Verified Mayer 4y 128d Arb(Y2) FA-216d
   / Crochet 9y 28d FA-eligible / Gonzales 1y 94d Pre-arb FA-766d.
-- [ ] **Salary stream** — render `contract_current.salary0..14`
-  + option types + no-trade clause on the player page. Powers
-  trade-analyzer + extension-decision tools later.
+- [x] **Salary stream** *(2026-05-12)* — Contract section on player
+  page. `PlayerContract` Pydantic schema flows the L1
+  `contract_current` view; option types (TO/PO/VO), buyouts,
+  opt-outs, no-trade flags resolved server-side. Bar-chart UI per
+  year with current-year highlight + total / remaining USD totals.
+  Bonus incentives (minimum_pa_bonus, mvp_bonus, etc.) and AAV
+  computation skipped for v1.
 - [x] **Standings page** (League tab) — done 2026-05-11. Replaced the
   `/league` `TabStub` with a real server-rendered standings view.
   `GET /api/standings?league_id=&year=` returns sub-league × division ×
@@ -530,11 +534,22 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
   Sits as a peer page (`/pressure`) for now; renest under
   `/club/pressure` when the Club tab gets a coordinated cleanup
   pass alongside `/movements` and `/roster`.
-- [ ] **Compare under Explore** — pick N players, render side-by-side
-  stat tables + overlaid trajectories. Cross-era support via
-  career-year axis. Trout-vs-Cobb is the canonical demo. First live
-  mode in the Explore sandbox; forces the chart-stack decision
-  (Vega-Lite vs Plotly).
+- [x] **Compare under Explore** *(2026-05-12)* — `/explore/compare?ids=`
+  lives. Side-by-side career stat blocks for ≤4 players + overlaid
+  WAR sparkline. Backed by `GET /api/compare?ids=`. Cross-era is
+  fair game via D20 baselines. Empty state surfaces three demo
+  deep-links (Bonds·Aaron·Ruth / Trout·Ohtani·Judge / Pedro·Maddux·Clemens).
+  Chart-stack decision (Vega-Lite vs Plotly) deferred — the v1
+  side-by-side cards work with hand-rolled Sparkline; full chart
+  lib lands when spray charts / EV-LA / distributions need it.
+- [x] **Player headshots** *(2026-05-12)* — `PlayerAvatar` component
+  + `GET /api/photos/players/{id}.png` streaming endpoint over the
+  active save's `news/html/images/person_pictures/` directory.
+  Per-image onError fallback to deterministic-color initials disc.
+  Wired into player page header (lg), cockpit spotlight (sm),
+  roster name cells (xs), compare cards (md). Photos exist for
+  4,721 in-save players; pre-1990 imported real-history players
+  fall back to initials gracefully.
 - [ ] **Custom leaderboards** — Fangraphs-style sortable filterable tables.
   TanStack Table integration, filter strip across year/level/age/min-PA/
   position, save-to-URL. Curated default version under League;

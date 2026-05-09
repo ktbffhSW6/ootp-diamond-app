@@ -893,6 +893,137 @@ def _fetch_roster_status(
     )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Contract — backed by `contract_current`
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# OOTP stores the deal as a flat row with `salary0..salary14` plus
+# option / buyout / no-trade flags. We project that into a list of
+# ContractYear rows for the UI's bar chart, plus aggregate totals
+# (sum of all years; remaining-from-current).
+#
+# Convention notes:
+# - `current_year` in OOTP is 1-based (1 = first year). We surface
+#   as 0-based `current_year_index` to match Python list semantics.
+# - `last_year_*_option` flags whether the FINAL year of the deal
+#   is that option type. `next_last_year_*_option` flags the
+#   second-to-last year. Both can co-exist on long deals.
+# - `next_last_year_option_buyout` / `last_year_option_buyout` are
+#   the buyout amounts (USD) tied to those option years; surface
+#   as `has_buyout` + `buyout_amount` on the corresponding row.
+# - `opt_out` is a 1-based season offset where the player can void
+#   the rest of the deal; 0 = no opt-out clause. We mark the row
+#   that triggers the opt-out via `can_opt_out`.
+
+
+def _fetch_contract(
+    con: duckdb.DuckDBPyConnection, player_id: int,
+) -> "PlayerContract | None":
+    """Pull the latest contract_current row + project into a structured
+    multi-year contract. Returns None when no active contract row
+    exists (amateurs / FA / retired / no-deal cases)."""
+    from diamond.api.schemas import ContractYear, PlayerContract
+
+    row = con.execute(
+        """
+        SELECT
+            cc.contract_team_id,
+            t.abbr AS contract_team_abbr,
+            cc.season_year,
+            cc.years,
+            cc.current_year,
+            cc.no_trade,
+            cc.last_year_team_option,
+            cc.last_year_player_option,
+            cc.last_year_vesting_option,
+            cc.next_last_year_team_option,
+            cc.next_last_year_player_option,
+            cc.next_last_year_vesting_option,
+            cc.last_year_option_buyout,
+            cc.next_last_year_option_buyout,
+            cc.opt_out,
+            cc.retained,
+            cc.salary0, cc.salary1, cc.salary2, cc.salary3, cc.salary4,
+            cc.salary5, cc.salary6, cc.salary7, cc.salary8, cc.salary9,
+            cc.salary10, cc.salary11, cc.salary12, cc.salary13, cc.salary14
+        FROM contract_current cc
+        LEFT JOIN teams t ON t.team_id = cc.contract_team_id
+        WHERE cc.player_id = ?
+        """,
+        [player_id],
+    ).fetchone()
+    if row is None:
+        return None
+
+    (contract_team_id, contract_team_abbr, season_year, years,
+     current_year, no_trade,
+     last_team_opt, last_player_opt, last_vesting_opt,
+     nlast_team_opt, nlast_player_opt, nlast_vesting_opt,
+     last_buyout, nlast_buyout, opt_out, retained,
+     *salaries) = row
+
+    if not season_year or not years or years <= 0:
+        return None
+
+    years_int = int(years)
+    current_idx = (int(current_year) - 1) if current_year else -1
+    last_idx = years_int - 1
+    nlast_idx = years_int - 2 if years_int >= 2 else -1
+    opt_out_idx = (int(opt_out) - 1) if opt_out and int(opt_out) > 0 else -1
+
+    contract_rows: list[ContractYear] = []
+    total_value = 0
+    remaining_value = 0
+    for i in range(years_int):
+        salary = int(salaries[i] or 0)
+        is_last = i == last_idx
+        is_nlast = i == nlast_idx
+        is_team_opt = bool(
+            (is_last and last_team_opt) or (is_nlast and nlast_team_opt)
+        )
+        is_player_opt = bool(
+            (is_last and last_player_opt) or (is_nlast and nlast_player_opt)
+        )
+        is_vesting_opt = bool(
+            (is_last and last_vesting_opt) or (is_nlast and nlast_vesting_opt)
+        )
+        buyout = 0
+        if is_last and last_buyout:
+            buyout = int(last_buyout or 0)
+        if is_nlast and nlast_buyout:
+            buyout = int(nlast_buyout or 0)
+        contract_rows.append(
+            ContractYear(
+                year=int(season_year) + i,
+                season_index=i,
+                salary=salary,
+                is_current=(i == current_idx),
+                is_team_option=is_team_opt,
+                is_player_option=is_player_opt,
+                is_vesting_option=is_vesting_opt,
+                has_buyout=buyout > 0,
+                buyout_amount=buyout,
+                can_opt_out=(i == opt_out_idx),
+            )
+        )
+        total_value += salary
+        if i >= max(0, current_idx):
+            remaining_value += salary
+
+    return PlayerContract(
+        contract_team_id=int(contract_team_id) if contract_team_id else None,
+        contract_team_abbr=contract_team_abbr,
+        start_year=int(season_year),
+        years=years_int,
+        current_year_index=current_idx,
+        no_trade=bool(no_trade),
+        retained_by_prior_team=bool(retained),
+        total_value=total_value,
+        remaining_value=remaining_value,
+        rows=contract_rows,
+    )
+
+
 def _build_pitching_career(stints: list[dict[str, Any]]) -> PlayerCareerPitching | None:
     if not stints:
         return None
@@ -1277,6 +1408,7 @@ def get_player(
     advanced_pit = _fetch_advanced_pitching(con, player_id)
     position_fielding = _fetch_position_fielding(con, player_id)
     roster_status = _fetch_roster_status(con, player_id)
+    contract = _fetch_contract(con, player_id)
     situational_batting = _fetch_situational(con, player_id, "batter")
     situational_pitching = _fetch_situational(con, player_id, "pitcher")
     return PlayerResponse(
@@ -1291,6 +1423,7 @@ def get_player(
         fielding_career=_build_fielding_career(fld_rows),
         position_fielding=position_fielding,
         roster_status=roster_status,
+        contract=contract,
         situational_batting=situational_batting,
         situational_pitching=situational_pitching,
     )
