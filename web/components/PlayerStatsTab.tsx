@@ -1108,21 +1108,28 @@ function SituationalTable({
       </div>
       <p className="mt-1 text-xs text-content-muted">
         <strong>RISP</strong> = runner on 2nd or 3rd at start of PA.
-        {" "}<strong>RISP, 2 out</strong> = the same with two outs (the
-        last-out RBI chance). <strong>Late &amp; Close</strong> = 7th
-        inning or later with the tying run on base, at the plate, or on
-        deck.{" "}
+        {" "}<strong>RISP, 2 out</strong> = the same with two outs
+        (the last-out RBI chance).{" "}
+        <strong>Late &amp; Close</strong> = 7th inning or later with
+        the tying run on base, at the plate, or on deck.{" "}
+        <strong>Bases empty</strong> / <strong>Bases loaded</strong>{" "}
+        are leverage anchors — empty is the low-leverage baseline,
+        loaded is the max-RBI chance.{" "}
         {side === "batter" ? (
           <>
-            OPS in a split row is colored emerald when it beats the
-            &ldquo;All&rdquo; baseline by ≥25 points, rose when it
-            lags by ≥25 — clutch hitters reach for the ball.
+            <strong>vs LHP / vs RHP</strong> read off the opposing
+            pitcher&apos;s throwing hand. OPS in a split row is
+            colored emerald when it beats the &ldquo;All&rdquo;
+            baseline by ≥25 points, rose when it lags by ≥25 —
+            clutch hitters reach for the ball.
           </>
         ) : (
           <>
-            Slash columns reflect what the pitcher{" "}
-            <em>allowed</em>; OPS-allowed in a split row is colored
-            emerald when it&apos;s ≥25 points{" "}
+            <strong>vs LHB / vs RHB</strong> read off the effective
+            batter hand — switch-hitters resolve to the opposite of
+            this pitcher&apos;s throwing hand. Slash columns reflect
+            what the pitcher <em>allowed</em>; OPS-allowed in a split
+            row is colored emerald when it&apos;s ≥25 points{" "}
             <em>better</em> (lower) than the &ldquo;All&rdquo;
             baseline, rose when it&apos;s ≥25 points worse — clutch
             pitchers shrink the strike zone with runners on.

@@ -912,20 +912,27 @@ def _build_pitching_career(stints: list[dict[str, Any]]) -> PlayerCareerPitching
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Situational batting (clutch / RISP splits) — backed by f_pa_event
+# Situational splits — backed by f_pa_event + players_current
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # `f_pa_event` is the multi-year per-PA log; we filter to regular season
 # via the carried `game_type` column (=0 per `GameType.REGULAR_SEASON`).
-# The split layer is a 4-way UNION ALL within the SQL — once per split
-# label — so the row-builder gets a flat tabular result.
+# The split layer is a UNION ALL within the SQL — once per split label —
+# so the row-builder gets a flat tabular result.
 #
-# Splits:
-#   all          — every regular-season PA (parity check vs season totals).
+# Splits surfaced (8 total):
+#   all          — every regular-season PA (parity row vs season totals).
 #   risp         — `risp_flag` (runner on 2nd OR 3rd, outs<3).
 #   risp_2out    — `risp_flag` AND `outs >= 2`.
 #   late_close   — `late_close_flag` (7th+ inning AND OOTP "Close" flag —
 #                  Bref-style "Late & Close" tying-run window).
+#   bases_empty  — base1=0 AND base2=0 AND base3=0 (low-leverage baseline).
+#   bases_loaded — base1>0 AND base2>0 AND base3>0 (max-leverage RBI chance).
+#   vs_left      — opposing pitcher / batter is left-handed.
+#                  Batter side: pitcher.throws=L (vs LHP).
+#                  Pitcher side: effective batter hand = L (vs LHB), where
+#                  switch-hitters (bats=3) bat opposite the pitcher's hand.
+#   vs_right     — symmetric (vs RHP / vs RHB).
 #
 # OOTP's bare `close_flag` is intentionally unused as a split label: it
 # fires on ~80% of MLB PAs, far too permissive to mean "clutch." The
@@ -936,22 +943,57 @@ def _build_pitching_career(stints: list[dict[str, Any]]) -> PlayerCareerPitching
 # returns one (year, level, split) row per actual sample; the UI groups
 # them year-by-year.
 
-# Display order for splits — matches the natural reading order on Bref.
+# Display order — Bref-style reading order: clutch / leverage cluster
+# (risp/2-out/late&close), then bases (empty/loaded), then platoon
+# (vs L / vs R). The "all" baseline anchors at the top.
 _SITUATIONAL_SPLIT_ORDER: dict[str, int] = {
-    "all": 0,
-    "risp": 1,
-    "risp_2out": 2,
-    "late_close": 3,
+    "all":          0,
+    "risp":         1,
+    "risp_2out":    2,
+    "late_close":   3,
+    "bases_empty":  4,
+    "bases_loaded": 5,
+    "vs_left":      6,
+    "vs_right":     7,
 }
 
-_SITUATIONAL_SPLIT_LABELS: dict[str, str] = {
-    "all": "All",
-    "risp": "RISP",
-    "risp_2out": "RISP, 2 out",
-    "late_close": "Late & Close",
+# Labels shared by both sides — the leverage + bases cluster reads the
+# same regardless of audience.
+_SITUATIONAL_SPLIT_LABELS_SHARED: dict[str, str] = {
+    "all":          "All",
+    "risp":         "RISP",
+    "risp_2out":    "RISP, 2 out",
+    "late_close":   "Late & Close",
+    "bases_empty":  "Bases empty",
+    "bases_loaded": "Bases loaded",
 }
 
-# Counting-stat aggregation — same shape across all four splits, so we
+# Side-specific labels for the platoon splits — "vs LHP / vs RHP" reads
+# naturally on the batter card; "vs LHB / vs RHB" on the pitcher card.
+_SITUATIONAL_SPLIT_LABELS_BATTER: dict[str, str] = {
+    "vs_left":  "vs LHP",
+    "vs_right": "vs RHP",
+}
+_SITUATIONAL_SPLIT_LABELS_PITCHER: dict[str, str] = {
+    "vs_left":  "vs LHB",
+    "vs_right": "vs RHB",
+}
+
+
+def _split_label_for(split: str, side: str) -> str:
+    """Resolve a split id to its display label, with platoon labels
+    side-aware so the batter card says "vs LHP" and the pitcher card
+    says "vs LHB"."""
+    if split in _SITUATIONAL_SPLIT_LABELS_SHARED:
+        return _SITUATIONAL_SPLIT_LABELS_SHARED[split]
+    table = (
+        _SITUATIONAL_SPLIT_LABELS_BATTER if side == "batter"
+        else _SITUATIONAL_SPLIT_LABELS_PITCHER
+    )
+    return table.get(split, split)
+
+
+# Counting-stat aggregation — same shape across all splits, so we
 # define it once and reuse via a CTE. `result` codes per AtBatResult:
 # 1=K, 2=BB, 4=GO, 5=FO, 6=1B, 7=2B, 8=3B, 9=HR, 10=HBP, 11=CI.
 # AB = K + outs + hits, with sacrifices excluded (sac=1).
@@ -960,35 +1002,80 @@ def _situational_query(side: str) -> str:
     """Render the situational SQL for one side of the PA.
 
     ``side`` is ``"batter"`` or ``"pitcher"``. The two queries are
-    identical except for the join column on ``f_pa_event``:
-    ``batter_id`` vs ``pitcher_id``. Aggregation (PA, AB, H, slash)
-    is symmetric — for the pitcher view, the slash line reflects
-    what the player allowed.
+    identical except for (a) the join column on ``f_pa_event``
+    (``batter_id`` vs ``pitcher_id``) and (b) the platoon-split
+    filters — for the batter card "vs L/R" reads off the opposing
+    pitcher's throwing hand; for the pitcher card it reads off the
+    effective batter hand (with switch-hitters resolved against the
+    pitcher's throwing hand). Aggregation (PA, AB, H, slash) is
+    symmetric — for the pitcher view, the slash line reflects what
+    the player allowed.
     """
     if side not in ("batter", "pitcher"):
         raise ValueError(f"side must be 'batter' or 'pitcher', got {side!r}")
     join_col = "batter_id" if side == "batter" else "pitcher_id"
-    return _SITUATIONAL_QUERY_TEMPLATE.format(join_col=join_col)
+    if side == "batter":
+        # vs LHP / vs RHP — opposing pitcher's throwing hand
+        vs_left_filter = "pitcher_throw_hand = 'L'"
+        vs_right_filter = "pitcher_throw_hand = 'R'"
+    else:
+        # vs LHB / vs RHB — effective bat hand (switch-resolved)
+        vs_left_filter = "effective_bat_hand = 'L'"
+        vs_right_filter = "effective_bat_hand = 'R'"
+    return _SITUATIONAL_QUERY_TEMPLATE.format(
+        join_col=join_col,
+        vs_left_filter=vs_left_filter,
+        vs_right_filter=vs_right_filter,
+    )
 
 
+# Handedness codes per `players_current`:
+#   bats:   1=R, 2=L, 3=S(witch)
+#   throws: 1=R, 2=L  (no switch pitchers in this save's data)
+#
+# `effective_bat_hand`: hand the batter actually used in this PA. For
+# non-switch batters, their preferred bats. For switch (bats=3), the
+# opposite of the pitcher's throwing hand. NULL when handedness is
+# missing in `players_current` (rare — handles edge cases gracefully).
 _SITUATIONAL_QUERY_TEMPLATE = """
 WITH base AS (
     SELECT
         pa.year, pa.level_id,
         pa.result, pa.sac,
-        pa.risp_flag, pa.late_close_flag, pa.outs
+        pa.risp_flag, pa.late_close_flag, pa.outs,
+        pa.base1, pa.base2, pa.base3,
+        CASE p_p.throws WHEN 1 THEN 'R' WHEN 2 THEN 'L' END
+            AS pitcher_throw_hand,
+        CASE
+            WHEN p_b.bats = 1 THEN 'R'
+            WHEN p_b.bats = 2 THEN 'L'
+            WHEN p_b.bats = 3 THEN
+                CASE p_p.throws WHEN 1 THEN 'L' WHEN 2 THEN 'R' END
+        END AS effective_bat_hand
     FROM f_pa_event pa
+    LEFT JOIN players_current p_b ON p_b.player_id = pa.batter_id
+    LEFT JOIN players_current p_p ON p_p.player_id = pa.pitcher_id
     WHERE pa.{join_col} = ?
       AND pa.game_type = 0  -- regular season; matches f_player_season_*
 ),
 splits AS (
-    SELECT *, 'all' AS split FROM base
+    SELECT *, 'all' AS split          FROM base
     UNION ALL
-    SELECT *, 'risp' AS split FROM base WHERE risp_flag
+    SELECT *, 'risp' AS split         FROM base WHERE risp_flag
     UNION ALL
-    SELECT *, 'risp_2out' AS split FROM base WHERE risp_flag AND outs >= 2
+    SELECT *, 'risp_2out' AS split    FROM base WHERE risp_flag AND outs >= 2
     UNION ALL
-    SELECT *, 'late_close' AS split FROM base WHERE late_close_flag
+    SELECT *, 'late_close' AS split   FROM base WHERE late_close_flag
+    UNION ALL
+    SELECT *, 'bases_empty' AS split  FROM base
+        WHERE base1 = 0 AND base2 = 0 AND base3 = 0
+    UNION ALL
+    SELECT *, 'bases_loaded' AS split FROM base
+        WHERE base1 > 0 AND base2 > 0 AND base3 > 0
+    UNION ALL
+    SELECT *, 'vs_left' AS split      FROM base WHERE {vs_left_filter}
+    UNION ALL
+    SELECT *, 'vs_right' AS split     FROM base WHERE {vs_right_filter}
 )
 SELECT
     year, level_id, split,
@@ -1060,7 +1147,7 @@ def _fetch_situational(
                     if level_id is not None else None
                 ),
                 split=str(split),
-                split_label=_SITUATIONAL_SPLIT_LABELS.get(str(split), str(split)),
+                split_label=_split_label_for(str(split), side),
                 pa=int(pa),
                 ab=int(ab),
                 h=int(h),

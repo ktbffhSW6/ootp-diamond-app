@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: three slices in one day** — situational ("clutch / RISP") splits on the player page, multi-year `f_pa_event` (closes the prior-year coverage gap), and pitcher situational splits. (1) Batter splits: All / RISP / RISP 2-out / Late & Close per (year, level), OPS color-coded vs the All baseline. (2) Multi-year fix: the "OOTP replaces at_bats_event.csv on rollover" caveat was build-side, not storage-side — L0 retains every ingested dump's rows by `dump_date`. Rebuilt `f_pa_event` to read L0 directly with cross-dump dedup keyed on (game_id, season_year); discovered **OOTP recycles `game_id` across seasons**, so PK promoted to (year, game_id, batter_id, pa_in_game_seq). `f_pa_event` 877k → 5.1M; `f_player_season_statcast_*` 3,305 / 3,692 → 20,800 / 21,513; `f_record_player` 1,840 → 4,550. (3) Pitcher splits: same SQL template keyed on `pitcher_id`, slash reflects what the pitcher ALLOWED. UI color logic inverts — emerald when OPS-allowed beats the All baseline (lower = better in clutch), rose when it lags. Crochet 2027 RISP 2-out **.316 OPS allowed** (elite clutch); 2029 .839 (rose). **Next: port a CLI history surface** (records / awards / hof / streaks) to the `/history` tab.
+**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: four slices in one day** — situational ("clutch / RISP") splits on the player page, multi-year `f_pa_event` (closes the prior-year coverage gap), pitcher situational splits, and bases / platoon splits (extended from 4 to 8 splits per (year, level)). (1) Batter splits: All / RISP / RISP 2-out / Late & Close per (year, level), OPS color-coded vs the All baseline. (2) Multi-year fix: the "OOTP replaces at_bats_event.csv on rollover" caveat was build-side, not storage-side — L0 retains every ingested dump's rows by `dump_date`. Rebuilt `f_pa_event` to read L0 directly with cross-dump dedup keyed on (game_id, season_year); discovered **OOTP recycles `game_id` across seasons**, so PK promoted to (year, game_id, batter_id, pa_in_game_seq). `f_pa_event` 877k → 5.1M; `f_player_season_statcast_*` 3,305 / 3,692 → 20,800 / 21,513; `f_record_player` 1,840 → 4,550. (3) Pitcher splits: same SQL template keyed on `pitcher_id`, slash reflects what the pitcher ALLOWED. UI color logic inverts — emerald when OPS-allowed beats the All baseline (lower = better in clutch), rose when it lags. Crochet 2027 RISP 2-out **.316 OPS allowed** (elite clutch); 2029 .839 (rose). **Next: port a CLI history surface** (records / awards / hof / streaks) to the `/history` tab.
 
 ---
 
@@ -564,10 +564,8 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
     Mayer 2029 Late & Close .752 (emerald — slight clutch in tying-
     run windows). Crochet (pitcher) → 0 rows.
 
-    **Deferred** (after this slice):
-    - Bases empty / vs LHP / vs RHP — could mirror the same pattern.
-
     **Pitcher splits** added 2026-05-12 same day — see item 21 below.
+    **Bases / handedness splits** added same day — see item 22.
 
 20. ✅ **Multi-year `f_pa_event` via L0 cross-dump dedup** — done
     2026-05-12. The earlier "single-season only" caveat was build-
@@ -641,10 +639,50 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
     2-out .839 (rose — regression year). Position players → empty
     pitching block; pitchers → empty batting block.
 
-22. **Port a CLI history surface** *(next slice)* — drain the
+22. ✅ **Bases / handedness splits** — done 2026-05-12. Extended the
+    situational sections from 4 splits to **8**:
+    - **Bases** — `bases_empty` (low-leverage anchor) and
+      `bases_loaded` (max RBI chance, all three bags occupied).
+      Read off the `base1`/`base2`/`base3` columns already on
+      `f_pa_event`.
+    - **Platoon** — `vs_left` / `vs_right`. Side-aware labels: the
+      batter card reads "vs LHP / vs RHP" (filtered on opposing
+      pitcher's `throws`); the pitcher card reads "vs LHB / vs
+      RHB" (filtered on the *effective* batter hand). Switch-
+      hitters (`bats=3`) bat opposite the pitcher's throwing hand;
+      that resolution is in the SQL CASE expression.
+
+    Implementation:
+    - SQL: 4 new UNION ALL branches in `_SITUATIONAL_QUERY_TEMPLATE`,
+      plus two LEFT JOINs to `players_current` (one for batter, one
+      for pitcher) to derive `pitcher_throw_hand` and
+      `effective_bat_hand`. The hand-derivation CASE handles
+      switch-hitters cleanly: `bats=3` → opposite of pitcher's
+      throwing hand.
+    - Side-aware label resolution moved out of the simple dict
+      lookup into `_split_label_for(split, side)` — shared labels
+      for the leverage cluster, side-specific for the platoon split.
+    - Display order updated: leverage (risp / 2-out / late&close) →
+      bases (empty / loaded) → platoon (vs L / vs R).
+
+    Verified end-to-end:
+    - Sanity invariants hold: `bases_empty + (bases-with-runners)
+      = all`; `vs_left + vs_right = all` when handedness fully
+      populated. Devers 2029: 162 vs LHP + 474 vs RHP = 636 (=All).
+    - Switch-hitter test: Leo De Vries 2029 (697 PA, `bats=3`) →
+      184 vs LHP / 513 vs RHP, summing to 697. The hand-derivation
+      routes switch hitters correctly.
+    - Devers 2029: bases-loaded **1.418 OPS** in 15 PA (small but
+      tasty); textbook platoon — LHB does better vs RHP (.788) than
+      vs LHP (.746).
+    - Crochet 2029: vs LHB **.561 OPS allowed** (LHP-vs-LHB
+      dominance), vs RHB .697 (typical platoon disadvantage); bases
+      loaded .429 (locked in with bases full).
+
+23. **Port a CLI history surface** *(next slice)* — drain the
     `/history` stub with one of `records / awards / hof / streaks`.
     All four surfaces exist as L3 facts already; UI work only.
-23. Then the rest of the UI_DESIGN.md ladder (pressure board, salary
+24. Then the rest of the UI_DESIGN.md ladder (pressure board, salary
     stream, compare under Explore, etc.).
 
 **Open audit carry-forwards** (non-blocking, picked up opportunistically):

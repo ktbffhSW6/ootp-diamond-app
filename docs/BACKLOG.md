@@ -500,8 +500,13 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
   inverts for pitchers (lower OPS allowed in clutch = better).
   Backed by `_fetch_situational(con, player_id, side)` — same SQL
   template, ``side ∈ {"batter", "pitcher"}`` selects the join
-  column. Multi-year coverage as of same day (see "f_pa_event
-  multi-year" below). Bases-empty / vs LHP / vs RHP cuts deferred.
+  column. Multi-year coverage as of same day. **Splits extended
+  same day from 4 to 8**: added `bases_empty` / `bases_loaded`
+  (off `base1/2/3` cols) and `vs_left` / `vs_right` (LEFT JOIN to
+  `players_current` for handedness; switch-hitters resolve to the
+  opposite of the pitcher's throwing hand). Side-aware labels —
+  batter card reads "vs LHP / vs RHP", pitcher card "vs LHB /
+  vs RHB".
 - [ ] **Pressure board** — companion to the movement ledger. For each
   level, players mashing relative to the level median vs. players
   struggling at the next level up. The "who *should* move" view.

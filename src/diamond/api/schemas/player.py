@@ -506,14 +506,26 @@ class PlayerSituationalRow(BaseModel):
       Slash line is what the player ALLOWED. Lower OPS in clutch = good
       (the UI inverts the color hint accordingly).
 
-    Splits cover the canonical "clutch" cuts:
+    Splits cover the canonical clutch / leverage / platoon cuts:
 
-    - ``all``         — every regular-season PA (parity row vs the
+    - ``all``          — every regular-season PA (parity row vs the
       regular batting/pitching season totals).
-    - ``risp``        — runner on 2nd OR 3rd at start of PA (`risp_flag`).
-    - ``risp_2out``   — RISP AND outs ≥ 2 (the highest-leverage RBI chance).
-    - ``late_close``  — 7th inning or later AND OOTP `Close` flag (Bref-style
+    - ``risp``         — runner on 2nd OR 3rd at start of PA (`risp_flag`).
+    - ``risp_2out``    — RISP AND outs ≥ 2 (the highest-leverage RBI chance).
+    - ``late_close``   — 7th inning or later AND OOTP `Close` flag (Bref-style
       "Late & Close": tying / go-ahead run on / at-bat / on-deck).
+    - ``bases_empty``  — base1=base2=base3=0 (low-leverage baseline).
+    - ``bases_loaded`` — base1>0 AND base2>0 AND base3>0 (max RBI chance).
+    - ``vs_left``      — opposing pitcher (batter view: `vs LHP`) or
+      opposing batter (pitcher view: `vs LHB`) is left-handed.
+      Switch-hitters resolve to the opposite of the pitcher's
+      throwing hand for the pitcher view.
+    - ``vs_right``     — symmetric (vs RHP / vs RHB).
+
+    Sanity invariants (verified live): bases_empty + (bases-with-runners)
+    = all; vs_left + vs_right = all when handedness is fully populated
+    (rare missing-handedness rows would land as null effective hand and
+    be excluded from both vs_left and vs_right).
 
     Slash line is computed server-side so the frontend doesn't have to
     re-derive it. ``split_label`` is the display string ("RISP, 2 out" /
