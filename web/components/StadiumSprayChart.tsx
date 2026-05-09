@@ -8,22 +8,34 @@
 // estimated distance via projectile physics with drag (lib/stadiums).
 // Dots are colored by outcome (out muted / hit saturated / HR loud).
 //
-// Stadium dimensions are hand-coded for all 30 MLB parks (lib/stadiums)
-// from official wall distances. Renderer draws:
+// Stadium dimensions can come from two sources, in priority order:
+//   1. **OOTP-canonical** via the `parksApi` prop (D29 Slice C). The
+//      `lref_pt_ballparks` ingest layer (OOTP's own `pt_ballparks.txt`)
+//      provides 7-segment outfield geometry per park; we map those to
+//      the 5-point spline this renderer uses (lf_line→ll_d, lcf→lcf_d,
+//      cf→cf_d, rcf→rcf_d, rf_line→rl_d) and walls heights to lf/cf/rf.
+//      Match by `team_id_br` against the hand-coded `team_abbr`. Falls
+//      back to the hand-coded value if a park is missing from the API.
+//   2. **Hand-coded** (`web/lib/stadiums.ts`). The 30 MLB parks have
+//      authored geometry + feature flair (Green Monster, ivy, splash
+//      hits, etc.) — we keep this for visual richness even when API
+//      data is present. Parks beyond MLB (240 in `lref_pt_ballparks`)
+//      surface only via the API path.
+//
+// Renderer draws:
 //   - Foul lines from home plate to LF / RF foul poles
 //   - Outfield wall as a Catmull-Rom spline through 5 anchor points
 //     (LF / LCF / CF / RCF / RF)
 //   - Outfield grass + infield dirt fills
 //   - Wall-height annotations at LF / CF / RF
-//   - Park-specific feature flair: Green Monster (extra-thick LF
-//     segment + label), Yankees short porch (notched RF wall),
-//     Wrigley ivy (textured fill), Oracle splash hits (cove behind
-//     RF), Daikin train (CF rail), retractable-dome label
+//   - Park-specific feature flair (hand-coded only): Green Monster,
+//     Yankees short porch, Wrigley ivy, Oracle splash hits, Daikin
+//     train, retractable-dome label
 //
 // Coordinate system: home plate at (0, 0); +y to CF; +x to RF.
 // SVG flips y so home plate sits at the bottom of the viewBox.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   DEFAULT_STADIUM,
@@ -32,7 +44,7 @@ import {
   MLB_STADIUMS,
   type Stadium,
 } from "@/lib/stadiums";
-import type { BattedBallEvent } from "@/lib/types/api";
+import type { BattedBallEvent, ParksResponse } from "@/lib/types/api";
 
 // Result-code → label / color (out muted, hit saturated, HR loud).
 const RESULT_LABELS: Record<number, string> = {
@@ -65,6 +77,37 @@ interface Props {
   handedness: "L" | "R" | "S";
   defaultStadium?: string;
   pickerEnabled?: boolean;
+  // OOTP-canonical park catalog from /api/parks. When present, API
+  // geometry replaces hand-coded distances/wall-heights for any team
+  // whose `team_id_br` matches a hand-coded `team_abbr`. The hand-coded
+  // `feature` (Green Monster / ivy / splash-hits / etc.) is preserved.
+  parksApi?: ParksResponse | null;
+}
+
+// Adapter: build a 5-point Stadium from a 7-segment Park (D29 Slice C).
+// Returns null if the API doesn't carry usable geometry — the caller
+// falls back to the hand-coded entry.
+function stadiumFromApi(
+  park: ParksResponse["parks"][number] | undefined,
+  base: Stadium,
+): Stadium | null {
+  if (!park) return null;
+  const d = park.dimensions;
+  if (d.ll_d == null || d.cf_d == null || d.rl_d == null) {
+    // No usable distances — fall back to hand-coded.
+    return null;
+  }
+  return {
+    ...base,
+    lf_line: d.ll_d ?? base.lf_line,
+    lcf: d.lcf_d ?? d.lf_d ?? base.lcf,
+    cf: d.cf_d ?? base.cf,
+    rcf: d.rcf_d ?? d.rf_d ?? base.rcf,
+    rf_line: d.rl_d ?? base.rf_line,
+    lf_wall_h: d.ll_h ?? d.lf_h ?? base.lf_wall_h,
+    cf_wall_h: d.cf_h ?? base.cf_wall_h,
+    rf_wall_h: d.rl_h ?? d.rf_h ?? base.rf_wall_h,
+  };
 }
 
 export function StadiumSprayChart({
@@ -72,10 +115,28 @@ export function StadiumSprayChart({
   handedness,
   defaultStadium = DEFAULT_STADIUM,
   pickerEnabled = true,
+  parksApi = null,
 }: Props) {
   const [stadiumKey, setStadiumKey] = useState(defaultStadium);
   const [showOuts, setShowOuts] = useState(true);
-  const stadium = MLB_STADIUMS[stadiumKey] ?? MLB_STADIUMS[DEFAULT_STADIUM];
+
+  // Merge API geometry over hand-coded for the 30 MLB parks. Computed
+  // once per `parksApi` reference; the API payload is shape-stable.
+  const mergedStadiums = useMemo<Record<string, Stadium>>(() => {
+    if (!parksApi) return MLB_STADIUMS;
+    const apiByAbbr = new Map<string, ParksResponse["parks"][number]>();
+    for (const p of parksApi.parks) {
+      if (p.team_id_br) apiByAbbr.set(p.team_id_br.toUpperCase(), p);
+    }
+    const merged: Record<string, Stadium> = {};
+    for (const [key, base] of Object.entries(MLB_STADIUMS)) {
+      const fromApi = stadiumFromApi(apiByAbbr.get(key), base);
+      merged[key] = fromApi ?? base;
+    }
+    return merged;
+  }, [parksApi]);
+
+  const stadium = mergedStadiums[stadiumKey] ?? mergedStadiums[DEFAULT_STADIUM];
 
   // Compute (x, y) coords in baseball feet for each BIP, then convert
   // to SVG coords once. Filter to in-arc events; outliers (hit_xy >
@@ -125,7 +186,7 @@ export function StadiumSprayChart({
               onChange={(e) => setStadiumKey(e.target.value)}
               className="rounded border border-border bg-surface-page px-3 py-1.5 text-sm text-content-primary"
             >
-              {Object.values(MLB_STADIUMS)
+              {Object.values(mergedStadiums)
                 .sort((a, b) => a.name.localeCompare(b.name))
                 .map((s) => (
                   <option key={s.team_abbr} value={s.team_abbr}>

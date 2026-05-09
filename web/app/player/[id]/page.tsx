@@ -31,7 +31,7 @@ import { PlayerStatsTab } from "@/components/PlayerStatsTab";
 import { PlayerTabNav, type PlayerTab } from "@/components/PlayerTabNav";
 import { StadiumSprayChart } from "@/components/StadiumSprayChart";
 import { TeamLogo } from "@/components/TeamLogo";
-import { getBattedBalls, getGlossary, getPlayer, getSave } from "@/lib/api";
+import { getBattedBalls, getGlossary, getParks, getPlayer, getSave } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -80,9 +80,9 @@ export default async function PlayerPage({ params, searchParams }: Props) {
   // dictionary). batted_balls populates the inline Spray + EV-LA
   // sections (gated on bip_count > 0). save metadata gives us the
   // user's home park abbr for the stadium-overlay default.
-  let player, glossary, battedBalls, save;
+  let player, glossary, battedBalls, save, parks;
   try {
-    [player, glossary, battedBalls, save] = await Promise.all([
+    [player, glossary, battedBalls, save, parks] = await Promise.all([
       getPlayer(playerId),
       getGlossary(),
       // Don't fail the whole page if batted_balls 404s — defensive,
@@ -91,6 +91,10 @@ export default async function PlayerPage({ params, searchParams }: Props) {
       // shape and gates the section render below.
       getBattedBalls({ playerId, levelId: 1 }).catch(() => null),
       getSave().catch(() => null),
+      // Park catalog (D29 Slice C) — feeds StadiumSprayChart's
+      // OOTP-canonical geometry path. Tolerant of failure: hand-coded
+      // dimensions still render the chart correctly without it.
+      getParks().catch(() => null),
     ]);
   } catch (err) {
     if (err instanceof Error && err.message.includes("404")) {
@@ -329,6 +333,7 @@ export default async function PlayerPage({ params, searchParams }: Props) {
                 bio.bats === 2 ? "L" : bio.bats === 3 ? "S" : "R"
               }
               defaultStadium={save?.org_team_abbr ?? "BOS"}
+              parksApi={parks}
             />
           </section>
 

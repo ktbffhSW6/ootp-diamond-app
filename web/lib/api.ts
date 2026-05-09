@@ -33,6 +33,7 @@ import type {
   LeaderboardOptionsResponse,
   LeaderboardResponse,
   MovementsResponse,
+  ParksResponse,
   PlayerResponse,
   PressureResponse,
   RecordsResponse,
@@ -320,6 +321,15 @@ export async function getCompare(ids: number[]): Promise<CompareResponse> {
   return fetchJson<CompareResponse>(
     `/api/compare?ids=${encodeURIComponent(idStr)}`,
   );
+}
+
+// Parks (D29 Slice 6 data layer). Returns OOTP's full ballpark
+// catalog from `lref_pt_ballparks` — 240 modern parks with 7-segment
+// outfield geometry + LH/RH split factors. Primary consumer: the
+// player page's StadiumSprayChart, which uses team_id_br → park
+// matching to render against authoritative OOTP geometry.
+export async function getParks(): Promise<ParksResponse> {
+  return fetchJson<ParksResponse>("/api/parks");
 }
 
 // AI overlay (D14). Settings GET/POST manage provider / model /
