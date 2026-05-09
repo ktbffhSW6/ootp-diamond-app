@@ -140,6 +140,7 @@ class CockpitSpotlightCard(BaseModel):
     display_name: str
     position: int  # 1-9 = P-RF
     role: CockpitSpotlightRole
+    team_id: int | None  # for TeamLogo lookup
     team_abbr: str | None
 
     # Current-year headline

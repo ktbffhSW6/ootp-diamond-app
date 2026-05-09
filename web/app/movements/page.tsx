@@ -19,6 +19,7 @@
 
 import Link from "next/link";
 
+import { TeamLogo } from "@/components/TeamLogo";
 import { getMovements } from "@/lib/api";
 import type {
   MovementBattingStats,
@@ -67,34 +68,89 @@ function fmtPitLine(s: MovementPitchingStats | null): string {
   return `${era} · ${ip} IP`;
 }
 
-function fmtMoveArrow(row: MovementRow): string {
+function MoveArrow({ row }: { row: MovementRow }) {
   // Three shapes depending on direction:
   //   - internal (promotion/demotion): "MLB → AAA Worcester" — leading
   //     anchor is the level so the up/down step reads at a glance.
   //   - incoming acquisition: "CLE → MLB" / "FA → AAA Worcester" —
   //     leading anchor is the prior team or "FA" for signings.
   //   - outgoing departure: "MLB → CLE" / "MLB → FA" — leading anchor
-  //     is *our* level (where they came from in our org); destination
-  //     is the other team's abbr or "FA" for releases.
-  const toLvl = row.to_team.level_name ?? "?";
-  const toName = row.to_team.nickname ?? row.to_team.abbr ?? "";
-  const toLabel = `${toLvl}${toName ? ` ${toName}` : ""}`;
+  //     is *our* level; destination is the other team's abbr.
+  //
+  // Slice B: render real OOTP logos on either side of the arrow when
+  // both teams have a team_id; fall back to text-only otherwise.
+  const Sep = () => <span className="text-content-muted">→</span>;
+  const FA = () => (
+    <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+      FA
+    </span>
+  );
 
   if (row.direction === "internal") {
-    const fromLvl = row.from_team.level_name ?? "?";
-    return `${fromLvl} → ${toLabel}`;
+    return (
+      <div className="flex items-center gap-1.5">
+        <TeamLogo teamId={row.from_team.team_id} abbr={row.from_team.abbr} size="sm" />
+        <span className="text-content-secondary">{row.from_team.level_name ?? "?"}</span>
+        <Sep />
+        <TeamLogo teamId={row.to_team.team_id} abbr={row.to_team.abbr} size="sm" />
+        <span className="text-content-secondary">
+          {row.to_team.level_name ?? "?"}
+          {row.to_team.nickname ? ` ${row.to_team.nickname}` : ""}
+        </span>
+      </div>
+    );
   }
   if (row.direction === "incoming") {
-    if (row.movement_type === "signed") return `FA → ${toLabel}`;
-    const fromAbbr = row.from_team.abbr ?? row.from_team.level_name ?? "?";
-    return `${fromAbbr} → ${toLabel}`;
+    if (row.movement_type === "signed") {
+      return (
+        <div className="flex items-center gap-1.5">
+          <FA />
+          <Sep />
+          <TeamLogo teamId={row.to_team.team_id} abbr={row.to_team.abbr} size="sm" />
+          <span className="text-content-secondary">
+            {row.to_team.level_name ?? "?"}
+            {row.to_team.nickname ? ` ${row.to_team.nickname}` : ""}
+          </span>
+        </div>
+      );
+    }
+    return (
+      <div className="flex items-center gap-1.5">
+        <TeamLogo teamId={row.from_team.team_id} abbr={row.from_team.abbr} size="sm" />
+        <span className="text-content-secondary">
+          {row.from_team.abbr ?? row.from_team.level_name ?? "?"}
+        </span>
+        <Sep />
+        <TeamLogo teamId={row.to_team.team_id} abbr={row.to_team.abbr} size="sm" />
+        <span className="text-content-secondary">
+          {row.to_team.level_name ?? "?"}
+          {row.to_team.nickname ? ` ${row.to_team.nickname}` : ""}
+        </span>
+      </div>
+    );
   }
   // outgoing — the "from" is our team, the "to" is wherever they went
-  const fromLvl = row.from_team.level_name ?? "?";
-  if (row.movement_type === "released") return `${fromLvl} → FA`;
-  // trade-out / waiver-out — to_team is the destination org's team
-  const dest = row.to_team.abbr ?? row.to_team.nickname ?? "?";
-  return `${fromLvl} → ${dest}`;
+  if (row.movement_type === "released") {
+    return (
+      <div className="flex items-center gap-1.5">
+        <TeamLogo teamId={row.from_team.team_id} abbr={row.from_team.abbr} size="sm" />
+        <span className="text-content-secondary">{row.from_team.level_name ?? "?"}</span>
+        <Sep />
+        <FA />
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-1.5">
+      <TeamLogo teamId={row.from_team.team_id} abbr={row.from_team.abbr} size="sm" />
+      <span className="text-content-secondary">{row.from_team.level_name ?? "?"}</span>
+      <Sep />
+      <TeamLogo teamId={row.to_team.team_id} abbr={row.to_team.abbr} size="sm" />
+      <span className="text-content-secondary">
+        {row.to_team.abbr ?? row.to_team.nickname ?? "?"}
+      </span>
+    </div>
+  );
 }
 
 // Move-type badges. Each accent color carries `dark:` overrides so it
@@ -263,7 +319,7 @@ function Row({ row }: { row: MovementRow }) {
       <td className="px-3 py-2 align-top whitespace-nowrap">
         <div className="flex items-center gap-2 text-sm">
           {moveBadge}
-          <span className="text-content-secondary">{fmtMoveArrow(row)}</span>
+          <MoveArrow row={row} />
         </div>
       </td>
       <td className="px-3 py-2 align-top font-mono text-xs text-content-secondary whitespace-nowrap">

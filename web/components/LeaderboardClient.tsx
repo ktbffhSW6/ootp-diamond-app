@@ -23,6 +23,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
+import { TeamLogo } from "@/components/TeamLogo";
 import { plusMinusClass, warSeasonClass } from "@/lib/heatscale";
 import type {
   LeaderboardOption,
@@ -121,12 +122,18 @@ export function LeaderboardClient({ options, initial, initialPaMin }: Props) {
       {
         accessorKey: "team_abbr",
         header: "Team",
-        cell: (c) => (
-          <span className="text-content-secondary">
-            {c.getValue<string | null>() ?? "—"}
-          </span>
-        ),
-        size: 60,
+        cell: (c) => {
+          const row = c.row.original;
+          return (
+            <div className="flex items-center gap-1.5">
+              <TeamLogo teamId={row.team_id} abbr={row.team_abbr} size="sm" />
+              <span className="text-content-secondary">
+                {row.team_abbr ?? "—"}
+              </span>
+            </div>
+          );
+        },
+        size: 80,
       },
       {
         accessorKey: "value",

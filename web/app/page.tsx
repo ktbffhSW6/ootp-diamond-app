@@ -15,6 +15,7 @@ import Link from "next/link";
 
 import { PlayerAvatar } from "@/components/PlayerAvatar";
 import { Sparkline } from "@/components/Sparkline";
+import { TeamLogo } from "@/components/TeamLogo";
 import { plusMinusClass } from "@/lib/heatscale";
 import { getCockpit, getSave } from "@/lib/api";
 import type {
@@ -135,7 +136,8 @@ function StandingsRow({ row }: { row: CockpitStandingsRow }) {
   return (
     <tr className={`${orgRowClass} border-t border-border`}>
       <td className="px-3 py-1.5 align-middle">
-        <div className="flex items-baseline gap-2">
+        <div className="flex items-center gap-2">
+          <TeamLogo teamId={row.team_id} abbr={row.abbr} size="md" />
           <span className="font-mono text-xs text-content-muted">
             {row.abbr ?? "—"}
           </span>
@@ -230,6 +232,7 @@ function SpotlightCard({ card }: { card: CockpitSpotlightCard }) {
         <h3 className="flex-1 truncate text-sm font-semibold text-content-primary">
           {card.display_name}
         </h3>
+        <TeamLogo teamId={card.team_id} abbr={card.team_abbr} size="sm" />
         <span className="font-mono text-[10px] text-content-muted">
           {card.team_abbr ?? "—"}
         </span>

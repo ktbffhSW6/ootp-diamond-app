@@ -334,6 +334,7 @@ export interface CockpitSpotlightCard {
   display_name: string;
   position: number;
   role: "batter" | "pitcher" | "two-way";
+  team_id: number | null;
   team_abbr: string | null;
   headline_metric_label: string;
   headline_metric_value: number;

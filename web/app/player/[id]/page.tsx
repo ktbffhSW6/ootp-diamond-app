@@ -30,6 +30,7 @@ import { PlayerContractCard } from "@/components/PlayerContractCard";
 import { PlayerStatsTab } from "@/components/PlayerStatsTab";
 import { PlayerTabNav, type PlayerTab } from "@/components/PlayerTabNav";
 import { StadiumSprayChart } from "@/components/StadiumSprayChart";
+import { TeamLogo } from "@/components/TeamLogo";
 import { getBattedBalls, getGlossary, getPlayer, getSave } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
@@ -143,8 +144,13 @@ export default async function PlayerPage({ params, searchParams }: Props) {
           </h1>
           <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm text-content-secondary">
             {bio.current_team && (
-              <div>
+              <div className="flex items-center gap-2">
                 <dt className="inline text-content-muted">Team:</dt>{" "}
+                <TeamLogo
+                  teamId={bio.current_team.team_id}
+                  abbr={bio.current_team.abbr}
+                  size="md"
+                />
                 <dd className="inline">
                   <span className="font-mono text-content-primary">
                     {bio.current_team.abbr}

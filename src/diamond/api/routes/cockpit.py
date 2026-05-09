@@ -322,7 +322,7 @@ SELECT
     pc.position,
     c.role, c.role_count,
     c.level_id, c.metric, c.sample_n, c.total_war,
-    t.abbr AS team_abbr
+    pc.team_id, t.abbr AS team_abbr
 FROM collapsed c
 JOIN players_current pc USING (player_id)
 LEFT JOIN teams t ON t.team_id = pc.team_id
@@ -397,7 +397,7 @@ def _fetch_spotlight(
     out: list[CockpitSpotlightCard] = []
     for r in rank_rows:
         (player_id, display_name, position, role, role_count,
-         _level_id, metric, sample_n, war_current, team_abbr) = r
+         _level_id, metric, sample_n, war_current, team_id, team_abbr) = r
         # Career arc — full WAR series across all years
         career_rows = con.execute(
             _CAREER_WAR_SQL, [player_id, player_id]
@@ -482,6 +482,7 @@ def _fetch_spotlight(
                 display_name=display_name,
                 position=int(position) if position is not None else 0,
                 role=ui_role,  # type: ignore[arg-type]
+                team_id=int(team_id) if team_id is not None else None,
                 team_abbr=team_abbr,
                 headline_metric_label=metric_label,
                 headline_metric_value=int(metric) if metric is not None else 0,

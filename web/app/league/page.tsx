@@ -15,6 +15,7 @@
 
 import Link from "next/link";
 
+import { TeamLogo } from "@/components/TeamLogo";
 import { getStandings } from "@/lib/api";
 import type {
   StandingsLeagueRef,
@@ -198,7 +199,8 @@ function TeamRow({ row }: { row: StandingsTeamRow }) {
         {row.pos > 0 ? row.pos : ""}
       </td>
       <td className="px-3 py-1.5 align-middle">
-        <div className="flex items-baseline gap-2">
+        <div className="flex items-center gap-2">
+          <TeamLogo teamId={row.team_id} abbr={row.abbr} size="md" />
           <span className="font-mono text-xs text-content-muted">
             {row.abbr ?? "—"}
           </span>
