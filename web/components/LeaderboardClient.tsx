@@ -87,7 +87,7 @@ export function LeaderboardClient({ options, initial, initialPaMin }: Props) {
       }
     }
     startTransition(() => {
-      router.replace(`/explore/leaderboards?${next.toString()}`);
+      router.replace(`/league/leaderboards?${next.toString()}`);
     });
   }
 

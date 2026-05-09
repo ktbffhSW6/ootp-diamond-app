@@ -403,42 +403,76 @@ export default async function LeaguePage({
         </div>
       )}
 
-      {/* Other planned /league content — kept visible as stubs so the IA
-          stays scannable. When each ships, replace its row here. */}
+      {/* Other /league content — leaderboards + compare are live as
+          of 2026-05-13; awards races + FA pool stay stubs until they
+          ship. */}
       <section className="space-y-3 border-t border-border pt-6">
         <h2 className="text-lg font-semibold text-content-primary">
-          Coming to League
+          More in League
         </h2>
-        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
             {
               title: "Leaderboards",
-              blurb: "Curated league leaders by stat category.",
+              status: "live" as const,
+              href: "/league/leaderboards",
+              blurb:
+                "Single-stat ranked lists, 32 stats across batting / pitching / Statcast. URL-driven picker, TanStack Table sort.",
+            },
+            {
+              title: "Compare",
+              status: "live" as const,
+              href: "/league/compare",
+              blurb:
+                "Side-by-side career stat blocks for ≤4 players + WAR sparklines. Cross-era is fair game (D20 baselines).",
             },
             {
               title: "Awards races",
-              blurb: "MVP / Cy Young / ROY frontrunners with stat context.",
+              status: "soon" as const,
+              blurb:
+                "MVP / Cy Young / ROY frontrunners with stat context.",
             },
             {
               title: "Free agent pool",
-              blurb: "Unsigned players + last team + recent performance.",
+              status: "soon" as const,
+              blurb:
+                "Unsigned players + last team + recent performance.",
             },
-          ].map((s) => (
-            <li
-              key={s.title}
-              className="rounded-md border border-border bg-surface-card p-3 opacity-60"
-            >
-              <div className="flex items-baseline gap-2">
-                <h3 className="text-sm font-semibold text-content-primary">
-                  {s.title}
-                </h3>
-                <span className="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-content-muted">
-                  Soon
-                </span>
+          ].map((s) => {
+            const card = (
+              <div className={s.status === "live" ? "" : "opacity-60"}>
+                <div className="flex items-baseline gap-2">
+                  <h3 className="text-sm font-semibold text-content-primary">
+                    {s.title}
+                  </h3>
+                  {s.status === "live" ? (
+                    <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-700 dark:bg-emerald-500/25 dark:text-emerald-300">
+                      Live
+                    </span>
+                  ) : (
+                    <span className="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-content-muted">
+                      Soon
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-content-secondary">{s.blurb}</p>
               </div>
-              <p className="mt-1 text-xs text-content-secondary">{s.blurb}</p>
-            </li>
-          ))}
+            );
+            return (
+              <li
+                key={s.title}
+                className="rounded-md border border-border bg-surface-card p-3"
+              >
+                {s.status === "live" && s.href ? (
+                  <Link href={s.href} className="block hover:opacity-80">
+                    {card}
+                  </Link>
+                ) : (
+                  card
+                )}
+              </li>
+            );
+          })}
         </ul>
       </section>
 

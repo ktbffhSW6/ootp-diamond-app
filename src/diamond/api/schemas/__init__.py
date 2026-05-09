@@ -31,6 +31,10 @@ from diamond.api.schemas.awards import (
     AwardsResponse,
 )
 from diamond.api.schemas.batted_balls import BattedBallEvent, BattedBallsResponse
+from diamond.api.schemas.chart_builder import (
+    ChartBuilderPoint,
+    ChartBuilderResponse,
+)
 from diamond.api.schemas.compare import ComparePlayer, CompareResponse
 from diamond.api.schemas.cockpit import (
     CockpitMovementRow,
@@ -132,6 +136,8 @@ __all__ = [
     "AwardsResponse",
     "BattedBallEvent",
     "BattedBallsResponse",
+    "ChartBuilderPoint",
+    "ChartBuilderResponse",
     "CockpitMovementRow",
     "CockpitPressureRow",
     "CockpitPressureSummary",

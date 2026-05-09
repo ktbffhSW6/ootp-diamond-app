@@ -11,6 +11,46 @@ const nextConfig = {
   // Per D16: Diamond is local-first, no SSR-on-Vercel trick needed yet.
   // Leaving server-component fetches as the data path — they hit the
   // FastAPI backend over localhost during dev.
+  //
+  // 2026-05-13 IA shuffle: /explore is now JUST the Chart Builder.
+  // Per-player charts (spray, EV/LA) live inline on the player page;
+  // league-wide tools (leaderboards, compare) moved under /league.
+  // Permanent redirects so any external links / browser history /
+  // copy-pasted deep-links keep working.
+  async redirects() {
+    return [
+      // Per-player charts moved to inline sections on /player/[id].
+      // Old `?player=ID` deep-links collapse to the player page; without
+      // a player param we can't do anything useful, so land on /league
+      // (where the Compare card surfaces three demo player IDs).
+      {
+        source: "/explore/spray",
+        has: [{ type: "query", key: "player", value: "(?<id>\\d+)" }],
+        destination: "/player/:id",
+        permanent: true,
+      },
+      {
+        source: "/explore/ev-la",
+        has: [{ type: "query", key: "player", value: "(?<id>\\d+)" }],
+        destination: "/player/:id",
+        permanent: true,
+      },
+      { source: "/explore/spray", destination: "/league", permanent: true },
+      { source: "/explore/ev-la", destination: "/league", permanent: true },
+
+      // League-wide tools moved to /league/*.
+      {
+        source: "/explore/leaderboards",
+        destination: "/league/leaderboards",
+        permanent: true,
+      },
+      {
+        source: "/explore/compare",
+        destination: "/league/compare",
+        permanent: true,
+      },
+    ];
+  },
 };
 
 export default nextConfig;

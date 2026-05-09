@@ -47,8 +47,11 @@ export default async function LeaderboardsPage(
   return (
     <main className="mx-auto max-w-7xl px-6 py-8">
       <header className="mb-6">
+        <p className="text-xs uppercase tracking-wide text-content-muted">
+          League
+        </p>
         <h1 className="text-2xl font-bold text-content-primary">
-          Custom leaderboards
+          Leaderboards
         </h1>
         <p className="mt-1 text-sm text-content-secondary">
           Pick a stat + filters, click any column header to re-sort. 32

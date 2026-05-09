@@ -14,10 +14,12 @@ import { notFound } from "next/navigation";
 
 import { AISummarizeButton } from "@/components/AISummarizeButton";
 import { CareerArc } from "@/components/CareerArc";
+import { EvLaScatter } from "@/components/EvLaScatter";
 import { PlayerAvatar } from "@/components/PlayerAvatar";
 import { PlayerContractCard } from "@/components/PlayerContractCard";
 import { PlayerStatsTab } from "@/components/PlayerStatsTab";
-import { getGlossary, getPlayer } from "@/lib/api";
+import { SprayChart } from "@/components/SprayChart";
+import { getBattedBalls, getGlossary, getPlayer } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -48,12 +50,20 @@ export default async function PlayerPage({ params }: Props) {
 
   // Fetch in parallel — glossary supplies column-header tooltips
   // (per D15 maintenance contract: every UI label comes from the
-  // dictionary). The cost of the extra fetch is trivial on localhost.
-  let player, glossary;
+  // dictionary). batted_balls populates the inline Spray + EV-LA
+  // sections (gated on bip_count > 0). All three fetches are cheap
+  // on localhost — the player route is the canonical single-payload
+  // route and glossary is static.
+  let player, glossary, battedBalls;
   try {
-    [player, glossary] = await Promise.all([
+    [player, glossary, battedBalls] = await Promise.all([
       getPlayer(playerId),
       getGlossary(),
+      // Don't fail the whole page if batted_balls 404s — defensive,
+      // since most players (especially pitchers / non-MLB call-ups)
+      // have an empty BIP set at MLB. Empty rows[] is the normal
+      // shape and gates the section render below.
+      getBattedBalls({ playerId, levelId: 1 }).catch(() => null),
     ]);
   } catch (err) {
     if (err instanceof Error && err.message.includes("404")) {
@@ -260,26 +270,14 @@ export default async function PlayerPage({ params }: Props) {
           retirees, FAs). */}
       {player.contract && <PlayerContractCard contract={player.contract} />}
 
-      {/* Tab strip — only Stats is wired in v1. Charts cross-link to
-          /explore/spray and /explore/ev-la for batters; the link drops
-          if the player has no MLB BIP data. Other labels stay
-          placeholders. */}
+      {/* Tab strip — Stats is the only wired tab in v1. The Charts
+          modules (spray, EV-LA) live as inline sections below Stats
+          rather than as cross-linked tabs — they're per-player views,
+          not Explore destinations. Other labels stay placeholders. */}
       <nav className="flex flex-wrap items-center gap-1 border-b border-border text-sm">
         <span className="border-b-2 border-content-primary px-3 py-1.5 font-semibold text-content-primary">
           Stats
         </span>
-        <Link
-          href={`/explore/spray?player=${player.bio.player_id}`}
-          className="px-3 py-1.5 text-content-secondary hover:text-content-primary"
-        >
-          Spray ↗
-        </Link>
-        <Link
-          href={`/explore/ev-la?player=${player.bio.player_id}`}
-          className="px-3 py-1.5 text-content-secondary hover:text-content-primary"
-        >
-          EV / LA ↗
-        </Link>
         {["Game log", "Comparisons", "Scouting", "Contract"].map((label) => (
           <span
             key={label}
@@ -292,6 +290,44 @@ export default async function PlayerPage({ params }: Props) {
       </nav>
 
       <PlayerStatsTab player={player} glossary={glossary} />
+
+      {/* Batted-ball charts — render inline when the player has BIP at
+          MLB. Both views read the same one-(player, year, level)
+          payload so we only fetch once. Pitchers + non-MLB-call-ups
+          drop these sections gracefully (empty rows[]). */}
+      {battedBalls && battedBalls.bip_count > 0 && (
+        <>
+          <section>
+            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-content-secondary">
+              Spray · {battedBalls.year} MLB · {battedBalls.bip_count} BIP
+            </h2>
+            <p className="mb-3 text-xs text-content-muted">
+              Spray angle is OOTP&apos;s 1D `hit_xy` (0 = pull-side foul
+              line, 130 = oppo). Wedge radius is BIP volume; outs muted,
+              hits saturated, HR loud. Pull side flips with batter
+              handedness ({bio.bats_throws}).
+            </p>
+            <SprayChart
+              rows={battedBalls.rows}
+              handedness={
+                bio.bats === 2 ? "L" : bio.bats === 3 ? "S" : "R"
+              }
+            />
+          </section>
+
+          <section>
+            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-content-secondary">
+              EV / LA · {battedBalls.year} MLB
+            </h2>
+            <p className="mb-3 text-xs text-content-muted">
+              Sweet-spot band (blue) = LA 8–32°. Barrel zone (orange) =
+              EV ≥ 93 mph + LA 22–38° — calibrated for OOTP&apos;s ~5
+              mph offset from real Statcast.
+            </p>
+            <EvLaScatter rows={battedBalls.rows} />
+          </section>
+        </>
+      )}
 
       {/* AI summary — opt-in per click. Renders disabled state when no
           key is set (with a deep-link to /settings/ai). */}

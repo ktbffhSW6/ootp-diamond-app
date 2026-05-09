@@ -29,6 +29,7 @@ from diamond.api.routes import (
     ai,
     awards,
     batted_balls,
+    chart_builder,
     cockpit,
     compare,
     draft,
@@ -103,6 +104,7 @@ def create_app() -> FastAPI:
     app.include_router(cockpit.router, prefix="/api", tags=["cockpit"])
     app.include_router(compare.router, prefix="/api", tags=["compare"])
     app.include_router(leaderboards.router, prefix="/api", tags=["leaderboards"])
+    app.include_router(chart_builder.router, prefix="/api", tags=["chart-builder"])
     app.include_router(batted_balls.router, prefix="/api", tags=["batted-balls"])
     app.include_router(ai.router, prefix="/api", tags=["ai"])
     app.include_router(photos.router, prefix="/api", tags=["photos"])

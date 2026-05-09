@@ -194,6 +194,42 @@ export interface BattedBallsResponse {
   rows: BattedBallEvent[];
 }
 /**
+ * One row in a chart-builder result.
+ *
+ * `x` is always populated; `y` is null in 1-stat (histogram) mode;
+ * `color` is null when the user didn't pick a color encoding.
+ * `qualifier_value` is the gating volume metric (PA / IP-outs /
+ * BIP) — surfaced as a tooltip / size encoding option.
+ */
+export interface ChartBuilderPoint {
+  player_id: number;
+  player_name: string;
+  team_abbr: string | null;
+  year: number | null;
+  x: number | null;
+  y: number | null;
+  color: number | null;
+  qualifier_value: number;
+}
+/**
+ * Echoed picker state + the data rows.
+ *
+ * `mode` is "scatter" (X + Y both set) or "histogram" (Y is null).
+ * The frontend uses this to pick the Plot mark type without re-
+ * deriving from the URL params.
+ */
+export interface ChartBuilderResponse {
+  mode: string;
+  x_stat: string;
+  y_stat: string | null;
+  color_stat: string | null;
+  year: number | null;
+  level_id: number | null;
+  league_id: number | null;
+  qualifier_min: number;
+  points: ChartBuilderPoint[];
+}
+/**
  * Slimmed-down ledger row for the recent-moves strip.
  */
 export interface CockpitMovementRow {

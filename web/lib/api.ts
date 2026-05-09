@@ -20,6 +20,7 @@ import type {
   AISummarizeResponse,
   AwardsResponse,
   BattedBallsResponse,
+  ChartBuilderResponse,
   CockpitResponse,
   CompareResponse,
   DraftClassResponse,
@@ -258,6 +259,34 @@ export async function getLeaderboard(args: {
   if (args.limit !== undefined) params.push(`limit=${args.limit}`);
   return fetchJson<LeaderboardResponse>(
     `/api/leaderboards?${params.join("&")}`,
+  );
+}
+
+// Chart Builder — pick X (and optional Y, color), filters, get a row-
+// per-player dataset back. Histogram mode when Y is omitted; scatter
+// when both X and Y are set. Reuses the leaderboards stat catalog so
+// the picker shares the same 32-stat universe.
+export async function getChartBuilder(args: {
+  x: string;
+  y?: string;
+  color?: string;
+  year?: number;
+  levelId?: number;
+  leagueId?: number;
+  qualifierMin?: number;
+  limit?: number;
+}): Promise<ChartBuilderResponse> {
+  const params: string[] = [`x=${encodeURIComponent(args.x)}`];
+  if (args.y) params.push(`y=${encodeURIComponent(args.y)}`);
+  if (args.color) params.push(`color=${encodeURIComponent(args.color)}`);
+  if (args.year !== undefined) params.push(`year=${args.year}`);
+  if (args.levelId !== undefined) params.push(`level_id=${args.levelId}`);
+  if (args.leagueId !== undefined) params.push(`league_id=${args.leagueId}`);
+  if (args.qualifierMin !== undefined)
+    params.push(`qualifier_min=${args.qualifierMin}`);
+  if (args.limit !== undefined) params.push(`limit=${args.limit}`);
+  return fetchJson<ChartBuilderResponse>(
+    `/api/chart-builder?${params.join("&")}`,
   );
 }
 

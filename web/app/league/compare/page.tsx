@@ -258,7 +258,7 @@ function EmptyState() {
       <p className="text-sm text-content-secondary">
         Pick up to 4 players to compare side by side. Pass IDs via the URL:
         <span className="ml-2 font-mono text-content-primary">
-          /explore/compare?ids=1,2,3
+          /league/compare?ids=1,2,3
         </span>
         . Try one of these:
       </p>
@@ -266,7 +266,7 @@ function EmptyState() {
         {DEMO_LINKS.map((d) => (
           <Link
             key={d.label}
-            href={`/explore/compare?ids=${d.ids.join(",")}`}
+            href={`/league/compare?ids=${d.ids.join(",")}`}
             className="rounded-md border border-border bg-surface-card p-3 transition hover:border-border-strong hover:bg-surface-elevated"
           >
             <h3 className="text-sm font-semibold text-content-primary">
@@ -318,7 +318,7 @@ export default async function ComparePage({
     <div className="space-y-8">
       <header className="space-y-2 border-b border-border pb-6">
         <p className="text-xs font-medium uppercase tracking-wider text-content-muted">
-          Explore · Compare
+          League · Compare
         </p>
         <h1 className="text-3xl font-bold tracking-tight text-content-primary">
           {data && data.players.length > 0
