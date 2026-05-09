@@ -17,6 +17,12 @@ Conventions:
   import GlossaryEntry`` works regardless of the source file.
 """
 
+from diamond.api.schemas.awards import (
+    AwardCategoryRef,
+    AwardHolderRow,
+    AwardLeagueRef,
+    AwardsResponse,
+)
 from diamond.api.schemas.glossary import GlossaryEntry, GlossaryListResponse
 from diamond.api.schemas.health import HealthResponse
 from diamond.api.schemas.movements import (
@@ -67,6 +73,10 @@ from diamond.api.schemas.standings import (
 )
 
 __all__ = [
+    "AwardCategoryRef",
+    "AwardHolderRow",
+    "AwardLeagueRef",
+    "AwardsResponse",
     "GlossaryEntry",
     "GlossaryListResponse",
     "HealthResponse",

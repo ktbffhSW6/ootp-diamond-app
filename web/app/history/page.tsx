@@ -22,9 +22,10 @@ export default function HistoryPage() {
         },
         {
           title: "Awards history",
-          status: "soon",
+          status: "live",
+          href: "/history/awards",
           blurb:
-            "Every MVP / Cy Young / ROY / GG / SS in the save, sortable + filterable.",
+            "Career trophy-case leaderboards — MVP / Cy Young / ROY / Gold Glove / Silver Slugger / Reliever / All-Star / WS Champion / Series MVP. Save data + cross-source merged real-life awards (Lahman + MLB Stats API).",
         },
         {
           title: "Hall of Fame",

@@ -11,6 +11,78 @@
 */
 
 /**
+ * One award type with its display label + which sources have data
+ * for it in the current league. Used by the frontend to render the
+ * award picker and grey out era filters that would yield zero rows.
+ */
+export interface AwardCategoryRef {
+  award_id: number;
+  label: string;
+  available_sources: ("save" | "merged")[];
+}
+/**
+ * One trophy-case row.
+ *
+ * ``rank`` is the in-render rank (1-based). Ties broken by
+ * ``last_year DESC`` (recency over depth) — matches the existing
+ * ``diamond awards`` CLI behavior. ``n_won`` is the career trophy
+ * count for this (player, league, award) combination.
+ *
+ * ``player_id`` populated → name renders as a link to
+ * ``/player/<id>``. Otherwise plain text (real-life player not
+ * in the save). ``external_id`` is the bbref_id when ``source =
+ * 'merged'`` — kept for traceability + tooltip.
+ *
+ * ``first_team_abbr`` / ``last_team_abbr`` may be null for merged
+ * rows (Lahman team mapping isn't bijective with OOTP teams) and
+ * for save rows where the underlying snapshot didn't carry team
+ * metadata at the time of the win (rare).
+ */
+export interface AwardHolderRow {
+  rank: number;
+  source: "save" | "merged";
+  player_id: number | null;
+  external_id: string | null;
+  display_name: string;
+  n_won: number;
+  first_year: number | null;
+  last_year: number | null;
+  first_team_abbr: string | null;
+  last_team_abbr: string | null;
+}
+/**
+ * Lightweight league handle for the picker. ``league_level``
+ * mirrors OOTP's level numeric (1 = MLB, 2 = AAA, 3 = AA, etc.)
+ * so the frontend can group / order leagues by tier.
+ */
+export interface AwardLeagueRef {
+  league_id: number;
+  abbr: string | null;
+  name: string | null;
+  league_level: number;
+}
+/**
+ * Whole payload for one rendered awards leaderboard.
+ *
+ * The picker payload (``available_leagues`` + ``available_awards``
+ * + the active league/award/era) lets the frontend render every
+ * control without round-trips.
+ *
+ * ``rows`` is sorted by rank ASC (n_won DESC, last_year DESC tie-
+ * break), already era-filtered, already capped at the route's
+ * limit. ``total_in_source`` is the count *before* the limit was
+ * applied so the UI can show "showing top 25 of 173" hints.
+ */
+export interface AwardsResponse {
+  league: AwardLeagueRef;
+  award_id: number;
+  era: "all" | "save" | "real";
+  available_leagues: AwardLeagueRef[];
+  available_awards: AwardCategoryRef[];
+  rows: AwardHolderRow[];
+  total_in_source: number;
+}
+/**
  * One stat dictionary entry, serialized for HTTP.
  *
  * Field-for-field mirror of :class:`diamond.dictionary.Stat`. See

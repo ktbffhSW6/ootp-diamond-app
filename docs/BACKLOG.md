@@ -564,9 +564,16 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
     rows clickable to `/player/<id>` when the row carries a save
     player_id. Server re-ranks globally when era=all; bad query strings
     fall back to defaults rather than 404'ing.
-  - [ ] **Awards** *(next)* — career trophy cases + per-season races.
-    Cleanest data shape (single L3 fact `f_award_career_player`).
-  - [ ] **Hall of Fame** — Cooperstown roster + on-the-bubble
+  - [x] **Awards** *(2026-05-12)* — `/history/awards` lives.
+    `GET /api/awards?league_id=&award_id=&era=&limit=` returns career
+    trophy-count holders for any (league × award) combination with
+    era filter (all / save / real). League picker grouped by tier
+    (MLB at top); award picker ordered by prestige (MVP / Cy / RoY
+    / GG / SS / Reliever / All-Star / WSC / Series MVP / monthly
+    awards). Per-season races deferred (need `f_award_event`-grain
+    query); per-team rollups deferred (need `f_award_franchise`-grain
+    query — same UI shape, different fact).
+  - [ ] **Hall of Fame** *(next)* — Cooperstown roster + on-the-bubble
     candidates. Backed by `players_current.hall_of_fame` + the
     `f_award_career_player` rollup (already powers `diamond hof`).
   - [ ] **Streaks** — top-50-per-(streak_id × scope) leaderboards

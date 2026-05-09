@@ -14,6 +14,7 @@
 //   is auto-generated from the Pydantic schemas (see that file).
 
 import type {
+  AwardsResponse,
   GlossaryEntry,
   GlossaryListResponse,
   HealthResponse,
@@ -122,6 +123,28 @@ export async function getRecords(args: {
   if (args.limit !== undefined) params.push(`limit=${args.limit}`);
   const qs = params.length === 0 ? "" : `?${params.join("&")}`;
   return fetchJson<RecordsResponse>(`/api/records${qs}`);
+}
+
+// Awards leaderboard payload — career trophy holders for one
+// (league × award) combo. ``era`` is the orthogonal source filter:
+// "all" merges save + merged real-life; "save" is your save universe
+// only; "real" is cross-source merged real-life awards (Lahman + MLB
+// Stats API dedup'd via Chadwick Register, scoped to bbref_ids NOT
+// in the save). All args optional; backend falls back to MLB / MVP /
+// all-era / 25-row defaults.
+export async function getAwards(args: {
+  leagueId?: number;
+  awardId?: number;
+  era?: "all" | "save" | "real";
+  limit?: number;
+}): Promise<AwardsResponse> {
+  const params: string[] = [];
+  if (args.leagueId !== undefined) params.push(`league_id=${args.leagueId}`);
+  if (args.awardId !== undefined) params.push(`award_id=${args.awardId}`);
+  if (args.era) params.push(`era=${args.era}`);
+  if (args.limit !== undefined) params.push(`limit=${args.limit}`);
+  const qs = params.length === 0 ? "" : `?${params.join("&")}`;
+  return fetchJson<AwardsResponse>(`/api/awards${qs}`);
 }
 
 // Trigger a one-click shutdown of both dev servers (Next.js :3000 and
