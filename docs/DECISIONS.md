@@ -363,3 +363,31 @@ The `neutral` warm-cream theme exists specifically because "the app is too brigh
 - *CSS-in-JS / styled-components* — rejected. Tailwind is already the project's styling language; swapping it out for a multi-theme system would be a huge migration for a small benefit.
 - *Light as default* — rejected per user preference (2026-05-08 chat: "Dark mode should be default I think").
 - *Defer color-blind support to v2* — rejected as a complete miss. Even a chrome-only CB theme is meaningfully better than no CB support, and the architecture supports lighting up the verdicts/badges later without a migration.
+
+## D19 — `f_pa_event` is multi-year, sourced from L0 with cross-dump dedup; L1 event tables stay single-dump
+
+**Date**: 2026-05-12
+**Decision**: The L2 PA-grain fact `f_pa_event` is **multi-year**, built directly from the L0 layer (`l0_players_at_bat_batting_stats` + `l0_games`) with cross-dump deduplication keyed on `(game_id, season_year)`. The L1 event tables `at_bats_event` and `games_event` stay **single-dump (latest)** as they have been. Two layers, two audiences.
+
+**PK changed**: `f_pa_event` PK was `(game_id, batter_id, pa_in_game_seq)`; it is now `(year, game_id, batter_id, pa_in_game_seq)`. `year` is in the key because **OOTP recycles `game_id` across seasons** — the integer 10001 is one game in dumps 2026-08 → 2027-02 (67 PAs) and a different game in dumps 2027-09 → 2028-02 (73 PAs). Within a single season `game_id` is unique; `year` (extracted from `games.date`) disambiguates seasons.
+
+**Why**: The original `f_pa_event` build read from `at_bats_event` (L1, single-dump) joined to `games_event` (L1, single-dump). That meant the L2 fact was constrained to the latest dump's at-bat log only, even though L0 has retained every previously ingested dump's rows by `dump_date`. Player-page situational splits (clutch / RISP / platoon / counts / spray) wanted multi-year coverage and the storage was already there — we'd been throwing it away at the L1 boundary. Per the user's framing, "Can't we use storage to bridge the gap?" — yes; just stop discarding it.
+
+L1 needed to stay single-dump because `audit/reconcile.py` registers `at_bats_event` and `games_event` as direct passthrough views and compares them against IE roster CSVs (which are per-dump). Promoting L1 to multi-year would break the audit harness's per-dump comparison semantics. The fix: leave L1 alone; have L2 reach back to L0 directly.
+
+**Cross-dump dedup rule**: For each `(game_id, season_year)` pair, pick the latest `dump_date` that observed at-bats for that game. Post-November dumps are stable (no new data accrues); early-spring dumps (March of year Y+1 etc.) trim the prior year's data progressively before resetting. `MAX(dump_date)` always selects the fullest snapshot. `pa_in_game_seq` is then synthesized within that scope by `file_seq` order (per OPEN-4 resolution from SCHEMA.md).
+
+**Layer-pattern note**: This is a deliberate exception to "L2 reads from L1." The general rule still holds for the seven other L2 facts (`f_player_season_*`, `f_player_career`, `f_team_season`, `f_league_season`, `f_award_event`). The PA-grain fact is the one place where multi-dump retention at L0 is the load-bearing semantic, so reaching down is the right call. Documented in the L2 build's docstring + DATA_NOTES "File rollover behavior" so future maintainers understand the pattern.
+
+**Side benefit**: `game_type` is now carried directly on `f_pa_event` (was on `games_event` only), so consumers don't need a JOIN to filter regular season — the situational fetcher now reads `pa.game_type = 0` directly.
+
+**Row-count impact** (verified live with `diamond ingest --rebuild-only`):
+- `f_pa_event`: 877,363 → **5,132,283** (4 years).
+- `f_player_season_statcast_batting`: 3,305 → **20,800**.
+- `f_player_season_statcast_pitching`: 3,692 → **21,513**.
+- `f_record_player`: 1,840 → **4,550** (save-side EV records cover all 4 years now).
+
+**Alternatives considered**:
+- *Build a sibling `f_pa_event_history` and leave `f_pa_event` single-year* — rejected. Two tables with overlapping shape doubles maintenance and forces every consumer to choose. Single multi-year fact is cleaner and existing consumers (l3 records, statcast cohort, situational fetcher) all GROUP BY year already, so they get richer output for free.
+- *Promote L1 `at_bats_event` to multi-year and update reconcile* — rejected. The reconcile harness compares against per-dump IE CSVs; per-dump semantics at L1 are load-bearing for that audit path. Splitting L1 (single-dump) and L2 (multi-year) lets each layer serve its audience.
+- *Persist Nov dumps separately and union with the latest dump* — rejected as redundant. L0 already retains every dump; we just had to query it correctly.

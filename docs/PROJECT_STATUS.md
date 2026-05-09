@@ -4,13 +4,22 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: five slices in one day** — situational ("clutch / RISP") splits on the player page, multi-year `f_pa_event` (closes the prior-year coverage gap), pitcher situational splits, bases / platoon splits, and counts / spray splits (extended from 4 to **14** splits per (year, level)). Empirically verified that `hit_xy` is **batter-relative** along the way (mean hit_xy on HRs ≈71 for both LHB and RHB — same pull-side band for both hands), correcting an earlier DATA_NOTES claim that it was field-absolute. (1) Batter splits: All / RISP / RISP 2-out / Late & Close per (year, level), OPS color-coded vs the All baseline. (2) Multi-year fix: the "OOTP replaces at_bats_event.csv on rollover" caveat was build-side, not storage-side — L0 retains every ingested dump's rows by `dump_date`. Rebuilt `f_pa_event` to read L0 directly with cross-dump dedup keyed on (game_id, season_year); discovered **OOTP recycles `game_id` across seasons**, so PK promoted to (year, game_id, batter_id, pa_in_game_seq). `f_pa_event` 877k → 5.1M; `f_player_season_statcast_*` 3,305 / 3,692 → 20,800 / 21,513; `f_record_player` 1,840 → 4,550. (3) Pitcher splits: same SQL template keyed on `pitcher_id`, slash reflects what the pitcher ALLOWED. UI color logic inverts — emerald when OPS-allowed beats the All baseline (lower = better in clutch), rose when it lags. Crochet 2027 RISP 2-out **.316 OPS allowed** (elite clutch); 2029 .839 (rose). **Next: port a CLI history surface** (records / awards / hof / streaks) to the `/history` tab.
+**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: five slices in one day, all on the player-page situational stack.** The day grew the situational section from 0 splits to **14 per (year, level)** organized into five clusters (Leverage / Bases / Platoon / Counts / Spray), and turned `f_pa_event` from single-season to **multi-year** along the way.
+
+Slices in order:
+1. **Batter situational splits** — first version of the section: All / RISP / RISP 2-out / Late & Close per (year, level), OPS color-coded vs the All baseline (≥25 pts emerald, ≤-25 rose). Single-season at first (limited by `f_pa_event` shape).
+2. **Multi-year `f_pa_event`** (architectural — D19) — the "OOTP replaces at_bats_event.csv on rollover" caveat was build-side, not storage-side. L0 retains every ingested dump's rows by `dump_date`, so we rebuilt `f_pa_event` to read L0 directly with cross-dump dedup keyed on (game_id, season_year). Discovered along the way that **OOTP recycles `game_id` across seasons**, so PK was promoted to (year, game_id, batter_id, pa_in_game_seq). Row counts: `f_pa_event` 877k → 5.1M; `f_player_season_statcast_*` 3,305 / 3,692 → 20,800 / 21,513; `f_record_player` 1,840 → 4,550.
+3. **Pitcher situational splits** — same SQL template keyed on `pitcher_id` instead of `batter_id`. Slash columns reflect what the pitcher allowed; UI color logic inverts (emerald when OPS-allowed BELOW baseline = clutch). Crochet 2027 RISP 2-out **.316 OPS allowed**; 2029 .839 (regressed).
+4. **Bases + platoon splits** — added `bases_empty` / `bases_loaded` (off `base1/2/3`) and `vs_left` / `vs_right` (LEFT JOIN to `players_current` for handedness; switch-hitters resolve to opposite of pitcher's hand). Side-aware labels: batter card "vs LHP/RHP", pitcher card "vs LHB/RHB". Sanity invariant: `vs_left + vs_right = all` ✓.
+5. **Counts + spray splits** — added `first_pitch` / `two_strike` / `full_count` (count BEFORE the resolving pitch) and `pull` / `center` / `oppo` (BIP-only spray; UI skips color coding since denominators differ). Empirically verified `hit_xy` is **batter-relative**, not field-absolute (mean hit_xy on HRs ≈71 for both LHB and RHB — same pull-side band), corrected DATA_NOTES.
+
+**Next**: port a CLI history surface (records / awards / hof / streaks) to the `/history` tab.
 
 ---
 
 ## One-line summary
 
-Phases 1-2 closed; analytical CLI surface complete; real MLB history through 2025 backfilled; Phase 3 UI live — five-tab IA (Club / League / World / History / Explore) wired into the layout; Club landing renders save metadata + tools grid; movement ledger covers all four direction buckets; roster page (2026-05-09) — full org tree grouped by level with Basic/Advanced/Contact stat-mode toggle; player page Stats tab full (batting / pitching / fielding / advanced + **Defensive Profile** per-position cube as of 2026-05-10); theme system supports light / dark / neutral / color-blind with dark as default; in-app Quit reliably kills both dev servers. L3 Statcast cohort + SIERA materialized 2026-05-09. **Combined bWAR / pWAR + per-position fielding view shipped 2026-05-10** — OOTP directly supplies the canonical WAR (Mayer 3.2 = IE 3.2 etc.); the per-position cube is sourced from a new `players_fielding_current` view over the snapshot. Both close longstanding "data sitting in warehouse but invisible" gaps.
+Phases 1-2 closed; analytical CLI surface complete; real MLB history through 2025 backfilled; Phase 3 UI live — five-tab IA (Club / League / World / History / Explore) wired into the layout; Club landing renders save metadata + tools grid; movement ledger covers all four direction buckets; roster page — full org tree grouped by level with Basic/Advanced/Contact stat-mode toggle; standings page on `/league` (sub-league × division × team from `team_record_snapshot`); player page Stats tab full (batting / pitching / fielding / advanced + **Defensive Profile** per-position cube + **Service & Status** card + **Situational batting / pitching** with 14 splits across leverage / bases / platoon / counts / spray); theme system supports light / dark / neutral / color-blind with dark as default; in-app Quit reliably kills both dev servers. L3 Statcast cohort + SIERA materialized; `f_pa_event` is now **multi-year** via L0 cross-dump dedup (D19) — 4 years of at-bat history queryable. Combined bWAR / pWAR via OOTP-supplied WAR (Mayer 3.2 = IE 3.2 etc.); per-position fielding cube sourced from `players_fielding_current` view over the snapshot.
 
 ## What works today
 
@@ -54,7 +63,9 @@ Phases 1-2 closed; analytical CLI surface complete; real MLB history through 202
   - L0: **69 raw tables** (5.76M rows from one dump)
   - L1: 12 reference + 35 event + 21 state-snapshot + 7 `_current` views + 2 machinery (`_scoped_*`) + 1 admin (`_diamond_ingests`)
   - L2: 8 facts (`f_player_season_batting/pitching/fielding`, `f_player_career`,
-    `f_team_season`, `f_league_season`, `f_pa_event`, `f_award_event`)
+    `f_team_season`, `f_league_season`, `f_pa_event` *— multi-year as of
+    2026-05-12 per D19; sourced from L0 with cross-dump dedup, PK includes
+    `year` since OOTP recycles `game_id` across seasons*, `f_award_event`)
   - L3: 11 derived (`f_trade_participant`, `player_movements` w/ `trade_id`,
     `f_draft_class`, `f_record_player`, `f_award_career_player`,
     `f_award_franchise`, `f_player_streak`,

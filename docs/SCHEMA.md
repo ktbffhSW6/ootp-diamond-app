@@ -281,11 +281,16 @@ f_team_season             (team_id, year) PK + W/L/RS/RA/run-diff/Pythag + stand
 
 f_league_season           (league_id, year, level_id) PK + league totals (the source for league_constants)
 
-f_pa_event                (game_id, inning, half, ab_seq) PK [confirm at OPEN-4]
-                          + batter_id, pitcher_id, year, league_id, level_id, team_id, opp_team_id,
-                            result, hit_loc, hit_xy, balls/strikes count, base/out state, EV, LA,
-                            risp_flag, late_close_flag, bip_flag — at-bat fact at the
-                            granularity D7 needs
+f_pa_event                (year, game_id, batter_id, pa_in_game_seq) PK
+                          [multi-year as of D19 — sourced from L0 with cross-dump
+                           dedup keyed on (game_id, season_year); year is in the
+                           PK because OOTP recycles game_id across seasons]
+                          + pitcher_id, league_id, level_id, batter_team_id,
+                            opp_team_id, result, sac, hit_loc, hit_xy, balls,
+                            strikes, base1/2/3, outs, exit_velo, launch_angle,
+                            sprint_speed, close_flag, pinch, run_diff, spot,
+                            game_type, bip_flag, risp_flag, late_close_flag —
+                            at-bat fact at the granularity D7 needs
 
 f_award_event             (player_id, year, award_id) — same as L1.awards but with team_id pre-joined
 
@@ -543,7 +548,10 @@ of drift bugs.
     requires joins to `games` and `players` snapshot) plus the derived flags
     (`bip_flag`, `risp_flag`, `late_close_flag`, `spray_category`) that
     today live in `src/diamond/advanced/enriched.py`. Real transformation,
-    worth two layers.
+    worth two layers. **Updated 2026-05-12 (D19)**: the layer split also
+    serves a second purpose — L1 `at_bats_event` stays single-dump (latest)
+    because the audit reconcile harness needs per-dump comparison vs IE
+    roster CSVs; L2 `f_pa_event` is multi-year sourced from L0 directly.
 
 ---
 

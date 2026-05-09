@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 The project keeps long-running engineering context in `docs/`. Always read at the start of a session:
 
 - `docs/PROJECT_STATUS.md` — current phase, what works, what was last done, what's next.
-- `docs/DECISIONS.md` — append-only log of architectural/scope decisions with rationale (D1–D18).
+- `docs/DECISIONS.md` — append-only log of architectural/scope decisions with rationale (D1–D19).
 - `docs/DATA_NOTES.md` — empirical findings about the OOTP dump shape, codebooks, and IE display conventions.
 - `docs/BACKLOG.md` — prioritized open work, grouped by phase (Schema/Ingest → Analysis → UI).
 - `docs/UI_DESIGN.md` — UI build order + design conventions; committed five-tab IA + theme system live here.
