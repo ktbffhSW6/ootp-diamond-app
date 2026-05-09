@@ -470,6 +470,7 @@ export interface PlayerResponse {
   position_fielding: PlayerPositionFielding[];
   roster_status: PlayerRosterStatus | null;
   situational_batting: PlayerSituationalRow[];
+  situational_pitching: PlayerSituationalRow[];
 }
 /**
  * Service-time / arbitration / options / roster-status block.
@@ -529,12 +530,21 @@ export interface PlayerRosterStatus {
   is_on_waivers: boolean;
 }
 /**
- * Per-(year, level, split) batter situational stats from `f_pa_event`.
+ * Per-(year, level, split) situational stats from `f_pa_event`.
  *
- * Each row is one slice of a player's regular-season PA log filtered to a
- * named split. Splits cover the canonical "clutch" cuts:
+ * Same row shape for both batter and pitcher views — the difference
+ * is the dimension used to filter the PA log:
  *
- * - ``all``         — every regular-season PA (parity with `f_player_season_batting`).
+ * - **Batter view** (``situational_batting``): keyed on ``batter_id``.
+ *   Slash line is what the player hit. Higher OPS in clutch = good.
+ * - **Pitcher view** (``situational_pitching``): keyed on ``pitcher_id``.
+ *   Slash line is what the player ALLOWED. Lower OPS in clutch = good
+ *   (the UI inverts the color hint accordingly).
+ *
+ * Splits cover the canonical "clutch" cuts:
+ *
+ * - ``all``         — every regular-season PA (parity row vs the
+ *   regular batting/pitching season totals).
  * - ``risp``        — runner on 2nd OR 3rd at start of PA (`risp_flag`).
  * - ``risp_2out``   — RISP AND outs ≥ 2 (the highest-leverage RBI chance).
  * - ``late_close``  — 7th inning or later AND OOTP `Close` flag (Bref-style
@@ -549,15 +559,11 @@ export interface PlayerRosterStatus {
  * Bref sense; ``late_close_flag`` (the strict 7th+ tying-run window) is
  * the right analog and what we use here. See DATA_NOTES.
  *
- * **Coverage limitation**: `f_pa_event` is OOTP's per-PA log for the
- * current season only — it gets replaced each year on rollover. So
- * ``situational_batting`` has rows only for the latest simulated year
- * (2029 in this save). Pre-2029 splits would require persisting each
- * season's at-bat dump separately; that's a future enhancement.
- *
- * Pitcher splits (same SQL, keyed on pitcher_id) are deferred to a
- * follow-up — symmetric in shape but the verdict semantics ("did opp
- * hit me well in clutch?") flip.
+ * **Multi-year coverage**: ``f_pa_event`` is sourced from L0 with
+ * cross-dump dedup (the L0 layer retains every previously-ingested
+ * dump's rows by ``dump_date``, so historical seasons survive the OOTP
+ * rollover that overwrites ``at_bats_event.csv``). Splits cover every
+ * year the warehouse has ingested (2026-2029 in this save).
  */
 export interface PlayerSituationalRow {
   year: number;

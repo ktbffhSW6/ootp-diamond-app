@@ -857,13 +857,22 @@ function PitchingCareerRow({
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Situational batting (clutch / RISP splits)
+// Situational splits (clutch / RISP) — shared batting + pitching renderer
 // ─────────────────────────────────────────────────────────────────────────
 //
 // One block per (year, level) tuple, sorted year DESC + level (MLB first).
 // `f_pa_event` is multi-year now (L0 cross-dump dedup at L2 build time),
 // so a player with a 4-year career can show 4-16 blocks (more if they
 // bounced through MLB + AAA + AA in any year).
+//
+// Two callers share the same renderer:
+// - `SituationalBattingTable` (side="batter") — slash is what the
+//   player HIT. Higher OPS in clutch = good. Color: emerald above All
+//   baseline, rose below.
+// - `SituationalPitchingTable` (side="pitcher") — slash is what the
+//   pitcher ALLOWED. Higher OPS in clutch = bad. Color flips: emerald
+//   below All baseline (kept opp from scoring), rose above (gave up
+//   too much).
 //
 // Each tuple shows four rows: All / RISP / RISP, 2 out / Late & Close.
 // The "All" row is the parity baseline — its slash should match the
@@ -879,10 +888,13 @@ function fmtSlash(v: number | null): string {
   return v < 1 ? s.replace(/^0/, "") : s;
 }
 
+type SituationalSide = "batter" | "pitcher";
+
 function opsCellClass(
   splitOps: number | null,
   baselineOps: number | null,
   isBaseline: boolean,
+  side: SituationalSide,
 ): string {
   // Baseline (the "All" row) always renders in primary content color so
   // the eye anchors there. Splits with no sample stay neutral.
@@ -891,11 +903,22 @@ function opsCellClass(
   }
   // 25-point OPS gap = the Bref-conventional "clutch" threshold on the
   // splits page. Anything inside ±25 reads as noise; outside it as
-  // signal. Single-season cuts are inherently noisy — the cue is
+  // signal. Small samples are inherently noisy — the cue is
   // qualitative, not predictive.
+  //
+  // For batters: higher OPS in clutch = good (emerald). For pitchers:
+  // higher OPS allowed in clutch = bad (rose). The color directions
+  // invert; the threshold magnitude is the same.
   const delta = splitOps - baselineOps;
-  if (delta >= 0.025) return "text-emerald-600 dark:text-emerald-400";
-  if (delta <= -0.025) return "text-rose-600 dark:text-rose-400";
+  const goodThreshold = side === "batter" ? 0.025 : -0.025;
+  const badThreshold = side === "batter" ? -0.025 : 0.025;
+  if (side === "batter") {
+    if (delta >= goodThreshold) return "text-emerald-600 dark:text-emerald-400";
+    if (delta <= badThreshold) return "text-rose-600 dark:text-rose-400";
+  } else {
+    if (delta <= goodThreshold) return "text-emerald-600 dark:text-emerald-400";
+    if (delta >= badThreshold) return "text-rose-600 dark:text-rose-400";
+  }
   return "text-content-primary";
 }
 
@@ -928,17 +951,21 @@ function groupSituational(rows: PlayerSituationalRow[]): SituationalGroup[] {
   return [...groups.values()];
 }
 
-function SituationalBattingTable({
+function SituationalTable({
   rows,
+  side,
 }: {
   rows: PlayerSituationalRow[];
+  side: SituationalSide;
 }) {
   const groups = groupSituational(rows);
+  const title =
+    side === "batter" ? "Situational batting" : "Situational pitching";
 
   return (
     <section>
       <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-content-muted">
-        Situational batting
+        {title}
       </h2>
       <div className="space-y-4">
         {groups.map((g) => {
@@ -1012,6 +1039,7 @@ function SituationalBattingTable({
                       r.ops,
                       baselineOps,
                       isBaseline,
+                      side,
                     );
                     return (
                       <tr
@@ -1083,9 +1111,24 @@ function SituationalBattingTable({
         {" "}<strong>RISP, 2 out</strong> = the same with two outs (the
         last-out RBI chance). <strong>Late &amp; Close</strong> = 7th
         inning or later with the tying run on base, at the plate, or on
-        deck. OPS in a split row is colored emerald when it beats the
-        &ldquo;All&rdquo; baseline by ≥25 points, rose when it lags by
-        ≥25; smaller gaps are noise on small samples. Splits are
+        deck.{" "}
+        {side === "batter" ? (
+          <>
+            OPS in a split row is colored emerald when it beats the
+            &ldquo;All&rdquo; baseline by ≥25 points, rose when it
+            lags by ≥25 — clutch hitters reach for the ball.
+          </>
+        ) : (
+          <>
+            Slash columns reflect what the pitcher{" "}
+            <em>allowed</em>; OPS-allowed in a split row is colored
+            emerald when it&apos;s ≥25 points{" "}
+            <em>better</em> (lower) than the &ldquo;All&rdquo;
+            baseline, rose when it&apos;s ≥25 points worse — clutch
+            pitchers shrink the strike zone with runners on.
+          </>
+        )}
+        {" "}Smaller gaps are noise on small samples. Splits are
         regular season only and cover every save year the warehouse
         has ingested.
       </p>
@@ -1155,9 +1198,14 @@ export function PlayerStatsTab({
       r.rating_potential != null ||
       r.experience != null,
   );
-  // Situational requires actual PA — empty array for pitchers (no
-  // f_pa_event rows where they bat) and pre-2029 imported players.
-  const hasSituational = (player.situational_batting ?? []).length > 0;
+  // Situational requires actual PA — empty arrays for the
+  // wrong-handed audience (pitchers don't get batter splits;
+  // position players don't get pitcher splits) and for pre-warehouse
+  // imports without a per-PA log.
+  const hasSituationalBatting =
+    (player.situational_batting ?? []).length > 0;
+  const hasSituationalPitching =
+    (player.situational_pitching ?? []).length > 0;
 
   return (
     <div className="space-y-8">
@@ -1235,8 +1283,12 @@ export function PlayerStatsTab({
         />
       )}
 
-      {hasSituational && (
-        <SituationalBattingTable rows={player.situational_batting} />
+      {hasSituationalBatting && (
+        <SituationalTable rows={player.situational_batting} side="batter" />
+      )}
+
+      {hasSituationalPitching && (
+        <SituationalTable rows={player.situational_pitching} side="pitcher" />
       )}
 
       {hasFielding && (

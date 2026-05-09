@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: situational splits + multi-year `f_pa_event` shipped.** Two slices in one day. First: situational ("clutch / RISP") splits on the player page — All / RISP / RISP 2-out / Late & Close per (year, level), with OPS color-coded vs the All baseline. Second: closed the prior-year coverage gap by promoting `f_pa_event` to multi-year. The "OOTP replaces at_bats_event.csv on rollover" caveat we surfaced earlier was a **build-side limitation**, not a storage limitation — L0 retains every ingested dump's rows by `dump_date`. Rebuilt `f_pa_event` to read from L0 directly with cross-dump dedup keyed on (game_id, season_year), discovered along the way that **OOTP recycles `game_id` across seasons** (id 10001 is a 2026 game in 2026 dumps, a different game in 2027 dumps) so promoted PK to (year, game_id, batter_id, pa_in_game_seq). Result: `f_pa_event` 877k → 5,132,283 rows; downstream `f_player_season_statcast_*` covers all 4 years (3,305 → 20,800 batting rows; 3,692 → 21,513 pitching rows); `f_record_player` 1,840 → 4,550. Devers situational now spans 2026/2027/2028/2029 (incl. 2028 AAA rehab stint); Mayer's career arc 2026 .602 → 2027 .770 → 2028 .764 (Late & Close 1.034!) → 2029 .741 reads at a glance. **Next: port a CLI history surface** (records / awards / hof / streaks) to the `/history` tab.
+**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: three slices in one day** — situational ("clutch / RISP") splits on the player page, multi-year `f_pa_event` (closes the prior-year coverage gap), and pitcher situational splits. (1) Batter splits: All / RISP / RISP 2-out / Late & Close per (year, level), OPS color-coded vs the All baseline. (2) Multi-year fix: the "OOTP replaces at_bats_event.csv on rollover" caveat was build-side, not storage-side — L0 retains every ingested dump's rows by `dump_date`. Rebuilt `f_pa_event` to read L0 directly with cross-dump dedup keyed on (game_id, season_year); discovered **OOTP recycles `game_id` across seasons**, so PK promoted to (year, game_id, batter_id, pa_in_game_seq). `f_pa_event` 877k → 5.1M; `f_player_season_statcast_*` 3,305 / 3,692 → 20,800 / 21,513; `f_record_player` 1,840 → 4,550. (3) Pitcher splits: same SQL template keyed on `pitcher_id`, slash reflects what the pitcher ALLOWED. UI color logic inverts — emerald when OPS-allowed beats the All baseline (lower = better in clutch), rose when it lags. Crochet 2027 RISP 2-out **.316 OPS allowed** (elite clutch); 2029 .839 (rose). **Next: port a CLI history surface** (records / awards / hof / streaks) to the `/history` tab.
 
 ---
 
@@ -564,10 +564,10 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
     Mayer 2029 Late & Close .752 (emerald — slight clutch in tying-
     run windows). Crochet (pitcher) → 0 rows.
 
-    **Deferred**:
-    - Pitcher splits (same SQL keyed on `pitcher_id`) — symmetric
-      shape; lands when there's pull for "vs me with RISP" view.
+    **Deferred** (after this slice):
     - Bases empty / vs LHP / vs RHP — could mirror the same pattern.
+
+    **Pitcher splits** added 2026-05-12 same day — see item 21 below.
 
 20. ✅ **Multi-year `f_pa_event` via L0 cross-dump dedup** — done
     2026-05-12. The earlier "single-season only" caveat was build-
@@ -612,10 +612,39 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
     updated to reflect "every save year ingested" rather than
     "current season only."
 
-21. **Port a CLI history surface** *(next slice)* — drain the
+21. ✅ **Pitcher situational splits** — done 2026-05-12. Mirror of
+    item 19 keyed on `pitcher_id` instead of `batter_id`. Same row
+    shape (`PlayerSituationalRow` reused — same All / RISP / RISP 2-out
+    / Late & Close × per-(year, level) grain) but slash columns
+    reflect what the pitcher ALLOWED. UI color logic flips: emerald
+    when OPS-allowed in a split is ≥25 pts BELOW the All baseline
+    (kept opp from scoring), rose when it's ≥25 pts ABOVE (gave
+    up too much in clutch).
+
+    Implementation:
+    - Schema: added `situational_pitching: list[PlayerSituationalRow]`
+      to `PlayerResponse` (same shape as batting).
+    - Route: `_fetch_situational_batting` generalized to
+      `_fetch_situational(con, player_id, side)` where `side ∈
+      {"batter", "pitcher"}`. SQL is templated — only difference is
+      the join column (`batter_id` vs `pitcher_id`). Both fetchers
+      called from the route handler; empty arrays for the
+      wrong-handed audience.
+    - UI: `SituationalBattingTable` generalized to `SituationalTable`
+      with a `side` prop. `opsCellClass` takes `side` and inverts
+      the threshold direction for pitchers. Footer copy adapts —
+      "clutch hitters reach for the ball" vs "clutch pitchers shrink
+      the strike zone with runners on."
+
+    Verified: Crochet 2027 RISP 2-out **.316 OPS allowed** (emerald —
+    elite clutch starter); 2028 RISP 2-out .395 (emerald); 2029 RISP
+    2-out .839 (rose — regression year). Position players → empty
+    pitching block; pitchers → empty batting block.
+
+22. **Port a CLI history surface** *(next slice)* — drain the
     `/history` stub with one of `records / awards / hof / streaks`.
     All four surfaces exist as L3 facts already; UI work only.
-22. Then the rest of the UI_DESIGN.md ladder (pressure board, salary
+23. Then the rest of the UI_DESIGN.md ladder (pressure board, salary
     stream, compare under Explore, etc.).
 
 **Open audit carry-forwards** (non-blocking, picked up opportunistically):

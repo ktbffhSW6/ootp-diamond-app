@@ -956,14 +956,29 @@ _SITUATIONAL_SPLIT_LABELS: dict[str, str] = {
 # 1=K, 2=BB, 4=GO, 5=FO, 6=1B, 7=2B, 8=3B, 9=HR, 10=HBP, 11=CI.
 # AB = K + outs + hits, with sacrifices excluded (sac=1).
 # SF (sac fly) = sac=1 AND result=5 (fly out flagged sacrifice).
-_SITUATIONAL_QUERY = """
+def _situational_query(side: str) -> str:
+    """Render the situational SQL for one side of the PA.
+
+    ``side`` is ``"batter"`` or ``"pitcher"``. The two queries are
+    identical except for the join column on ``f_pa_event``:
+    ``batter_id`` vs ``pitcher_id``. Aggregation (PA, AB, H, slash)
+    is symmetric — for the pitcher view, the slash line reflects
+    what the player allowed.
+    """
+    if side not in ("batter", "pitcher"):
+        raise ValueError(f"side must be 'batter' or 'pitcher', got {side!r}")
+    join_col = "batter_id" if side == "batter" else "pitcher_id"
+    return _SITUATIONAL_QUERY_TEMPLATE.format(join_col=join_col)
+
+
+_SITUATIONAL_QUERY_TEMPLATE = """
 WITH base AS (
     SELECT
         pa.year, pa.level_id,
         pa.result, pa.sac,
         pa.risp_flag, pa.late_close_flag, pa.outs
     FROM f_pa_event pa
-    WHERE pa.batter_id = ?
+    WHERE pa.{join_col} = ?
       AND pa.game_type = 0  -- regular season; matches f_player_season_*
 ),
 splits AS (
@@ -1013,16 +1028,21 @@ def _situational_slash(
     return avg, obp, slg, ops
 
 
-def _fetch_situational_batting(
-    con: duckdb.DuckDBPyConnection, player_id: int,
+def _fetch_situational(
+    con: duckdb.DuckDBPyConnection, player_id: int, side: str,
 ) -> list[PlayerSituationalRow]:
     """Per-(year, level, split) regular-season situational stats.
 
-    Returns an empty list for pitchers (no `f_pa_event` rows where
-    they bat) and pre-2019 imported players (OOTP carries counting
-    stats but no per-PA log for those years).
+    ``side`` selects which dimension of the PA to filter on:
+
+    - ``"batter"`` — keyed on ``f_pa_event.batter_id``. Returns the
+      player's hitting splits. Empty for pitchers (no batter PAs)
+      and pre-warehouse-history imports (no per-PA log).
+    - ``"pitcher"`` — keyed on ``f_pa_event.pitcher_id``. Returns
+      the splits for what hitters did against this player. Empty
+      for position players who never took the mound.
     """
-    rows = con.execute(_SITUATIONAL_QUERY, [player_id]).fetchall()
+    rows = con.execute(_situational_query(side), [player_id]).fetchall()
     out: list[PlayerSituationalRow] = []
     for r in rows:
         (year, level_id, split, pa, ab, h, doubles, triples, hr,
@@ -1101,7 +1121,8 @@ def get_player(
     advanced_pit = _fetch_advanced_pitching(con, player_id)
     position_fielding = _fetch_position_fielding(con, player_id)
     roster_status = _fetch_roster_status(con, player_id)
-    situational_batting = _fetch_situational_batting(con, player_id)
+    situational_batting = _fetch_situational(con, player_id, "batter")
+    situational_pitching = _fetch_situational(con, player_id, "pitcher")
     return PlayerResponse(
         bio=bio,
         batting_seasons=_build_batting_seasons(bat_stints),
@@ -1115,4 +1136,5 @@ def get_player(
         position_fielding=position_fielding,
         roster_status=roster_status,
         situational_batting=situational_batting,
+        situational_pitching=situational_pitching,
     )
