@@ -27,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from diamond.api.routes import (
     admin,
     awards,
+    cockpit,
     draft,
     glossary,
     health,
@@ -92,6 +93,7 @@ def create_app() -> FastAPI:
     app.include_router(streaks.router, prefix="/api", tags=["streaks"])
     app.include_router(draft.router, prefix="/api", tags=["draft"])
     app.include_router(pressure.router, prefix="/api", tags=["pressure"])
+    app.include_router(cockpit.router, prefix="/api", tags=["cockpit"])
     app.include_router(admin.router, prefix="/api", tags=["admin"])
 
     return app

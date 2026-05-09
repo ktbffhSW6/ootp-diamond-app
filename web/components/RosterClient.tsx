@@ -28,6 +28,8 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import { plusMinusClass, warSeasonClass } from "@/lib/heatscale";
+
 import type {
   RosterBattingLine,
   RosterLevelGroup,
@@ -406,9 +408,15 @@ function BatterRow({
           <td className="px-2 py-1.5 text-right font-mono text-xs">{fmtSlash(b?.woba ?? null)}</td>
           <td className="px-2 py-1.5 text-right font-mono text-xs">{fmtSigned1(b?.wraa ?? null)}</td>
           <td className="px-2 py-1.5 text-right font-mono text-xs">{fmt1(b?.wrc ?? null)}</td>
-          <td className="px-2 py-1.5 text-right font-mono text-xs font-medium">{fmtInt(b?.wrc_plus ?? null)}</td>
-          <td className="px-2 py-1.5 text-right font-mono text-xs">{fmtInt(b?.ops_plus ?? null)}</td>
-          <td className="px-2 py-1.5 text-right font-mono text-xs font-medium">{fmt1(b?.b_war ?? null)}</td>
+          <td className={`px-2 py-1.5 text-right font-mono text-xs ${plusMinusClass(b?.wrc_plus ?? null)}`}>
+            {fmtInt(b?.wrc_plus ?? null)}
+          </td>
+          <td className={`px-2 py-1.5 text-right font-mono text-xs ${plusMinusClass(b?.ops_plus ?? null)}`}>
+            {fmtInt(b?.ops_plus ?? null)}
+          </td>
+          <td className={`px-2 py-1.5 text-right font-mono text-xs ${warSeasonClass(b?.b_war ?? null)}`}>
+            {fmt1(b?.b_war ?? null)}
+          </td>
           <td className="px-2 py-1.5 text-right font-mono text-xs text-content-muted">
             {fmtParkAvg(b?.park_avg ?? null)}
           </td>
@@ -582,8 +590,12 @@ function PitcherRow({
           <td className="px-2 py-1.5 text-right font-mono text-xs">{fmtIp(p?.ip_display ?? null)}</td>
           <td className="px-2 py-1.5 text-right font-mono text-xs">{fmt2(p?.fip ?? null)}</td>
           <td className="px-2 py-1.5 text-right font-mono text-xs">{fmt2(p?.siera ?? null)}</td>
-          <td className="px-2 py-1.5 text-right font-mono text-xs font-medium">{fmtInt(p?.era_plus ?? null)}</td>
-          <td className="px-2 py-1.5 text-right font-mono text-xs font-medium">{fmt1(p?.p_war ?? null)}</td>
+          <td className={`px-2 py-1.5 text-right font-mono text-xs ${plusMinusClass(p?.era_plus ?? null)}`}>
+            {fmtInt(p?.era_plus ?? null)}
+          </td>
+          <td className={`px-2 py-1.5 text-right font-mono text-xs ${warSeasonClass(p?.p_war ?? null)}`}>
+            {fmt1(p?.p_war ?? null)}
+          </td>
           <td className="px-2 py-1.5 text-right font-mono text-xs text-content-muted">
             {fmtParkAvg(p?.park_avg ?? null)}
           </td>

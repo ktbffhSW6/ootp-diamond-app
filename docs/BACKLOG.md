@@ -553,11 +553,21 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
 - [ ] **AI overlay** (per D14) — keyring-stored keys, pluggable provider
   adapters, OpenRouter live pricing, four use levels (Off/On-demand/Smart/
   Always-on), per-feature overrides, daily-cap auto-degrade.
-- [ ] **Cockpit dashboard v2** — Club v0 today is just save header +
-  tools grid. Cockpit v2 adds anomaly flags, decisions queue
-  (top regret signals + promotion/demotion candidates from the
-  pressure board), standings + Pythag, recent-moves feed embedded
-  inline.
+- [x] **Cockpit dashboard v2** *(2026-05-12)* — `/` is now the cockpit.
+  Composes save header + warehouse stats + Sox AL East standings +
+  top-3 MLB promotion/pressure pairs + 6 spotlight cards (career-WAR
+  Sparkline + auto-generated NLG insight per card) + last 8 movement
+  ledger rows. Single round-trip via `GET /api/cockpit`. Year is
+  implicit (latest); historical snapshots stay on dedicated tabs.
+  Anomaly flags + Pythag still deferred — would need a per-team
+  RS/RA snapshot + an "expected wins" derivation, neither of which
+  is in the warehouse yet. Decisions-queue framing is implicitly
+  satisfied by the pressure summary card; an explicit "your top
+  regrets" view is a future slice.
+- [x] **Visual upgrade — heat-scale + Sparkline + CareerArc**
+  *(2026-05-12)* — three primitives for richer table rendering, all
+  reusable across future leaderboard / cockpit / player surfaces.
+  See CLAUDE.md "Visual primitives" section for usage.
 - [x] **History view content** *(2026-05-12)* — fully drained. All
   five sections (Records / Awards / HoF / Streaks / Draft) live.
   Hub page links through to each retrospective.

@@ -15,6 +15,7 @@
 
 import type {
   AwardsResponse,
+  CockpitResponse,
   DraftClassResponse,
   GlossaryEntry,
   GlossaryListResponse,
@@ -213,6 +214,14 @@ export async function getPressure(args: {
   if (args.limit !== undefined) params.push(`limit=${args.limit}`);
   const qs = params.length === 0 ? "" : `?${params.join("&")}`;
   return fetchJson<PressureResponse>(`/api/pressure${qs}`);
+}
+
+// Cockpit dashboard — composes standings + pressure summary +
+// spotlight cards + recent movements into one round-trip payload.
+// Always reflects "now" (latest year with data); year-spanning views
+// live on /league, /pressure, /movements per their own pickers.
+export async function getCockpit(): Promise<CockpitResponse> {
+  return fetchJson<CockpitResponse>("/api/cockpit");
 }
 
 // Trigger a one-click shutdown of both dev servers (Next.js :3000 and

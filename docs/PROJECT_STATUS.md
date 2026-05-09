@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: History tab fully drained + Pressure board live.** All five History stubs shipped today (Records / Awards / HoF / Streaks / Draft) plus the Pressure board — the GM-decision "who *should* move" view that's the natural counterpart to the existing movement ledger. Backed by `GET /api/records?scope=&discipline=&category=&era=` — UNIONs save data + Lahman 1871-2019 + BREF 2020-2025 + cross-source merged career rollups + Statcast 2015-2025 batted-ball quality. Three flat picker rows (Scope / Discipline / Era) + a Category strip dynamically populated from the available leaderboards in `f_record_player`. Source chips color-coded (emerald=save, indigo=lahman, sky=bref, violet=merged, amber=statcast); rows clickable through to `/player/<id>` when the underlying record carries an OOTP player_id, plain-text otherwise. Server re-ranks rows globally when era=all so duplicates between `save` (OOTP-imported) and `lahman` (real-life) sit adjacent — confirms the data integration story (Bonds 73 / 73, McGwire 70 / 70, etc.). Earlier today shipped the situational-splits stack (5 slices, 14 splits per year/level) + the **D20 pre-save MLB baselines maintenance pass** that drains `—` from advanced stats on every imported real-history player-season.
+**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: History tab fully drained + Pressure board live + Cockpit v2 + visual polish.** Single push today: all five History stubs (Records / Awards / HoF / Streaks / Draft), the Pressure board, then a three-slice visual upgrade — heat-scale gradient on every league-relative metric, Sparkline + CareerArc components on the player page, and a real cockpit dashboard at `/` composing standings + pressure summary + spotlight cards (with inline career-arc sparklines + auto-generated insights) + recent moves into one round-trip. Backed by `GET /api/records?scope=&discipline=&category=&era=` — UNIONs save data + Lahman 1871-2019 + BREF 2020-2025 + cross-source merged career rollups + Statcast 2015-2025 batted-ball quality. Three flat picker rows (Scope / Discipline / Era) + a Category strip dynamically populated from the available leaderboards in `f_record_player`. Source chips color-coded (emerald=save, indigo=lahman, sky=bref, violet=merged, amber=statcast); rows clickable through to `/player/<id>` when the underlying record carries an OOTP player_id, plain-text otherwise. Server re-ranks rows globally when era=all so duplicates between `save` (OOTP-imported) and `lahman` (real-life) sit adjacent — confirms the data integration story (Bonds 73 / 73, McGwire 70 / 70, etc.). Earlier today shipped the situational-splits stack (5 slices, 14 splits per year/level) + the **D20 pre-save MLB baselines maintenance pass** that drains `—` from advanced stats on every imported real-history player-season.
 
 Maintenance slice — **D20 pre-save MLB baselines** (closed earlier today): The `_lg_constants_advanced` view is now a UNION of `_native` (OOTP `league_history_*` — save years only) and `_imported` (Lahman 1871-2019 + BREF 2020-2025, summed across AL/NL into MLB league_id=203, level_id=1). `f_player_season_advanced_batting` jumped from 30k → **244,183 rows** — every imported MLB player-season pre-2026 now resolves wOBA / wRC+ / OPS+ / FIP / ERA+ / b_WAR. Headline spot-checks: Bonds 2001 wOBA .550 / OPS+ 257 / b_WAR 12.5 (vs BBR 259 / 12.5); Pujols 2003 OPS+ 189 (BBR 189 — exact); Trout 2018 OPS+ 198 (real 198 — exact); Pedro 2000 ERA+ 285 (BBR 291); Mantle 1956 OPS+ 220 (BBR 210, modern Yankee Stadium PF gap). Soft-skip on missing history tables means smoke / fresh warehouses still build cleanly. Park factors for pre-2026 use the team's *current-day* park (deferred follow-on); minor-league pre-save baselines stay null (Lahman doesn't carry them). Reconcile harness clean — no save-side regression.
 
@@ -15,7 +15,7 @@ Earlier-today slices (situational stack) in order:
 4. **Bases + platoon splits** — added `bases_empty` / `bases_loaded` (off `base1/2/3`) and `vs_left` / `vs_right` (LEFT JOIN to `players_current` for handedness; switch-hitters resolve to opposite of pitcher's hand). Side-aware labels: batter card "vs LHP/RHP", pitcher card "vs LHB/RHB". Sanity invariant: `vs_left + vs_right = all` ✓.
 5. **Counts + spray splits** — added `first_pitch` / `two_strike` / `full_count` (count BEFORE the resolving pitch) and `pull` / `center` / `oppo` (BIP-only spray; UI skips color coding since denominators differ). Empirically verified `hit_xy` is **batter-relative**, not field-absolute (mean hit_xy on HRs ≈71 for both LHB and RHB — same pull-side band), corrected DATA_NOTES.
 
-**Next**: Pressure board shipped 2026-05-12 closes one of the three top picks. Remaining: **Salary stream** on player page (`contract_current.salary0..14` + option types + no-trade clause; powers trade-analyzer + extension-decision tools later) or **Compare** under Explore (first live mode in the Explore sandbox; forces the chart-stack decision Vega-Lite vs Plotly). Salary stream is more incremental (extends an existing page); Compare is the bigger investment that unlocks the Explore tab.
+**Next**: with Cockpit + visual upgrade landed, the Club tab is now a real GM dashboard. Remaining picks: **Salary stream** on player page (`contract_current.salary0..14` + option types + no-trade clause; powers trade-analyzer + extension-decision tools later) or **Compare** under Explore (first live mode in the Explore sandbox; forces the chart-stack decision Vega-Lite vs Plotly).
 
 ---
 
@@ -784,7 +784,33 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
 28. **History tab fully drained** as of 2026-05-12 — all five
     sections (Records / Awards / HoF / Streaks / Draft) live.
     Tab graduated from stub to fully-content section.
-29. **Pressure board** ✅ (2026-05-12) — `/pressure` lives.
+29. **Visual upgrade — heat-scale + Sparkline + CareerArc + Cockpit
+    v2** ✅ (2026-05-12). Three slices in one push:
+    a. **Heat-scale utility** (`web/lib/heatscale.ts`) — central
+       `plusMinusClass` + `warSeasonClass` color functions with
+       five-tier gradients per side, bg fills at the extremes
+       (≥160 / ≤40 OPS+, ≥8 / ≤-2 WAR). Applied uniformly to
+       roster Advanced columns + player-page Advanced section +
+       pressure board metric. The eye now jumps to MVP-tier rows
+       and replacement-level red flags without hunting.
+    b. **Sparkline + CareerArc components** — pure inline SVG, no
+       chart lib added. Sparkline (~120 lines) is a tiny trend line
+       with auto-trend coloring; reusable on cockpit cards + future
+       leaderboard rows. CareerArc (~250 lines) is a season-by-year
+       line chart with WAR-magnitude dot fills, peak-tier reference
+       band, year-axis ticks; sits between bio header and tab strip
+       on `/player/[id]`. Bonds 2001 spike, Trout's flat plateau,
+       Skubal's ascending arc — all visible at a glance.
+    c. **Cockpit v2** at `/` — replaces the old tools-grid landing.
+       `GET /api/cockpit` composes Sox AL East standings + top-3
+       MLB promotion / pressure pairs + 6 spotlight cards (each with
+       inline career-WAR sparkline + auto-generated NLG insight
+       like "Bounceback — 149 after 90 in 2028" for Suarez or
+       "Off year — 127 down from 186 peak" for Crochet) + last 8
+       movement-ledger rows. One round-trip; year is implicit
+       (latest); historical views stay on dedicated tabs. The
+       Sox 93-69 division-leader status is the page's first paint.
+30. **Pressure board** ✅ (2026-05-12) — `/pressure` lives.
     `GET /api/pressure?year=&limit=` returns per-level promotion
     candidates + pressure cases for the org tree. For each level
     in the pipeline (MLB / AAA / AA / A+ / A / Rk / DSL), the

@@ -130,7 +130,12 @@ web/
     layout.tsx              top-nav (Club / League / World / History / Explore +
                             Glossary + ThemeSwitcher + Quit), no-flash theme init
     globals.css             theme tokens (light/dark/neutral/cb) under :root + [data-theme]
-    page.tsx                Club landing — save header + warehouse-status grid + tools
+    page.tsx                **Cockpit dashboard** — save header + warehouse stats
+                            + Sox division standings + top-3 MLB promotion/pressure
+                            pairs + 6 spotlight cards with inline career-WAR sparklines
+                            + auto-generated NLG insights + last 8 ledger rows.
+                            Composed via /api/cockpit in one round-trip.
+    (legacy)                — old tools-grid landing replaced 2026-05-12 by cockpit v2
     league/page.tsx         standings — sub-league × division × team
                             from `team_record_snapshot`, picker grouped
                             by level + year strip; org-row highlight.
@@ -185,7 +190,7 @@ web/
 
 Every data-fetching page **must** `export const dynamic = "force-dynamic"`. Without it, Next's default static prerender at `next build` time calls the API while uvicorn isn't running and fails with `ECONNREFUSED`. See `docs/DEV.md` "Adding a new API route" for the canonical recipe.
 
-**API surface today**: `/api/health`, `/api/save`, `/api/glossary`, `/api/glossary/{id}`, `/api/players/{id}` (also returns per-position fielding cube + service-time/roster-status block + situational-batting splits), `/api/roster`, `/api/movements?year=YYYY[&include_pending=1]`, `/api/standings?league_id=&year=`, `/api/records?scope=&discipline=&category=&era=&limit=`, `/api/awards?league_id=&award_id=&era=&limit=`, `/api/hof?view=&limit=`, `/api/streaks?streak_id=&scope=&limit=`, `/api/draft?year=`, `/api/pressure?year=&limit=`, `POST /api/admin/shutdown`.
+**API surface today**: `/api/health`, `/api/save`, `/api/cockpit`, `/api/glossary`, `/api/glossary/{id}`, `/api/players/{id}` (also returns per-position fielding cube + service-time/roster-status block + situational-batting splits), `/api/roster`, `/api/movements?year=YYYY[&include_pending=1]`, `/api/standings?league_id=&year=`, `/api/records?scope=&discipline=&category=&era=&limit=`, `/api/awards?league_id=&award_id=&era=&limit=`, `/api/hof?view=&limit=`, `/api/streaks?streak_id=&scope=&limit=`, `/api/draft?year=`, `/api/pressure?year=&limit=`, `POST /api/admin/shutdown`.
 
 ### Warehouse layers
 
@@ -264,7 +269,7 @@ Don't introduce magic numbers in derivation SQL — reference the `IntEnum`. Whe
 
 Top-nav structure committed 2026-05-08 — five tabs that everything else hangs off:
 
-- **Club** (`/`) — your org. Default landing today renders save header + warehouse-status grid + tools card list. Will grow into the cockpit (UI_DESIGN.md §1) as roster / decisions queue / anomaly flags / standings land.
+- **Club** (`/`) — your org. The landing is now the **cockpit dashboard** (2026-05-12) — save header + warehouse stats + Sox division standings strip + top-3 MLB promotion/pressure pairs + spotlight cards (career-WAR sparkline + NLG insight per card) + recent moves feed. Composed in one round-trip via `/api/cockpit`. Year is implicit (latest); historical snapshots stay on dedicated tabs.
 - **League** (`/league`) — your scoped leagues. Stub today; standings + leaderboards + awards races + free agents land here.
 - **World** (`/world`) — every league in the save. Stub; for users who follow international ball.
 - **History** (`/history`) — past seasons. Stub; will absorb the existing CLI surfaces (`diamond records / awards / hof / streaks / draft <year>`).
@@ -273,6 +278,36 @@ Top-nav structure committed 2026-05-08 — five tabs that everything else hangs 
 Plus **Glossary** (cross-cutting reference), **Player pages** (`/player/[id]` — a *target*, not a peer view; reachable from Club roster, League leaderboards, History HoF list, etc.), **ThemeSwitcher**, and **Quit** in the header.
 
 Build rule: **new top-level features land under one of the five prefixes** (or as cross-cutting like glossary). Don't create more `/some-tool` orphan routes. Existing flat routes (`/movements`, `/glossary`, `/player/[id]`) can be renested when their natural parent tab gets richer content.
+
+### Visual primitives (2026-05-12)
+
+Three reusable building blocks for richer table rendering, all in
+`web/`. Use these instead of one-off color logic / inline SVG when
+adding new tables, leaderboards, or hero cards.
+
+- **`lib/heatscale.ts`** — `plusMinusClass(value)` for any 100-relative
+  metric (OPS+ / wRC+ / ERA+ / FIP+) and `warSeasonClass(war)` for
+  single-season WAR cells. Five-tier gradient per side with bg-fill
+  at the extremes. Apply via Tailwind className concat:
+  ``className={`px-2 py-1.5 ${plusMinusClass(row.ops_plus)}`}``.
+  Already wired into roster Advanced view, player Advanced section,
+  pressure board metric column, cockpit pressure summary +
+  spotlight headline numbers.
+- **`components/Sparkline.tsx`** — tiny inline SVG trend chart. Pure
+  polyline + dots, auto-trend coloring (emerald rising, rose falling,
+  sky flat). Drop into any row that wants a "trajectory at a glance":
+  `<Sparkline values={[3.1, 4.5, 6.2, 5.8]} width={120} height={32} />`.
+  Used on cockpit spotlight cards.
+- **`components/CareerArc.tsx`** — full SVG line chart of career
+  WAR by year, with dot fills picked from heat-scale, peak-tier
+  reference band, year-axis ticks, and HTML tooltips per dot.
+  Hard-rolled at ~250 LOC; chosen over a chart-library dependency
+  for v1 since the shape is simple and bundle stays small. Sits
+  between bio header and tab strip on `/player/[id]`. The Vega-Lite
+  vs Plotly chart-stack decision (UI_DESIGN.md §3) is still pending
+  and will land when we need spray charts / EV-LA scatters /
+  distribution viz; until then, hand-rolled SVG is the convention
+  for the simpler trend shapes.
 
 ### Theme system (D18)
 

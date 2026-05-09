@@ -23,6 +23,15 @@ from diamond.api.schemas.awards import (
     AwardLeagueRef,
     AwardsResponse,
 )
+from diamond.api.schemas.cockpit import (
+    CockpitMovementRow,
+    CockpitPressureRow,
+    CockpitPressureSummary,
+    CockpitResponse,
+    CockpitSpotlightCard,
+    CockpitStandingsBlock,
+    CockpitStandingsRow,
+)
 from diamond.api.schemas.draft import (
     DraftBucket,
     DraftClassResponse,
@@ -94,6 +103,13 @@ __all__ = [
     "AwardHolderRow",
     "AwardLeagueRef",
     "AwardsResponse",
+    "CockpitMovementRow",
+    "CockpitPressureRow",
+    "CockpitPressureSummary",
+    "CockpitResponse",
+    "CockpitSpotlightCard",
+    "CockpitStandingsBlock",
+    "CockpitStandingsRow",
     "DraftBucket",
     "DraftClassResponse",
     "DraftClassSummary",

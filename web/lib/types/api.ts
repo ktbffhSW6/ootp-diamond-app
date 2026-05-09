@@ -83,6 +83,120 @@ export interface AwardsResponse {
   total_in_source: number;
 }
 /**
+ * Slimmed-down ledger row for the recent-moves strip.
+ */
+export interface CockpitMovementRow {
+  movement_id: number;
+  player_id: number;
+  display_name: string;
+  movement_type: string;
+  direction: string;
+  from_team_abbr: string | null;
+  to_team_abbr: string | null;
+  movement_date: string;
+}
+/**
+ * One pressure-summary row — slimmer than ``/api/pressure``'s
+ * ``PressurePlayer`` since the cockpit only needs name + headline
+ * metric + level for at-a-glance scanning.
+ */
+export interface CockpitPressureRow {
+  player_id: number;
+  display_name: string;
+  role: "batter" | "pitcher";
+  level_name: string;
+  metric: number;
+  sample: string;
+  team_abbr: string | null;
+}
+/**
+ * Top 3 promotion candidates + top 3 pressure cases at MLB level.
+ *
+ * The cockpit intentionally limits to MLB to keep the strip tight —
+ * the full per-level board lives on ``/pressure``. A user landing
+ * on the cockpit asks "what does my big-league roster need?";
+ * minor-league pressure is one click away.
+ */
+export interface CockpitPressureSummary {
+  promotion: CockpitPressureRow[];
+  pressure: CockpitPressureRow[];
+}
+/**
+ * Whole dashboard payload — one round-trip composes everything.
+ *
+ * ``year`` is the current cockpit year (defaults to latest with
+ * data; ``available_years`` is omitted because the cockpit is
+ * intentionally fixed to "now" — historical snapshots live on
+ * ``/league`` / ``/pressure`` / ``/movements`` per their own pickers).
+ */
+export interface CockpitResponse {
+  year: number;
+  org_team_id: number;
+  standings: CockpitStandingsBlock | null;
+  pressure: CockpitPressureSummary;
+  spotlight: CockpitSpotlightCard[];
+  recent_movements: CockpitMovementRow[];
+}
+/**
+ * The user's division standings only — single block, no
+ * sub-league / cross-division clutter on the landing.
+ *
+ * ``division_name`` may be null for leagues without divisions; the
+ * UI hides the header in that case. ``snapshot_date`` is the
+ * resolved MAX(dump_date) within the cockpit's chosen year so the
+ * user knows which monthly cut they're seeing.
+ */
+export interface CockpitStandingsBlock {
+  division_name: string | null;
+  snapshot_date: string;
+  rows: CockpitStandingsRow[];
+}
+/**
+ * One team line in the user's division standings.
+ *
+ * ``is_user_org`` flags the row for the audit team (Boston) so the
+ * UI highlights it without having to know the team_id.
+ */
+export interface CockpitStandingsRow {
+  team_id: number;
+  abbr: string | null;
+  nickname: string | null;
+  w: number;
+  l: number;
+  pct: number;
+  gb: number;
+  streak: number;
+  is_user_org: boolean;
+}
+/**
+ * One marquee Sox player. The card combines a current-year
+ * headline metric, a career WAR sparkline, and a one-line auto-
+ * generated insight.
+ *
+ * ``career_war_by_year`` is a parallel-list pair of (year, war)
+ * aligned by index. Years with no advanced data render as nulls
+ * in the WAR list so the sparkline draws gaps cleanly.
+ *
+ * ``insight`` is server-generated NLG ("Career year — 9.3 WAR
+ * blows past prior 6.1 peak") and is null when no comparable can
+ * be computed (e.g., rookie season). The UI renders it as a small
+ * italic line under the name.
+ */
+export interface CockpitSpotlightCard {
+  player_id: number;
+  display_name: string;
+  position: number;
+  role: "batter" | "pitcher" | "two-way";
+  team_abbr: string | null;
+  headline_metric_label: string;
+  headline_metric_value: number;
+  sample: string;
+  war_current: number;
+  career_years: number[];
+  career_war: (number | null)[];
+  insight: string | null;
+}
+/**
  * One outcome bucket, with its picks ordered by overall pick ASC.
  *
  * Per-bucket count surfaced separately so the UI can render

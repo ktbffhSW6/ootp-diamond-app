@@ -13,6 +13,7 @@
 import Link from "next/link";
 
 import { getPressure } from "@/lib/api";
+import { plusMinusClass } from "@/lib/heatscale";
 import type {
   PressureLevelGroup,
   PressurePlayer,
@@ -98,15 +99,10 @@ function fmtPosition(p: PressurePlayer): string {
   return "—";
 }
 
-// Color the metric cell — darker green = higher above 100 (better);
-// darker rose = further below. Neutral within ±10.
-function metricCellClass(delta: number): string {
-  if (delta >= 30) return "text-emerald-700 dark:text-emerald-400 font-semibold";
-  if (delta >= 10) return "text-emerald-600 dark:text-emerald-400";
-  if (delta <= -30) return "text-rose-700 dark:text-rose-400 font-semibold";
-  if (delta <= -10) return "text-rose-600 dark:text-rose-400";
-  return "text-content-secondary";
-}
+// Color the metric cell — uses the central heat-scale (web/lib/heatscale.ts)
+// so the gradient matches roster Advanced + player page Advanced. Five
+// intensities per side with bg-fill at the extremes (≥160 / ≤40) so
+// MVP-tier and replacement-level rows really pop in the column.
 
 function PlayerRow({ p }: { p: PressurePlayer }) {
   const roleChip =
@@ -135,7 +131,7 @@ function PlayerRow({ p }: { p: PressurePlayer }) {
         {fmtSample(p)}
       </td>
       <td
-        className={`px-3 py-1.5 text-right font-mono text-sm tabular-nums ${metricCellClass(p.delta)}`}
+        className={`px-3 py-1.5 text-right font-mono text-sm tabular-nums ${plusMinusClass(p.metric)}`}
         title={`${fmtMetricLabel(p.role)} ${p.metric} (${p.delta >= 0 ? "+" : ""}${p.delta} vs lg avg)`}
       >
         {p.metric}

@@ -1,33 +1,30 @@
-// Landing page — the front door to the app.
+// Cockpit dashboard — the front-office "morning coffee" view.
 //
-// Identifies the active save (org + season + warehouse health) and
-// surfaces the tools that exist as a structured list. Replaces the
-// previous three-link placeholder. Per the user's pulse-check on
-// 2026-05-08: build the screens where these tools live before piling
-// on more standalone routes.
+// Replaces the old tools-grid landing as of 2026-05-12. Composes:
+//   - Save header (identity + warehouse status, kept from previous)
+//   - Sox AL East standings strip (with our row pulled out)
+//   - Pressure summary — top 3 promotion + top 3 pressure at MLB
+//   - Spotlight cards — top 6 Sox by current-year WAR with inline
+//     career-WAR sparkline + auto-generated insight
+//   - Recent movements — last 8 ledger rows for the current year
 //
-// Future surfaces (UI_DESIGN.md §1 Front-Office Cockpit):
-// - Roster grid → enables player-page navigation without typing IDs
-// - Decisions queue → top regret signals + promotion candidates
-// - Anomaly flags → AI-tier "what changed since last sync"
-// - Standings + Pythag
-//
-// Each of those plugs into the layout below as a new section once
-// its data source lands. The grouping into "Tools" and "What's next"
-// is meant to tolerate that growth without re-architecting.
+// Single round-trip via /api/cockpit. Year is implicit (latest);
+// historical views live on the dedicated tabs.
 
 import Link from "next/link";
 
-import { getSave } from "@/lib/api";
+import { Sparkline } from "@/components/Sparkline";
+import { plusMinusClass } from "@/lib/heatscale";
+import { getCockpit, getSave } from "@/lib/api";
+import type {
+  CockpitMovementRow,
+  CockpitPressureRow,
+  CockpitResponse,
+  CockpitSpotlightCard,
+  CockpitStandingsRow,
+} from "@/lib/types/api";
 
-export const metadata = {
-  title: "Diamond",
-};
-
-// Force dynamic rendering — Diamond is local-first and every fetch
-// hits the live FastAPI backend at request time. Without this, Next's
-// build-time prerender calls the API while uvicorn isn't running and
-// the build fails with ECONNREFUSED.
+export const metadata = { title: "Diamond" };
 export const dynamic = "force-dynamic";
 
 // ─────────────────────────────────────────────────────────────────────
@@ -48,106 +45,250 @@ function fmtCount(n: number): string {
   return n.toLocaleString("en-US");
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Tool catalog — single source of truth for the landing's nav list.
-// Each entry is a card; status drives whether it links and how it's
-// described. Tools land here as routes ship; "soon" entries describe
-// what they'll do without a target href.
-// ─────────────────────────────────────────────────────────────────────
+function fmtPct(p: number): string {
+  if (!Number.isFinite(p)) return ".000";
+  return p.toFixed(3).replace(/^0/, "");
+}
 
-type ToolStatus = "live" | "soon";
-type Tool = {
-  status: ToolStatus;
-  title: string;
-  href: string | null;
-  blurb: string;
+function fmtGb(gb: number): string {
+  if (gb === 0) return "—";
+  return gb.toFixed(1);
+}
+
+function fmtStreak(s: number): string {
+  if (s === 0) return "—";
+  if (s > 0) return `W${s}`;
+  return `L${Math.abs(s)}`;
+}
+
+function streakClass(s: number): string {
+  if (s === 0) return "text-content-muted";
+  if (s > 0) return "text-emerald-600 dark:text-emerald-400";
+  return "text-rose-600 dark:text-rose-400";
+}
+
+const POSITION_NAMES: Record<number, string> = {
+  1: "P", 2: "C", 3: "1B", 4: "2B", 5: "3B",
+  6: "SS", 7: "LF", 8: "CF", 9: "RF",
 };
 
-const TOOLS: Tool[] = [
-  {
-    status: "live",
-    title: "Movement ledger",
-    href: "/movements",
-    blurb:
-      "Promotions, demotions, acquisitions, and departures with verdict glyphs that flag the moves that worked and the ones to reconsider. Outgoing moves invert the verdict — a player thriving elsewhere reads as 🔴.",
-  },
-  {
-    status: "live",
-    title: "Glossary",
-    href: "/glossary",
-    blurb:
-      "60 stats with formulas (KaTeX-rendered), categories, and interpretation. The shared vocabulary every column header, chart axis, and AI prompt reads from.",
-  },
-  {
-    status: "live",
-    title: "Roster",
-    href: "/roster",
-    blurb:
-      "Every active player in the org tree, grouped by current level (MLB / AAA / AA / A+ / A / Rk / DSL). Filter by level, role, or hand; toggle between basic and advanced stats; click any name for the full player page.",
-  },
-  {
-    status: "live",
-    title: "Player page",
-    // Now reachable via the roster — kept here as a direct link so the
-    // demo path still works (and so the cockpit cards aren't 1×N).
-    href: "/player/26166",
-    blurb:
-      "Bref-shaped player card with a Stats tab (batting / pitching / fielding / advanced sections, multi-stint disclosure rows). Demo path: Gunnar Henderson.",
-  },
-  {
-    status: "live",
-    title: "Pressure board",
-    href: "/pressure",
-    blurb:
-      "Who *should* move — companion to the movement ledger. For each level, the strongest performers (call-up candidates) on the left, the weakest (send-down or replace) on the right. Cross-level pattern reveals roster decisions: 130 OPS+ at AAA next to 75 OPS+ at MLB = obvious swap.",
-  },
-  {
-    status: "soon",
-    title: "Charts tab",
-    href: null,
-    blurb:
-      "On the player page — radial career arc plus the Savant-style EV/LA scatter and trajectory lines, powered by Vega-Lite.",
-  },
-];
+const MOVEMENT_TYPE_LABEL: Record<string, string> = {
+  promotion: "Called up",
+  demotion: "Sent down",
+  trade: "Traded",
+  intra_org_lateral: "Reassigned",
+  signed: "Signed",
+  released: "Released",
+  waiver_or_other: "Waiver",
+  first_appearance: "Joined org",
+};
+
+const DIRECTION_COLOR: Record<string, string> = {
+  internal: "text-sky-700 dark:text-sky-400",
+  incoming: "text-emerald-700 dark:text-emerald-400",
+  outgoing: "text-rose-700 dark:text-rose-400",
+};
 
 // ─────────────────────────────────────────────────────────────────────
-// Subcomponents
+// Sub-components
 // ─────────────────────────────────────────────────────────────────────
 
-function StatusPill({ status }: { status: ToolStatus }) {
-  if (status === "live") {
-    return (
-      <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-        Live
-      </span>
-    );
-  }
+function SectionHeader({
+  title,
+  subtitle,
+  href,
+  hrefLabel,
+}: {
+  title: string;
+  subtitle?: string;
+  href?: string;
+  hrefLabel?: string;
+}) {
   return (
-    <span className="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-content-muted">
-      Soon
-    </span>
+    <header className="mb-3 flex items-baseline justify-between gap-3">
+      <div>
+        <h2 className="text-base font-semibold text-content-primary">{title}</h2>
+        {subtitle && (
+          <p className="text-xs text-content-muted">{subtitle}</p>
+        )}
+      </div>
+      {href && (
+        <Link
+          href={href}
+          className="text-xs text-link hover:text-link-hover hover:underline"
+        >
+          {hrefLabel ?? "View all"} →
+        </Link>
+      )}
+    </header>
   );
 }
 
-function ToolCard({ tool }: { tool: Tool }) {
-  const inner = (
-    <div className="flex h-full flex-col gap-2 rounded-md border border-border bg-surface-card p-4 transition hover:border-border-strong hover:bg-surface-elevated">
-      <div className="flex items-baseline gap-2">
-        <h3 className="text-base font-semibold text-content-primary">{tool.title}</h3>
-        <StatusPill status={tool.status} />
-      </div>
-      <p className="text-sm text-content-secondary">{tool.blurb}</p>
-    </div>
-  );
-  if (tool.status === "soon" || tool.href === null) {
-    // Render as a non-interactive card with reduced opacity so the
-    // visual weight matches its disabled state.
-    return <div className="opacity-60">{inner}</div>;
-  }
+// ─── Standings strip ─────────────────────────────────────────────────
+
+function StandingsRow({ row }: { row: CockpitStandingsRow }) {
+  const orgRowClass = row.is_user_org
+    ? "border-l-2 border-l-accent bg-surface-elevated/60"
+    : "border-l-2 border-l-transparent";
+  const teamLabel = row.nickname ?? row.abbr ?? `Team ${row.team_id}`;
   return (
-    <Link href={tool.href} className="block">
-      {inner}
+    <tr className={`${orgRowClass} border-t border-border`}>
+      <td className="px-3 py-1.5 align-middle">
+        <div className="flex items-baseline gap-2">
+          <span className="font-mono text-xs text-content-muted">
+            {row.abbr ?? "—"}
+          </span>
+          <span className="text-sm font-medium text-content-primary">
+            {teamLabel}
+          </span>
+          {row.is_user_org && (
+            <span className="text-[10px] uppercase tracking-wider text-accent">
+              You
+            </span>
+          )}
+        </div>
+      </td>
+      <td className="px-3 py-1.5 text-right font-mono text-sm tabular-nums text-content-primary">
+        {row.w}-{row.l}
+      </td>
+      <td className="px-3 py-1.5 text-right font-mono text-sm tabular-nums text-content-secondary">
+        {fmtPct(row.pct)}
+      </td>
+      <td className="px-3 py-1.5 text-right font-mono text-sm tabular-nums text-content-secondary">
+        {fmtGb(row.gb)}
+      </td>
+      <td className={`px-3 py-1.5 text-right font-mono text-sm tabular-nums ${streakClass(row.streak)}`}>
+        {fmtStreak(row.streak)}
+      </td>
+    </tr>
+  );
+}
+
+// ─── Pressure summary ────────────────────────────────────────────────
+
+function PressureRow({
+  row,
+  side,
+}: {
+  row: CockpitPressureRow;
+  side: "promotion" | "pressure";
+}) {
+  const roleChip =
+    row.role === "batter"
+      ? "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300"
+      : "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300";
+  const metricLabel = row.role === "batter" ? "OPS+" : "ERA+";
+  return (
+    <li className="flex items-baseline gap-2 border-t border-border py-1.5 first:border-t-0">
+      <span
+        className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide ${roleChip}`}
+      >
+        {row.role === "batter" ? "B" : "P"}
+      </span>
+      <Link
+        href={`/player/${row.player_id}`}
+        className="flex-1 truncate text-sm font-medium text-link hover:text-link-hover hover:underline"
+      >
+        {row.display_name}
+      </Link>
+      <span className="font-mono text-[10px] text-content-muted">{row.sample}</span>
+      <span
+        className={`font-mono text-sm font-semibold tabular-nums ${plusMinusClass(row.metric)}`}
+        title={`${metricLabel} ${row.metric}`}
+      >
+        {row.metric}
+      </span>
+    </li>
+  );
+}
+
+// ─── Spotlight card ──────────────────────────────────────────────────
+
+function SpotlightCard({ card }: { card: CockpitSpotlightCard }) {
+  // Build the sparkline series, padding gaps for years with no data
+  // (e.g., Tommy John recovery). Career-WAR list already has nulls
+  // for missing years per the API contract.
+  const values: (number | null)[] = card.career_war;
+  const positionLabel =
+    card.role === "two-way" ? "TWO" : POSITION_NAMES[card.position] ?? "—";
+  const headlineColor = plusMinusClass(card.headline_metric_value);
+  return (
+    <Link
+      href={`/player/${card.player_id}`}
+      className="block rounded-md border border-border bg-surface-card p-3 transition hover:border-border-strong hover:bg-surface-elevated"
+    >
+      <div className="flex items-baseline gap-2">
+        <span className="rounded bg-surface-elevated px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-content-muted">
+          {positionLabel}
+        </span>
+        <h3 className="flex-1 truncate text-sm font-semibold text-content-primary">
+          {card.display_name}
+        </h3>
+        <span className="font-mono text-[10px] text-content-muted">
+          {card.team_abbr ?? "—"}
+        </span>
+      </div>
+      <div className="mt-2 flex items-baseline gap-3">
+        <div>
+          <div className={`font-mono text-2xl font-semibold tabular-nums ${headlineColor}`}>
+            {card.headline_metric_value}
+          </div>
+          <div className="text-[10px] uppercase tracking-wider text-content-muted">
+            {card.headline_metric_label} · {card.sample}
+          </div>
+        </div>
+        <div className="ml-auto flex flex-col items-end">
+          <Sparkline
+            values={values}
+            width={120}
+            height={32}
+            label={`Career WAR — ${card.career_years[0]} to ${card.career_years[card.career_years.length - 1]}`}
+          />
+          <div className="mt-0.5 font-mono text-[10px] text-content-muted">
+            <span className="font-semibold text-content-secondary">
+              {card.war_current >= 0 ? "+" : ""}
+              {card.war_current.toFixed(1)}
+            </span>{" "}
+            WAR · career arc
+          </div>
+        </div>
+      </div>
+      {card.insight && (
+        <p className="mt-2 border-t border-border pt-2 text-xs italic text-content-secondary">
+          {card.insight}
+        </p>
+      )}
     </Link>
+  );
+}
+
+// ─── Recent movements feed ───────────────────────────────────────────
+
+function MovementRow({ row }: { row: CockpitMovementRow }) {
+  const verb = MOVEMENT_TYPE_LABEL[row.movement_type] ?? row.movement_type;
+  const dirClass = DIRECTION_COLOR[row.direction] ?? "text-content-secondary";
+  const teamPath =
+    row.direction === "incoming"
+      ? `→ ${row.to_team_abbr ?? "—"}`
+      : row.direction === "outgoing"
+        ? `${row.from_team_abbr ?? "—"} →`
+        : `${row.from_team_abbr ?? "—"} → ${row.to_team_abbr ?? "—"}`;
+  return (
+    <li className="flex items-baseline gap-3 border-t border-border py-1.5 first:border-t-0">
+      <span className="font-mono text-[10px] text-content-muted">
+        {fmtDate(row.movement_date)}
+      </span>
+      <span className={`font-mono text-[10px] uppercase tracking-wider ${dirClass}`}>
+        {verb}
+      </span>
+      <Link
+        href={`/player/${row.player_id}`}
+        className="flex-1 truncate text-sm font-medium text-link hover:text-link-hover hover:underline"
+      >
+        {row.display_name}
+      </Link>
+      <span className="font-mono text-xs text-content-muted">{teamPath}</span>
+    </li>
   );
 }
 
@@ -155,14 +296,16 @@ function ToolCard({ tool }: { tool: Tool }) {
 // Page
 // ─────────────────────────────────────────────────────────────────────
 
-export default async function HomePage() {
-  const save = await getSave();
+export default async function CockpitPage() {
+  const [save, cockpit] = await Promise.all([getSave(), getCockpit()]);
+  const data: CockpitResponse = cockpit;
+
   const orgLabel = save.org_team_nickname
     ? `${save.org_team_abbr ?? ""} ${save.org_team_nickname}`.trim()
     : (save.org_team_abbr ?? `Team ${save.org_team_id}`);
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-8">
       {/* ── Header — save identity ───────────────────────────────── */}
       <header className="space-y-2 border-b border-border pb-6">
         <p className="text-xs font-medium uppercase tracking-wider text-content-muted">
@@ -211,22 +354,135 @@ export default async function HomePage() {
         />
       </section>
 
-      {/* ── Tools section ────────────────────────────────────────── */}
+      {/* ── Cockpit row 1: Standings + Pressure summary ─────────── */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {/* Standings strip */}
+        <section className="rounded-md border border-border bg-surface-card p-4">
+          <SectionHeader
+            title={data.standings?.division_name ?? "Division"}
+            subtitle={
+              data.standings
+                ? `Standings as of ${fmtDate(data.standings.snapshot_date)}`
+                : "No standings data"
+            }
+            href="/league"
+            hrefLabel="Full standings"
+          />
+          {data.standings && data.standings.rows.length > 0 ? (
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="bg-surface-elevated text-[10px] uppercase tracking-wide text-content-muted">
+                  <th className="px-3 py-1.5 text-left font-medium">Team</th>
+                  <th className="px-3 py-1.5 text-right font-medium">W-L</th>
+                  <th className="px-3 py-1.5 text-right font-medium">Pct</th>
+                  <th className="px-3 py-1.5 text-right font-medium">GB</th>
+                  <th className="px-3 py-1.5 text-right font-medium">Strk</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.standings.rows.map((r) => (
+                  <StandingsRow key={r.team_id} row={r} />
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="text-xs text-content-muted">
+              No standings rows available yet.
+            </p>
+          )}
+        </section>
+
+        {/* Pressure summary */}
+        <section className="rounded-md border border-border bg-surface-card p-4">
+          <SectionHeader
+            title="MLB Pressure"
+            subtitle="Top performers vs strugglers, who should move"
+            href="/pressure"
+            hrefLabel="Full board"
+          />
+          <div className="grid grid-cols-1 gap-x-4 gap-y-3 lg:grid-cols-2">
+            <div>
+              <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+                ↑ Promotion
+              </h3>
+              {data.pressure.promotion.length > 0 ? (
+                <ul>
+                  {data.pressure.promotion.map((row) => (
+                    <PressureRow key={`p-${row.player_id}-${row.role}`} row={row} side="promotion" />
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-content-muted">No qualifiers yet.</p>
+              )}
+            </div>
+            <div>
+              <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-rose-700 dark:text-rose-400">
+                ↓ Pressure
+              </h3>
+              {data.pressure.pressure.length > 0 ? (
+                <ul>
+                  {data.pressure.pressure.map((row) => (
+                    <PressureRow key={`pr-${row.player_id}-${row.role}`} row={row} side="pressure" />
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-content-muted">No qualifiers yet.</p>
+              )}
+            </div>
+          </div>
+        </section>
+      </div>
+
+      {/* ── Cockpit row 2: Spotlight cards ──────────────────────── */}
       <section>
-        <h2 className="mb-4 text-lg font-semibold text-content-primary">Tools</h2>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {TOOLS.map((tool) => (
-            <ToolCard key={tool.title} tool={tool} />
-          ))}
-        </div>
+        <SectionHeader
+          title="Spotlight"
+          subtitle={`Top ${data.spotlight.length} ${orgLabel} players by ${data.year} WAR — career arc + insight`}
+          href="/roster"
+          hrefLabel="Full roster"
+        />
+        {data.spotlight.length > 0 ? (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {data.spotlight.map((card) => (
+              <SpotlightCard key={card.player_id} card={card} />
+            ))}
+          </div>
+        ) : (
+          <p className="rounded-md border border-border bg-surface-card px-4 py-3 text-sm text-content-muted">
+            No spotlight players for {data.year} yet.
+          </p>
+        )}
       </section>
 
-      {/* ── Footer note ──────────────────────────────────────────── */}
+      {/* ── Cockpit row 3: Recent movements ─────────────────────── */}
+      <section className="rounded-md border border-border bg-surface-card p-4">
+        <SectionHeader
+          title="Recent moves"
+          subtitle={`Latest ledger activity in ${data.year}`}
+          href="/movements"
+          hrefLabel="Full ledger"
+        />
+        {data.recent_movements.length > 0 ? (
+          <ul>
+            {data.recent_movements.map((row) => (
+              <MovementRow key={row.movement_id} row={row} />
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-content-muted">
+            No movements recorded for {data.year}.
+          </p>
+        )}
+      </section>
+
+      {/* ── Footer ──────────────────────────────────────────────── */}
       <p className="border-t border-border pt-4 text-xs text-content-muted">
-        Diamond is a local-first single-user app per Decision D16. Phase 3
-        UI build is in progress — expect this landing to grow into a
-        front-office cockpit (UI_DESIGN.md §1) as the cockpit&apos;s data
-        sources land.
+        Cockpit composes <Link href="/league" className="text-link hover:text-link-hover">standings</Link>,{" "}
+        <Link href="/pressure" className="text-link hover:text-link-hover">pressure board</Link>,{" "}
+        <Link href="/roster" className="text-link hover:text-link-hover">roster</Link>, and{" "}
+        <Link href="/movements" className="text-link hover:text-link-hover">movement ledger</Link>{" "}
+        into one view. Year is implicit (latest);
+        historical snapshots live on the dedicated tabs.
       </p>
     </div>
   );

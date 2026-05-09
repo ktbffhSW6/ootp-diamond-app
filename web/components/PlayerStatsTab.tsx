@@ -17,6 +17,8 @@
 
 import { useState } from "react";
 
+import { plusMinusClass, warSeasonClass } from "@/lib/heatscale";
+
 import type {
   GlossaryEntry,
   GlossaryListResponse,
@@ -164,6 +166,25 @@ const ONE_DP_FIELDS = new Set([
   "pit_war", "p_war", "p_ra9_war",
   "wraa", "wrc",
 ]);
+
+// Heat-scale field routing. Maps an Advanced-column field name to the
+// scale function that should color the cell. Per heatscale.ts:
+//   - 100-relative (plusMinusClass) for OPS+/wRC+/ERA+ — values centered
+//     on 100, higher = better.
+//   - WAR-magnitude (warSeasonClass) for any single-season WAR field.
+// Anything else returns empty so the cell stays in default text color.
+const PLUS_MINUS_FIELDS = new Set(["wrc_plus", "ops_plus", "era_plus"]);
+const WAR_FIELDS = new Set([
+  "o_war", "b_war",
+  "pit_war", "p_war", "p_ra9_war",
+]);
+
+function heatClass(field: string, value: unknown): string {
+  if (typeof value !== "number") return "";
+  if (PLUS_MINUS_FIELDS.has(field)) return plusMinusClass(value);
+  if (WAR_FIELDS.has(field)) return warSeasonClass(value);
+  return "";
+}
 
 function formatCell(field: string, value: unknown): string {
   if (value == null) return "—";
@@ -499,14 +520,18 @@ function AdvancedBattingTable({
                     {r.league_abbr ?? "—"}
                   </span>
                 </td>
-                {ADV_BATTING_COLUMNS.map(([field]) => (
-                  <td
-                    key={field as string}
-                    className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-primary"
-                  >
-                    {formatCell(field as string, (r as unknown as Record<string, unknown>)[field as string])}
-                  </td>
-                ))}
+                {ADV_BATTING_COLUMNS.map(([field]) => {
+                  const v = (r as unknown as Record<string, unknown>)[field as string];
+                  const heat = heatClass(field as string, v);
+                  return (
+                    <td
+                      key={field as string}
+                      className={`px-2 py-1.5 text-right font-mono text-sm tabular-nums ${heat || "text-content-primary"}`}
+                    >
+                      {formatCell(field as string, v)}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
@@ -574,14 +599,18 @@ function AdvancedPitchingTable({
                     {r.league_abbr ?? "—"}
                   </span>
                 </td>
-                {ADV_PITCHING_COLUMNS.map(([field]) => (
-                  <td
-                    key={field as string}
-                    className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-primary"
-                  >
-                    {formatCell(field as string, (r as unknown as Record<string, unknown>)[field as string])}
-                  </td>
-                ))}
+                {ADV_PITCHING_COLUMNS.map(([field]) => {
+                  const v = (r as unknown as Record<string, unknown>)[field as string];
+                  const heat = heatClass(field as string, v);
+                  return (
+                    <td
+                      key={field as string}
+                      className={`px-2 py-1.5 text-right font-mono text-sm tabular-nums ${heat || "text-content-primary"}`}
+                    >
+                      {formatCell(field as string, v)}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>

@@ -12,6 +12,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { CareerArc } from "@/components/CareerArc";
 import { PlayerStatsTab } from "@/components/PlayerStatsTab";
 import { getGlossary, getPlayer } from "@/lib/api";
 
@@ -232,6 +233,17 @@ export default async function PlayerPage({ params }: Props) {
           </div>
         </section>
       )}
+
+      {/* Career arc — small WAR-by-year line chart between the Service
+          card and the tab strip. Shape tells the career story at a
+          glance (peak years, trajectory, gaps). Renders an empty
+          placeholder for players with no advanced data. */}
+      <section>
+        <CareerArc
+          batting={player.advanced_batting}
+          pitching={player.advanced_pitching}
+        />
+      </section>
 
       {/* Tab strip — only Stats is wired in v1; others are placeholders.
           Sticky-position lands when we add scrollable per-tab content. */}
