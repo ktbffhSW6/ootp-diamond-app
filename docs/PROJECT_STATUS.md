@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: four slices in one day** — situational ("clutch / RISP") splits on the player page, multi-year `f_pa_event` (closes the prior-year coverage gap), pitcher situational splits, and bases / platoon splits (extended from 4 to 8 splits per (year, level)). (1) Batter splits: All / RISP / RISP 2-out / Late & Close per (year, level), OPS color-coded vs the All baseline. (2) Multi-year fix: the "OOTP replaces at_bats_event.csv on rollover" caveat was build-side, not storage-side — L0 retains every ingested dump's rows by `dump_date`. Rebuilt `f_pa_event` to read L0 directly with cross-dump dedup keyed on (game_id, season_year); discovered **OOTP recycles `game_id` across seasons**, so PK promoted to (year, game_id, batter_id, pa_in_game_seq). `f_pa_event` 877k → 5.1M; `f_player_season_statcast_*` 3,305 / 3,692 → 20,800 / 21,513; `f_record_player` 1,840 → 4,550. (3) Pitcher splits: same SQL template keyed on `pitcher_id`, slash reflects what the pitcher ALLOWED. UI color logic inverts — emerald when OPS-allowed beats the All baseline (lower = better in clutch), rose when it lags. Crochet 2027 RISP 2-out **.316 OPS allowed** (elite clutch); 2029 .839 (rose). **Next: port a CLI history surface** (records / awards / hof / streaks) to the `/history` tab.
+**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: five slices in one day** — situational ("clutch / RISP") splits on the player page, multi-year `f_pa_event` (closes the prior-year coverage gap), pitcher situational splits, bases / platoon splits, and counts / spray splits (extended from 4 to **14** splits per (year, level)). Empirically verified that `hit_xy` is **batter-relative** along the way (mean hit_xy on HRs ≈71 for both LHB and RHB — same pull-side band for both hands), correcting an earlier DATA_NOTES claim that it was field-absolute. (1) Batter splits: All / RISP / RISP 2-out / Late & Close per (year, level), OPS color-coded vs the All baseline. (2) Multi-year fix: the "OOTP replaces at_bats_event.csv on rollover" caveat was build-side, not storage-side — L0 retains every ingested dump's rows by `dump_date`. Rebuilt `f_pa_event` to read L0 directly with cross-dump dedup keyed on (game_id, season_year); discovered **OOTP recycles `game_id` across seasons**, so PK promoted to (year, game_id, batter_id, pa_in_game_seq). `f_pa_event` 877k → 5.1M; `f_player_season_statcast_*` 3,305 / 3,692 → 20,800 / 21,513; `f_record_player` 1,840 → 4,550. (3) Pitcher splits: same SQL template keyed on `pitcher_id`, slash reflects what the pitcher ALLOWED. UI color logic inverts — emerald when OPS-allowed beats the All baseline (lower = better in clutch), rose when it lags. Crochet 2027 RISP 2-out **.316 OPS allowed** (elite clutch); 2029 .839 (rose). **Next: port a CLI history surface** (records / awards / hof / streaks) to the `/history` tab.
 
 ---
 
@@ -679,10 +679,39 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
       dominance), vs RHB .697 (typical platoon disadvantage); bases
       loaded .429 (locked in with bases full).
 
-23. **Port a CLI history surface** *(next slice)* — drain the
+23. ✅ **Counts + spray splits** — done 2026-05-12. Extended the
+    situational sections from 8 splits to **14** per (year, level).
+    Three new clusters added on top of the existing leverage / bases /
+    platoon clusters:
+    - **Counts** — `first_pitch` (0-0 result; PA resolved on pitch 1),
+      `two_strike` (strikes=2 when resolved), `full_count` (3-2 when
+      resolved). Read off `f_pa_event.balls`/`strikes` which carry the
+      count BEFORE the resolving pitch.
+    - **Spray** — `pull`, `center`, `oppo`. Filtered to BIP only;
+      AVG within these splits = hits-per-BIP (BABIP-with-HR);
+      OBP collapses to AVG (BB/HBP excluded). UI skips OPS-vs-baseline
+      color coding for spray since the denominator semantics differ.
+
+    **Empirical finding** along the way: `hit_xy` is **batter-relative**,
+    not field-absolute. Verified by computing mean `hit_xy` on HRs by
+    bat hand at MLB-2029: LHB mean ≈73, RHB mean ≈71 — same pull-side
+    band for both hands. If hit_xy were field-absolute the means would
+    diverge. Updated the spray rule to be hand-INDEPENDENT
+    (`x ≤ 5` → pull, `6..9` → center, `x ≥ 10` → oppo, applied to both
+    L and R uniformly) and corrected the DATA_NOTES "Low = LF-side"
+    claim.
+
+    Verified: Devers 2029 spray reads correctly — Pull 12 HR (1.183
+    OPS), Center 15 HR (1.190 OPS), Oppo 0 HR (.566 OPS); 12+15+0=27
+    total HRs. Counts: First pitch .725, Two strikes .585 (drops
+    sharply), Full count .820 (recovers). Crochet 2029 allowed-spray
+    shows pull-side damage (.715 SLG-allowed pull, 13 HR allowed pull;
+    0 HR allowed oppo).
+
+24. **Port a CLI history surface** *(next slice)* — drain the
     `/history` stub with one of `records / awards / hof / streaks`.
     All four surfaces exist as L3 facts already; UI work only.
-24. Then the rest of the UI_DESIGN.md ladder (pressure board, salary
+25. Then the rest of the UI_DESIGN.md ladder (pressure board, salary
     stream, compare under Explore, etc.).
 
 **Open audit carry-forwards** (non-blocking, picked up opportunistically):

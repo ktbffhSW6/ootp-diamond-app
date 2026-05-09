@@ -196,7 +196,7 @@ Best-guess mapping based on frequency + avg length + day-to-day rate:
 - **`bats`**: 1=R (76% of players), 2=L (24%), 3=S (6%)
 - **`throws`**: 1=R, 2=L (same convention as bats)
 - **`hit_loc`**: integer field-grid code. 1-49 = infield zones, 38-99 = outfield zones, 98-105 = over-the-fence (HR zones, 6 distinct codes by depth/direction). Ground outs concentrate in 1-43, fly outs in 44-99.
-- **`hit_xy`**: 0-255 lateral position. Low = LF-side, high = RF-side. Used for Pull/Cent/Oppo derivation. ZERO values represent "no spatial coordinate" (~50 BIP per result code).
+- **`hit_xy`**: 0-255 lateral position; packed 16×16 (`x = hit_xy / 16`, `y = hit_xy % 16`). **Empirically batter-relative** (verified 2026-05-12 against MLB-2029): mean `hit_xy ≈ 71` for both LHB and RHB HRs — same pull-side band for both hands. If hit_xy were field-absolute the means would diverge by hand. So pull / center / oppo classification doesn't branch on bat hand: `x ≤ 5` → pull, `6..9` → center, `x ≥ 10` → oppo, applied uniformly. (Earlier note in this file said "low = LF-side, high = RF-side" — the empirical evidence shows hit_xy is in batter's own frame, not the field's. Updated.) ZERO values represent "no spatial coordinate" (~50 BIP per result code) and are excluded from spray classification.
 - **`exit_velo`**: mph. 0 = no batted ball (K, BB, HBP).
 - **`launch_angle`**: degrees (positive = up). Edge cases at -65 etc. exist but are rare.
 - **`Close`**: 1 if the game-state was "close" (typically within 4 runs after the 7th).
@@ -411,18 +411,18 @@ formula TBD if we ever care about archetypes.
 ## hit_xy spray decode (partial — exact boundary TBD)
 
 `players_at_bat_batting_stats.hit_xy` is a 16×16 packed coordinate:
-`x = floor(hit_xy / 16)`, `y = hit_xy % 16` with x going across the
-field and y from home plate to outfield wall. The "naive" spray bins
-(LF=[0,4], CF=[5,10], RF=[11,15]) consistently under-count Pull% by
-~5–10pp vs IE — for example, RHB Eric Coles shows IE Pull=44.1% but
-naive=36.4%. The exact OOTP boundary appears to be different (possibly
-shifted, possibly weighted by `hit_loc`). Left as E-tier with the naive
-formula; spray-direction is right but magnitudes need calibration.
-
-For switch hitters (`players.bats=3`), effective batter side is opposite
-the pitcher's throwing hand: vs RHP they bat L (pull = RF), vs LHP they
-bat R (pull = LF). Pitcher handedness is recoverable via
-`opponent_player_id` → `players.throws`.
+`x = floor(hit_xy / 16)`, `y = hit_xy % 16`. **Empirically `hit_xy`
+is batter-relative** (verified 2026-05-12): mean hit_xy on HRs is
+≈71 for both LHB and RHB hitters — same pull-side band for both
+hands. If the coord were field-absolute the means would diverge by
+hand. So the player-page spray splits use a hand-INDEPENDENT rule:
+`x ≤ 5` → pull, `6..9` → center, `x ≥ 10` → oppo. (The earlier
+"naive bins" noted under-counted Pull% vs IE by ~5-10pp — that
+analysis applied a hand-dependent rule that we now know was
+incorrect; the new hand-independent rule still doesn't perfectly
+match IE magnitudes but the direction is reliable.) E-tier match
+quality stays the same — magnitudes still ~5-10pp off vs IE
+because OOTP probably weights `hit_loc` into its spray label too.
 
 ## League-level pre-computed sabermetrics (big future unlock)
 

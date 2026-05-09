@@ -890,15 +890,32 @@ function fmtSlash(v: number | null): string {
 
 type SituationalSide = "batter" | "pitcher";
 
+// Splits whose AVG/OBP/SLG denominators don't share the same shape as
+// the "All" row (e.g. spray splits filter to BIP-only, so OBP collapses
+// to AVG and the comparison loses meaning). Render these in neutral
+// color rather than emerald/rose vs the baseline.
+const SITUATIONAL_NEUTRAL_COLOR_SPLITS = new Set([
+  "pull",
+  "center",
+  "oppo",
+]);
+
 function opsCellClass(
+  split: string,
   splitOps: number | null,
   baselineOps: number | null,
   isBaseline: boolean,
   side: SituationalSide,
 ): string {
   // Baseline (the "All" row) always renders in primary content color so
-  // the eye anchors there. Splits with no sample stay neutral.
-  if (isBaseline || splitOps == null || baselineOps == null) {
+  // the eye anchors there. Splits with no sample, or splits whose
+  // baseline comparison isn't meaningful (spray), stay neutral.
+  if (
+    isBaseline ||
+    splitOps == null ||
+    baselineOps == null ||
+    SITUATIONAL_NEUTRAL_COLOR_SPLITS.has(split)
+  ) {
     return "text-content-primary";
   }
   // 25-point OPS gap = the Bref-conventional "clutch" threshold on the
@@ -1036,6 +1053,7 @@ function SituationalTable({
                   {g.rows.map((r) => {
                     const isBaseline = r.split === "all";
                     const opsClass = opsCellClass(
+                      r.split,
                       r.ops,
                       baselineOps,
                       isBaseline,
@@ -1107,35 +1125,33 @@ function SituationalTable({
         })}
       </div>
       <p className="mt-1 text-xs text-content-muted">
-        <strong>RISP</strong> = runner on 2nd or 3rd at start of PA.
-        {" "}<strong>RISP, 2 out</strong> = the same with two outs
-        (the last-out RBI chance).{" "}
-        <strong>Late &amp; Close</strong> = 7th inning or later with
-        the tying run on base, at the plate, or on deck.{" "}
-        <strong>Bases empty</strong> / <strong>Bases loaded</strong>{" "}
-        are leverage anchors — empty is the low-leverage baseline,
+        <strong>Leverage</strong> · RISP = runner on 2nd/3rd at PA
+        start; RISP, 2 out adds the two-out filter (the last-out
+        RBI chance); Late &amp; Close = 7th+ with the tying run on
+        base, at the plate, or on deck.{" "}
+        <strong>Bases</strong> · empty is the low-leverage baseline,
         loaded is the max-RBI chance.{" "}
+        <strong>Platoon</strong> ·{" "}
         {side === "batter" ? (
-          <>
-            <strong>vs LHP / vs RHP</strong> read off the opposing
-            pitcher&apos;s throwing hand. OPS in a split row is
-            colored emerald when it beats the &ldquo;All&rdquo;
-            baseline by ≥25 points, rose when it lags by ≥25 —
-            clutch hitters reach for the ball.
-          </>
+          <>vs LHP / vs RHP read off the opposing pitcher&apos;s
+            throwing hand.</>
         ) : (
-          <>
-            <strong>vs LHB / vs RHB</strong> read off the effective
-            batter hand — switch-hitters resolve to the opposite of
-            this pitcher&apos;s throwing hand. Slash columns reflect
-            what the pitcher <em>allowed</em>; OPS-allowed in a split
-            row is colored emerald when it&apos;s ≥25 points{" "}
-            <em>better</em> (lower) than the &ldquo;All&rdquo;
-            baseline, rose when it&apos;s ≥25 points worse — clutch
-            pitchers shrink the strike zone with runners on.
-          </>
-        )}
-        {" "}Smaller gaps are noise on small samples. Splits are
+          <>vs LHB / vs RHB read off the effective batter hand —
+            switch-hitters resolve to the opposite of this
+            pitcher&apos;s throwing hand.</>
+        )}{" "}
+        <strong>Counts</strong> · the count BEFORE the resolving
+        pitch — First pitch = 0-0 result, Two strikes = strikes=2
+        when resolved, Full count = 3-2.{" "}
+        <strong>Spray</strong> · pull / center / opposite filtered
+        to balls in play; AVG within these splits is hits-per-BIP
+        (BABIP-with-HR), OBP collapses to AVG (no walks in BIP), so
+        spray rows are not color-coded against the All baseline.{" "}
+        OPS in the leverage / bases / platoon / counts rows is
+        colored emerald when it&apos;s ≥25 points{" "}
+        {side === "batter" ? "better" : "better (lower)"}{" "}
+        than the &ldquo;All&rdquo; baseline, rose when ≥25 points
+        worse. Smaller gaps are noise on small samples. Splits are
         regular season only and cover every save year the warehouse
         has ingested.
       </p>
