@@ -360,10 +360,17 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
     counting tables. Math verified: Crochet 2029 ERA+=127 ✓
     (audit IE-reconciled), Skubal FIP 2.65 ✓, Gunnar Henderson
     oWAR 8.7 ✓.
-    - Note: league_history coverage is 2026-2029 in this save, so
-      pre-2026 player rows show `—` for advanced stats. Mapping
-      OOTP's pre-save imported history to Lahman/BREF league averages
-      is a deferred follow-on (separate scope item).
+    - Note: league_history coverage is 2026-2029 in this save.
+      **D20 (2026-05-12)** closes the pre-save MLB gap by UNIONing
+      Lahman 1871-2019 + BREF 2020-2025 league aggregates into
+      `_lg_constants_advanced` via `_lg_constants_advanced_imported`.
+      f_player_season_advanced_batting 30k → 244,183 rows; Bonds 2001
+      OPS+ 257 (BBR 259), Pujols 2003 OPS+ 189 (BBR 189 — exact),
+      Trout 2018 OPS+ 198 (real 198 — exact). Minor-league pre-save
+      seasons remain null (Lahman MiLB coverage is spotty; OOTP↔real
+      league_id crosswalk non-bijective). Pre-2026 park factors fall
+      back to the team's *current-day* park — small bias on OPS+/ERA+
+      only; wOBA/wRC+/wRAA unaffected. See DECISIONS D20 + DATA_NOTES.
     - Statcast advanced (MAX_EV / AVG_EV / barrel%) materialized
       2026-05-09 as two new L3 tables (`f_player_season_statcast_*`)
       and surfaced on the roster Contact mode. Player-page version
@@ -559,6 +566,24 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
   infrastructure"). Includes save-setup picker (D3 v2 fulfillment).
 - [ ] **Sync triggers + tracked-save management** — app-launch scan, manual
   refresh, untrack-vs-delete-warehouse distinction.
+- [ ] **Historical park factors** — D20 follow-on. Pre-2026 OOTP player
+  rows currently fall back to the team's *current-day* park factor when
+  computing OPS+ / ERA+, which is a modern-stadium proxy for the historical
+  context (a 2001 SF Giants row resolves to Oracle's 1.003, not 2001's
+  Pacific Bell). Park enters OPS+ at half-leverage and ERA+ at 80%-leverage,
+  so the bias is small but real. Real fix: load BREF historical team-year
+  park factors + a (OOTP team_id, year) → bbref_team_id crosswalk so the
+  dominant-team join in `f_player_season_advanced_*` can pick up the
+  historically correct factor. wOBA / wRC+ / wRAA aren't affected (no
+  park term), so the priority is moderate.
+- [ ] **Pre-save minor-league baselines** — D20 covers MLB only.
+  OOTP's pre-2026 minor-league rows (IL/PCL/EL/etc., league_ids 204-218)
+  still render `—` for advanced stats because Lahman's MiLB coverage is
+  spotty and the OOTP↔real league_id crosswalk for those leagues isn't
+  bijective. Lower priority than MLB — most users care about the MLB
+  career arc on imported real-history players. If pursued, would need
+  a new `history_lahman_minors_batting/_pitching` loader plus a curated
+  league-id map.
 
 ## Future / nice-to-have
 

@@ -1284,3 +1284,108 @@ header stays calm in the offseason.
   snapshot. Likely a flag/count tied to the in-season arb hearing
   cycle (February-March); skip until a winter ingest surfaces nonzero
   values.
+
+## Pre-save MLB league baselines via Lahman + BREF (2026-05-12, D20)
+
+OOTP imports pre-save real-history player counting stats (Bonds 2001,
+Mantle 1956, Pedro 2000, Trout 2018, etc.) into `players_career_*` —
+this save has 410,909 batting rows from 1871-2025 in
+`f_player_season_batting`, 234,677 of them at split_id=1. But OOTP does
+**not** emit corresponding `league_history_*` rows for those years, so
+the L3 advanced builders (which LEFT JOIN by `(league_id, year, level_id)`)
+emit nulls for every advanced stat on imported player-seasons.
+
+D20 closes the gap by UNIONing two component views:
+- **`_lg_constants_advanced_native`** — sources from
+  `league_history_*_event` (OOTP-native, save years only — 2026-2029
+  in this save).
+- **`_lg_constants_advanced_imported`** — sources from
+  `history_lahman_batting/_pitching` for 1871-2019 + `history_bref_batting/_pitching`
+  for 2020-2025, summed across AL/NL/AA/FL/NA/PL/UA into the OOTP
+  MLB league_id=203, level_id=1 (matching D11's "no AL/NL split"
+  convention).
+
+The final consumer-facing view `_lg_constants_advanced` is a
+UNION ALL with a NOT EXISTS guard — native rows always win on key
+collision (which can only happen if `fetch-history` ever loads
+post-save years; the loader's `MAX_HISTORY_YEAR = save_start - 1`
+prevents it, but the guard is defensive).
+
+**BREF level filter**: BREF carries level codes `Maj-AL` and `Maj-NL`
+(not `MLB`). Filter must be `Lev IN ('Maj-AL','Maj-NL')`. Discovered
+in implementation — earlier code drafted as `Lev = 'MLB'` returned
+zero BREF rows.
+
+**Self-consistency**: empirically verified that Lahman 2001 NL+AL
+aggregates match OOTP-imported player-row aggregates within 0.5%:
+Lahman AB 166,234 = OOTP AB 166,234 (exact); Lahman H 43,879 = OOTP
+H 43,879 (exact); minor IBB / HBP edge cases drift ≤1 PA. OOTP
+imports Lahman directly, so league baselines are *guaranteed*
+consistent with the player rows that JOIN against them. No risk
+of "Bonds 2001 wOBA above league" producing a wrong wRC+ because
+the league denominator is mis-sourced.
+
+**Coverage delivered** (live warehouse spot-checks):
+- `_lg_constants_advanced` view: **1871-2029 continuous, 215 rows**
+  (60 native + 155 imported).
+- `f_player_season_advanced_batting`: 30,440 → **244,183 rows** (8×).
+- `f_player_season_advanced_pitching`: similar fill.
+- Bonds 2001: wOBA .550, OPS+ 257 (BBR 259), b_WAR 12.5 (BBR 12.5 — exact).
+- Pujols 2003: OPS+ 189 (BBR 189 — exact), b_WAR 9.6.
+- Trout 2018: OPS+ 198 (real Fangraphs 198 — exact), b_WAR 8.3.
+- Pedro 2000: ERA+ 285 (BBR 291 — within 6 pts), p_WAR 9.8.
+- Mantle 1956: OPS+ 220 (BBR 210 — modern Yankee Stadium PF gap).
+
+**Lahman historical sparsity** is the principal limitation:
+
+| Column | First populated | Pre-track behavior |
+|--------|-----------------|--------------------|
+| IBB | 1955 | nulls coalesced to 0 |
+| SF | 1954 | nulls coalesced to 0 |
+| HBP | 1887 | nulls coalesced to 0 |
+| SH | 1894 | nulls coalesced to 0 |
+| SO (batting) | ~1913 (varies by team) | nulls coalesced to 0 |
+
+This is the Fangraphs convention; OOTP imports zeros for
+pre-tracking columns too, so player-rows + league-rows stay
+self-consistent. Pre-1955 wOBA scale calibrates against the
+partial-data sums, which means absolute values won't match
+modern Fangraphs historical wRC+ exactly — but they're consistent
+across the era.
+
+**Park factors for pre-2026** are the second known limitation.
+OOTP `f_player_season_*.team_id` is the player's *current-day*
+team (or whichever team OOTP imported them under), and that
+team_id joins to the modern `teams.park_id` → `parks.avg`. So a
+2001 SF Giants row resolves to Oracle Park (1.003), not 2001
+Pacific Bell. Park enters OPS+ at half-leverage and ERA+ at
+80%-leverage, so the bias is small in practice (most parks haven't
+shifted dramatically) — but real fix needs BREF historical team-year
+park factors plus an (OOTP team_id, year) → bbref_team_id
+crosswalk. Backlogged. wOBA / wRC+ / wRAA aren't park-adjusted in
+our formulas anyway, so they're unaffected.
+
+**Pre-save *minor*-league seasons** (Lahman MiLB, OOTP league_ids
+204-218 and friends) stay null for advanced stats. Lahman's MiLB
+coverage is spotty and the OOTP↔real league_id crosswalk for
+IL/PCL/EL/etc. isn't bijective. Backlogged. Counting stats for
+those rows are unaffected.
+
+**Soft-skip behavior**: `build_l3_advanced` checks for
+`history_lahman_batting/_pitching` + `history_bref_batting/_pitching`
+in `information_schema.tables`. If any are missing (fresh warehouse
+that hasn't run `diamond fetch-history` yet), the imported view is
+not registered and `_lg_constants_advanced` falls back to native-only
+with a yellow `!` indicator instead of a hard fail. Smoke test runs
+in fresh in-memory DBs and exercises this fallback cleanly.
+
+**wRC+ formula caveat (pre-existing, surfaces more here)**: Diamond's
+wRC+ is park-blind (no parkFactor term in the formula). It runs
+~10-15% higher than real Fangraphs canonical values for the same
+season (Mookie Betts 2018: ours 217 vs real 185). This is not
+introduced by D20 — same bias hits save-side data (it's just less
+visible without a real-world reference). OPS+ *is* park-adjusted
+(halved factor) and matches real BBR within 1-3 points. Fixing wRC+
+to be park-adjusted is a separate refactor; the current values are
+useful for cross-season comparisons within a player's own career
+arc but should not be compared 1:1 with published Fangraphs wRC+.

@@ -87,8 +87,12 @@ _BASE_W_3B = 1.62
 _BASE_W_HR = 2.10
 
 
-_LG_CONSTANTS_VIEW_SQL = f"""
-CREATE OR REPLACE VIEW _lg_constants_advanced AS
+# Native view — sources from `league_history_*_event` (the OOTP-native
+# per-(league_id, year, level_id) aggregates). Save coverage only —
+# 2026 onward in this save, since OOTP doesn't emit league_history rows
+# for pre-save imported player-seasons.
+_LG_CONSTANTS_NATIVE_VIEW_SQL = f"""
+CREATE OR REPLACE VIEW _lg_constants_advanced_native AS
 WITH agg_bat AS (
     SELECT
         league_id, year, level_id,
@@ -182,6 +186,199 @@ SELECT
     -- FIP constant — calibrates so league FIP == league ERA
     lg_era - (13.0 * lg_hra + 3.0 * (lg_pit_bb + lg_pit_hp) - 2.0 * lg_pit_k) / NULLIF(lg_ip, 0) AS fip_constant
 FROM scaled
+"""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Imported view — fills the pre-save MLB league baselines from real-history
+# sources. Lahman 1871-2019 + BREF 2020-2025 cover MLB continuously up to
+# the save start year. League_id is hardcoded to 203 (OOTP MLB) and
+# level_id to 1 (top level). AL/NL sub-leagues (and pre-1900 NA/AA/PL/UA/FL)
+# are summed into the parent MLB row, matching D11.
+#
+# Why this exists: OOTP imports pre-save player-seasons (Bonds 2001,
+# Mantle 1956, etc.) but does NOT emit corresponding league_history rows,
+# so without this UNION the advanced builders find no matching constants
+# row and emit null wOBA / wRC+ / OPS+ / FIP / ERA+ for those player-
+# seasons. Empirically Lahman aggregates and OOTP-imported player-row
+# aggregates match exactly (Bonds 2001 NL: AB 87,946 = AB 87,946 etc.),
+# since OOTP imports Lahman directly — so the constants are guaranteed
+# self-consistent with the player rows that JOIN against them.
+#
+# Park factors are handled outside this view (in the dominant_team /
+# park_lookup CTEs of the per-player builders). Pre-2026 OOTP player
+# rows often join successfully to a current-day park (a 2001 Giants row
+# resolves to Oracle Park's 1.003), which is a modern-stadium proxy for
+# the historical context. Park-aware OPS+/ERA+ for pre-2026 thus uses
+# the team's *current* park factor, not 2001-era. wOBA/wRC+/wRAA don't
+# use park, so they're unaffected. Documented in DATA_NOTES.md.
+#
+# Lahman historical sparsity: IBB tracking starts 1955, SF starts 1954,
+# HBP starts 1887, SH starts 1894, SO sparse pre-1913. Treated as 0
+# for league aggregates (Fangraphs convention; OOTP imports zeros for
+# these too, so player-rows + league-rows stay consistent).
+_LG_CONSTANTS_IMPORTED_VIEW_SQL = f"""
+CREATE OR REPLACE VIEW _lg_constants_advanced_imported AS
+WITH lahman_bat AS (
+    SELECT
+        yearID AS year,
+        SUM(AB)::DOUBLE  AS ab,
+        SUM(H)::DOUBLE   AS h,
+        SUM("2B")::DOUBLE AS d,
+        SUM("3B")::DOUBLE AS t,
+        SUM(HR)::DOUBLE  AS hr,
+        SUM(BB)::DOUBLE  AS bb,
+        SUM(COALESCE(IBB, 0))::DOUBLE AS ibb,
+        SUM(COALESCE(HBP, 0))::DOUBLE AS hp,
+        SUM(COALESCE(SF, 0))::DOUBLE  AS sf,
+        SUM(COALESCE(SH, 0))::DOUBLE  AS sh,
+        SUM(COALESCE(SO, 0))::DOUBLE  AS k,
+        SUM(R)::DOUBLE   AS r,
+        -- PA derived: AB + BB + HBP + SF + SH (CI not tracked; <0.01% of PA)
+        SUM(AB + BB + COALESCE(HBP, 0) + COALESCE(SF, 0) + COALESCE(SH, 0))::DOUBLE AS pa
+    FROM history_lahman_batting
+    WHERE lgID IN ('AL','NL','AA','FL','NA','PL','UA') AND yearID <= 2019
+    GROUP BY yearID
+),
+bref_bat AS (
+    SELECT
+        year AS year,
+        SUM(AB)::DOUBLE  AS ab,
+        SUM(H)::DOUBLE   AS h,
+        SUM("2B")::DOUBLE AS d,
+        SUM("3B")::DOUBLE AS t,
+        SUM(HR)::DOUBLE  AS hr,
+        SUM(BB)::DOUBLE  AS bb,
+        SUM(COALESCE(IBB, 0))::DOUBLE AS ibb,
+        SUM(COALESCE(HBP, 0))::DOUBLE AS hp,
+        SUM(COALESCE(SF, 0))::DOUBLE  AS sf,
+        SUM(COALESCE(SH, 0))::DOUBLE  AS sh,
+        SUM(COALESCE(SO, 0))::DOUBLE  AS k,
+        SUM(R)::DOUBLE   AS r,
+        SUM(PA)::DOUBLE  AS pa
+    FROM history_bref_batting
+    WHERE Lev IN ('Maj-AL','Maj-NL') AND year BETWEEN 2020 AND 2025
+    GROUP BY year
+),
+all_bat AS (
+    SELECT * FROM lahman_bat
+    UNION ALL
+    SELECT * FROM bref_bat
+),
+lahman_pit AS (
+    SELECT
+        yearID AS year,
+        SUM(IPouts)::DOUBLE AS outs,
+        SUM(ER)::DOUBLE     AS er,
+        SUM(HR)::DOUBLE     AS hra,
+        SUM(BB)::DOUBLE     AS pit_bb,
+        SUM(COALESCE(HBP, 0))::DOUBLE AS pit_hp,
+        SUM(COALESCE(SO, 0))::DOUBLE  AS pit_k
+    FROM history_lahman_pitching
+    WHERE lgID IN ('AL','NL','AA','FL','NA','PL','UA') AND yearID <= 2019
+    GROUP BY yearID
+),
+bref_pit AS (
+    SELECT
+        year,
+        SUM(IPouts)::DOUBLE AS outs,
+        SUM(ER)::DOUBLE     AS er,
+        SUM(HR)::DOUBLE     AS hra,
+        SUM(BB)::DOUBLE     AS pit_bb,
+        SUM(COALESCE(HBP, 0))::DOUBLE AS pit_hp,
+        SUM(COALESCE(SO, 0))::DOUBLE  AS pit_k
+    FROM history_bref_pitching
+    WHERE Lev IN ('Maj-AL','Maj-NL') AND year BETWEEN 2020 AND 2025
+    GROUP BY year
+),
+all_pit AS (
+    SELECT * FROM lahman_pit
+    UNION ALL
+    SELECT * FROM bref_pit
+),
+joined AS (
+    SELECT
+        203 AS league_id, b.year, 1 AS level_id,
+        b.pa  AS lg_pa,
+        b.ab  AS lg_ab,
+        b.h   AS lg_h,
+        b.d   AS lg_d,
+        b.t   AS lg_t,
+        b.hr  AS lg_hr,
+        b.bb  AS lg_bb,
+        b.ibb AS lg_ibb,
+        b.hp  AS lg_hp,
+        b.sf  AS lg_sf,
+        b.r   AS lg_r,
+        (b.h - b.d - b.t - b.hr) AS lg_singles,
+        COALESCE(p.outs, 0.0)   AS lg_outs,
+        COALESCE(p.er,   0.0)   AS lg_er,
+        COALESCE(p.hra,  0.0)   AS lg_hra,
+        COALESCE(p.pit_bb, 0.0) AS lg_pit_bb,
+        COALESCE(p.pit_hp, 0.0) AS lg_pit_hp,
+        COALESCE(p.pit_k,  0.0) AS lg_pit_k
+    FROM all_bat b
+    LEFT JOIN all_pit p ON p.year = b.year
+),
+derived AS (
+    SELECT *,
+        (lg_h + lg_bb + lg_hp) / NULLIF(lg_ab + lg_bb + lg_hp + lg_sf, 0) AS lg_obp,
+        (lg_singles + 2*lg_d + 3*lg_t + 4*lg_hr) / NULLIF(lg_ab, 0)         AS lg_slg,
+        lg_outs / 3.0 AS lg_ip,
+        9.0 * lg_er / NULLIF(lg_outs / 3.0, 0) AS lg_era,
+        lg_r / NULLIF(lg_pa, 0) AS runs_per_pa,
+        (lg_bb - lg_ibb) AS lg_nibb,
+        ({_BASE_W_BB} * (lg_bb - lg_ibb)
+         + {_BASE_W_HBP} * lg_hp
+         + {_BASE_W_1B}  * lg_singles
+         + {_BASE_W_2B}  * lg_d
+         + {_BASE_W_3B}  * lg_t
+         + {_BASE_W_HR}  * lg_hr) AS base_woba_num,
+        (lg_ab + (lg_bb - lg_ibb) + lg_sf + lg_hp) AS woba_denom
+    FROM joined
+),
+scaled AS (
+    SELECT *,
+        base_woba_num / NULLIF(woba_denom, 0) AS base_lg_woba
+    FROM derived
+)
+SELECT
+    league_id, year, level_id,
+    lg_pa, lg_ab, lg_h, lg_d, lg_t, lg_hr,
+    lg_bb, lg_ibb, lg_hp, lg_sf, lg_r, lg_singles, lg_nibb,
+    lg_outs, lg_er, lg_hra, lg_pit_bb, lg_pit_hp, lg_pit_k,
+    lg_ip, lg_era, lg_obp, lg_slg, runs_per_pa,
+    lg_obp / NULLIF(base_lg_woba, 0) AS woba_scale,
+    {_BASE_W_BB}  * (lg_obp / NULLIF(base_lg_woba, 0)) AS w_bb,
+    {_BASE_W_HBP} * (lg_obp / NULLIF(base_lg_woba, 0)) AS w_hbp,
+    {_BASE_W_1B}  * (lg_obp / NULLIF(base_lg_woba, 0)) AS w_1b,
+    {_BASE_W_2B}  * (lg_obp / NULLIF(base_lg_woba, 0)) AS w_2b,
+    {_BASE_W_3B}  * (lg_obp / NULLIF(base_lg_woba, 0)) AS w_3b,
+    {_BASE_W_HR}  * (lg_obp / NULLIF(base_lg_woba, 0)) AS w_hr,
+    lg_obp AS lg_woba,
+    lg_era - (13.0 * lg_hra + 3.0 * (lg_pit_bb + lg_pit_hp) - 2.0 * lg_pit_k) / NULLIF(lg_ip, 0) AS fip_constant
+FROM scaled
+"""
+
+
+# Final consumer-facing view — UNION of native (save) + imported (real history).
+# Key uniqueness: native rows are always (league_id, year≥save_start, *) and
+# imported rows are always (203, year≤2025, 1), so no overlap. If the save
+# start ever migrates back into 2025 or earlier, the UNION ALL would emit
+# duplicates and downstream LEFT JOINs would amplify rows — guard against
+# this by keeping `history_*` tables scoped to year < save_start in the
+# fetch_history loader (already enforced by `MAX_HISTORY_YEAR = save_start - 1`).
+_LG_CONSTANTS_VIEW_SQL = """
+CREATE OR REPLACE VIEW _lg_constants_advanced AS
+SELECT * FROM _lg_constants_advanced_native
+UNION ALL
+SELECT * FROM _lg_constants_advanced_imported
+WHERE NOT EXISTS (
+    SELECT 1 FROM _lg_constants_advanced_native n
+    WHERE n.league_id = _lg_constants_advanced_imported.league_id
+      AND n.year      = _lg_constants_advanced_imported.year
+      AND n.level_id  = _lg_constants_advanced_imported.level_id
+)
 """
 
 
@@ -597,14 +794,42 @@ def build_l3_advanced(
     """
     rows: dict[str, int] = {}
 
-    # 1. Register the league-constants view first; the table builders
-    #    JOIN against it.
-    con.execute(_LG_CONSTANTS_VIEW_SQL)
-    if verbose:
-        console.print(
-            "  [green]✓[/green] _lg_constants_advanced (view) "
-            "[dim]per (league_id, year, level_id)[/dim]"
+    # 1. Register the league-constants views first; the table builders
+    #    JOIN against the union view. Order matters — the final view
+    #    references both component views by name.
+    con.execute(_LG_CONSTANTS_NATIVE_VIEW_SQL)
+    # _imported view depends on history_lahman_* + history_bref_*. If the
+    # one-time `diamond fetch-history` backfill hasn't run yet, those
+    # tables don't exist and the view registration fails. Soft-skip in
+    # that case so warehouse builds don't hard-fail on a fresh save —
+    # advanced stats for pre-save seasons stay null until history is loaded.
+    history_loaded = con.execute(
+        """
+        SELECT COUNT(*) >= 4 FROM information_schema.tables
+        WHERE table_name IN ('history_lahman_batting','history_lahman_pitching',
+                             'history_bref_batting','history_bref_pitching')
+        """
+    ).fetchone()[0]
+    if history_loaded:
+        con.execute(_LG_CONSTANTS_IMPORTED_VIEW_SQL)
+        con.execute(_LG_CONSTANTS_VIEW_SQL)
+        if verbose:
+            console.print(
+                "  [green]✓[/green] _lg_constants_advanced (view) "
+                "[dim]native + imported (Lahman 1871-2019 + BREF 2020-2025)[/dim]"
+            )
+    else:
+        # Without history tables, the final union view is just the native rows.
+        con.execute(
+            "CREATE OR REPLACE VIEW _lg_constants_advanced AS "
+            "SELECT * FROM _lg_constants_advanced_native"
         )
+        if verbose:
+            console.print(
+                "  [yellow]![/yellow] _lg_constants_advanced (view) "
+                "[dim]native only — run `diamond fetch-history` to backfill "
+                "pre-save MLB baselines[/dim]"
+            )
 
     # 2. Per-player advanced facts.
     builders = [

@@ -4,9 +4,11 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: five slices in one day, all on the player-page situational stack.** The day grew the situational section from 0 splits to **14 per (year, level)** organized into five clusters (Leverage / Bases / Platoon / Counts / Spray), and turned `f_pa_event` from single-season to **multi-year** along the way.
+**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: pre-save MLB league baselines maintenance pass closed.** Earlier today shipped the situational-splits stack (5 slices, 14 splits per year/level); end-of-day shipped the maintenance fix that drains the `—` from advanced stats on every imported real-history player-season.
 
-Slices in order:
+Maintenance slice — **D20 pre-save MLB baselines** (just closed): The `_lg_constants_advanced` view is now a UNION of `_native` (OOTP `league_history_*` — save years only) and `_imported` (Lahman 1871-2019 + BREF 2020-2025, summed across AL/NL into MLB league_id=203, level_id=1). `f_player_season_advanced_batting` jumped from 30k → **244,183 rows** — every imported MLB player-season pre-2026 now resolves wOBA / wRC+ / OPS+ / FIP / ERA+ / b_WAR. Headline spot-checks: Bonds 2001 wOBA .550 / OPS+ 257 / b_WAR 12.5 (vs BBR 259 / 12.5); Pujols 2003 OPS+ 189 (BBR 189 — exact); Trout 2018 OPS+ 198 (real 198 — exact); Pedro 2000 ERA+ 285 (BBR 291); Mantle 1956 OPS+ 220 (BBR 210, modern Yankee Stadium PF gap). Soft-skip on missing history tables means smoke / fresh warehouses still build cleanly. Park factors for pre-2026 use the team's *current-day* park (deferred follow-on); minor-league pre-save baselines stay null (Lahman doesn't carry them). Reconcile harness clean — no save-side regression.
+
+Earlier-today slices (situational stack) in order:
 1. **Batter situational splits** — first version of the section: All / RISP / RISP 2-out / Late & Close per (year, level), OPS color-coded vs the All baseline (≥25 pts emerald, ≤-25 rose). Single-season at first (limited by `f_pa_event` shape).
 2. **Multi-year `f_pa_event`** (architectural — D19) — the "OOTP replaces at_bats_event.csv on rollover" caveat was build-side, not storage-side. L0 retains every ingested dump's rows by `dump_date`, so we rebuilt `f_pa_event` to read L0 directly with cross-dump dedup keyed on (game_id, season_year). Discovered along the way that **OOTP recycles `game_id` across seasons**, so PK was promoted to (year, game_id, batter_id, pa_in_game_seq). Row counts: `f_pa_event` 877k → 5.1M; `f_player_season_statcast_*` 3,305 / 3,692 → 20,800 / 21,513; `f_record_player` 1,840 → 4,550.
 3. **Pitcher situational splits** — same SQL template keyed on `pitcher_id` instead of `batter_id`. Slash columns reflect what the pitcher allowed; UI color logic inverts (emerald when OPS-allowed BELOW baseline = clutch). Crochet 2027 RISP 2-out **.316 OPS allowed**; 2029 .839 (regressed).
@@ -19,7 +21,7 @@ Slices in order:
 
 ## One-line summary
 
-Phases 1-2 closed; analytical CLI surface complete; real MLB history through 2025 backfilled; Phase 3 UI live — five-tab IA (Club / League / World / History / Explore) wired into the layout; Club landing renders save metadata + tools grid; movement ledger covers all four direction buckets; roster page — full org tree grouped by level with Basic/Advanced/Contact stat-mode toggle; standings page on `/league` (sub-league × division × team from `team_record_snapshot`); player page Stats tab full (batting / pitching / fielding / advanced + **Defensive Profile** per-position cube + **Service & Status** card + **Situational batting / pitching** with 14 splits across leverage / bases / platoon / counts / spray); theme system supports light / dark / neutral / color-blind with dark as default; in-app Quit reliably kills both dev servers. L3 Statcast cohort + SIERA materialized; `f_pa_event` is now **multi-year** via L0 cross-dump dedup (D19) — 4 years of at-bat history queryable. Combined bWAR / pWAR via OOTP-supplied WAR (Mayer 3.2 = IE 3.2 etc.); per-position fielding cube sourced from `players_fielding_current` view over the snapshot.
+Phases 1-2 closed; analytical CLI surface complete; real MLB history through 2025 backfilled; Phase 3 UI live — five-tab IA (Club / League / World / History / Explore) wired into the layout; Club landing renders save metadata + tools grid; movement ledger covers all four direction buckets; roster page — full org tree grouped by level with Basic/Advanced/Contact stat-mode toggle; standings page on `/league` (sub-league × division × team from `team_record_snapshot`); player page Stats tab full (batting / pitching / fielding / advanced + **Defensive Profile** per-position cube + **Service & Status** card + **Situational batting / pitching** with 14 splits across leverage / bases / platoon / counts / spray); theme system supports light / dark / neutral / color-blind with dark as default; in-app Quit reliably kills both dev servers. L3 Statcast cohort + SIERA materialized; `f_pa_event` is now **multi-year** via L0 cross-dump dedup (D19) — 4 years of at-bat history queryable. Combined bWAR / pWAR via OOTP-supplied WAR (Mayer 3.2 = IE 3.2 etc.); per-position fielding cube sourced from `players_fielding_current` view over the snapshot. **Pre-save MLB league baselines** UNIONed in from Lahman 1871-2019 + BREF 2020-2025 (D20) — every imported real-history player-season now resolves wOBA / wRC+ / OPS+ / FIP / ERA+ / b_WAR on the player page (244k batting rows, vs 30k pre-fix).
 
 ## What works today
 
@@ -257,10 +259,18 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
      127), Skubal 2029 FIP=2.65 (matches docs), Gunnar Henderson
      2029 oWAR=8.7 (matches docs). Top OPS+ leaders 2029 MLB:
      Kurtz 164, Henderson 164, Judge 159, Rooker 159, Santiago 155.
-   - Limitation: league_history covers only 2026-2029 in this save,
-     so pre-2026 player rows show `—` for advanced stats. Mapping
-     OOTP's pre-save imported player history to historical Lahman/
-     BREF league averages is deferred (separate scope).
+   - **D20 (2026-05-12)** closes this for MLB pre-save seasons:
+     `_lg_constants_advanced` now UNIONs OOTP's native
+     `league_history_*` rows with an `_imported` view sourced from
+     Lahman 1871-2019 + BREF 2020-2025 (summed across AL/NL into
+     league_id=203, level_id=1). f_player_season_advanced_batting
+     30k → 244,183 rows; spot-checks Bonds 2001 OPS+ 257 (BBR 259),
+     Pujols 2003 OPS+ 189 (BBR 189 — exact), Trout 2018 OPS+ 198
+     (real 198 — exact). Minor-league pre-save baselines remain null
+     (Lahman has spotty MiLB coverage; OOTP↔real league_id crosswalk
+     non-bijective). Park factors for pre-2026 fall back to the
+     team's *current-day* park — small bias on OPS+/ERA+, none on
+     wOBA / wRC+ / wRAA. Documented in DECISIONS D20 + DATA_NOTES.
 7. ✅ **Movement ledger** — done 2026-05-08.
    - New L0/L1/L2 paths weren't needed; entire feature consumes the
      existing `player_movements` (L3) joined to

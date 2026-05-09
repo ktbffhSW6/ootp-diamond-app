@@ -391,3 +391,36 @@ L1 needed to stay single-dump because `audit/reconcile.py` registers `at_bats_ev
 - *Build a sibling `f_pa_event_history` and leave `f_pa_event` single-year* — rejected. Two tables with overlapping shape doubles maintenance and forces every consumer to choose. Single multi-year fact is cleaner and existing consumers (l3 records, statcast cohort, situational fetcher) all GROUP BY year already, so they get richer output for free.
 - *Promote L1 `at_bats_event` to multi-year and update reconcile* — rejected. The reconcile harness compares against per-dump IE CSVs; per-dump semantics at L1 are load-bearing for that audit path. Splitting L1 (single-dump) and L2 (multi-year) lets each layer serve its audience.
 - *Persist Nov dumps separately and union with the latest dump* — rejected as redundant. L0 already retains every dump; we just had to query it correctly.
+
+## D20 — Pre-save MLB league baselines come from Lahman (1871-2019) + BREF (2020-2025), UNION'd into `_lg_constants_advanced`
+
+**Date**: 2026-05-12
+**Decision**: The `_lg_constants_advanced` view, which the L3 advanced-stats builders JOIN against, is now a UNION of two component views: `_lg_constants_advanced_native` (sourced from OOTP's `league_history_*_event` — save years only) and `_lg_constants_advanced_imported` (sourced from `history_lahman_batting/_pitching` for 1871-2019 + `history_bref_batting/_pitching` for 2020-2025, summed across AL/NL/AA/FL/NA/PL/UA into the OOTP MLB league_id=203, level_id=1). Pre-save player-seasons that previously rendered `—` for wOBA / wRC+ / OPS+ / FIP / ERA+ / SIERA on the player page now resolve real values.
+
+**Why**: OOTP imports pre-save player counting stats (Bonds 2001, Mantle 1956, Trout 2018, etc.) — 410,909 batting rows from 1871-2025 in `f_player_season_batting`, 234,677 of them at split_id=1 — but does NOT emit corresponding `league_history_*` rows for those years. The L3 advanced builders LEFT JOIN by `(league_id, year, level_id)`, so without a baseline they emit nulls for every advanced stat. The historical sources we already loaded for `f_record_player` and `f_award_career_player` (Lahman + BREF) carry every column needed to derive league constants — AB, H, 2B, 3B, HR, BB, IBB, HBP, SF, SH, SO, R for batting; IPouts, ER, HR, BB, SO, HBP for pitching. Empirically verified: Lahman 2001 NL+AL aggregates match OOTP's imported player-row aggregates within 0.5% (Lahman AB 166,234 = OOTP AB 166,234 exact; H 43,879 = 43,879 exact; minor IBB/HBP edge cases drift ~1 PA). OOTP imports Lahman directly, so the baselines are guaranteed self-consistent with the player rows that JOIN them.
+
+**Coverage delivered** (verified post-rebuild on `Building the Green Monster` warehouse):
+- `_lg_constants_advanced` view: **1871-2029 continuous, 215 (league, year, level) rows** (60 native + 155 imported).
+- `f_player_season_advanced_batting`: 30,440 → **244,183 rows** (8× expansion). MLB level alone: 97,298 player-seasons gain wOBA / wRC+ / OPS+ / b_WAR.
+- `f_player_season_advanced_pitching`: similar fill.
+- Headline spot-checks: Bonds 2001 wOBA .550 / OPS+ 257 / b_WAR 12.5 (BBR 259 / 12.5 — exact); Pujols 2003 OPS+ 189 (BBR 189 — exact); Trout 2018 OPS+ 198 (BBR/Fangraphs 198 — exact); Pedro 2000 ERA+ 285 (BBR 291 — within 6 pts); Mantle 1956 OPS+ 220 (BBR 210 — Fenway PF gap, see below).
+
+**Lahman historical sparsity** is the main known limitation. Tracking thresholds:
+- IBB column populated 1955+ (zero before).
+- SF populated 1954+ (zero before).
+- HBP populated 1887+.
+- SH populated 1894+.
+- SO populated ~1913+.
+
+For aggregation purposes nulls are coalesced to 0 (Fangraphs convention; OOTP imports zeros for pre-tracking columns too, so player-rows + league-rows stay self-consistent). Pre-1955 wOBA scale calibrates against the partial-data sums; absolute values won't match modern Fangraphs historical wRC+ exactly but are consistent across the era. Documented in DATA_NOTES.
+
+**Park factor handling** is the second known limitation: pre-2026 OOTP player rows often join successfully to a *current-day* team and pick up that stadium's `parks.avg` (a 2001 SF Giants row resolves to Oracle Park's 1.003, not 2001's Pacific Bell). Park enters OPS+ at half-leverage and ERA+ at 80%-leverage; wOBA / wRC+ / wRAA don't use park at all. The miss is small in practice (most parks haven't shifted dramatically) but documented; a real fix would require loading BREF historical park factors and a team-history crosswalk, deferred as a follow-on.
+
+**Save-start invariant**: the `_imported` view filters `yearID <= 2019` (Lahman) and `year BETWEEN 2020 AND 2025` (BREF), and `_lg_constants_advanced` UNIONs with NOT EXISTS guard on the native view to prevent duplicate keys. If a future save's start year ever migrates back into ≤2025, the guard fires and the native row wins (correct precedence — OOTP's in-save constants are authoritative for save years). The `fetch-history` loader already enforces `MAX_HISTORY_YEAR = save_start - 1`, so this is doubly safe.
+
+**Soft-skip on missing history tables**: the L3 builder checks for the four `history_*` tables before registering `_imported`, and falls back to `native`-only if any are missing. Smoke-test runs in fresh in-memory DBs (no `fetch-history` data) hit this fallback cleanly with a yellow `!` indicator — no hard failure on warehouses that haven't run the one-time backfill.
+
+**Alternatives considered**:
+- *Use Fangraphs Guts table directly* for woba_scale + linear weights instead of recomputing from Lahman aggregates — rejected. Fangraphs Guts requires an additional data source / scrape with no clear long-term URL stability, and our self-consistent Lahman-derived constants pass spot-checks (Bonds OPS+ 257 vs BBR 259, Pujols 189 vs 189) within 1-3 pts on park-aware metrics. The wRC+ gap (~10-15% high vs Fangraphs canonical) is from our park-blind wRC+ formula, NOT the constants — same bias hits save-side data. Fixing wRC+ to be park-adjusted is a separate refactor.
+- *Materialize a real L3 table for historical constants* instead of a view — rejected. The view is cheap (one aggregation per year × 155 years = trivial), and view-only means the constants always reflect the latest history backfill without a rebuild step. The rebuild dependency was already implicit (advanced tables rebuild on every L3 build).
+- *Defer to the user setting up minor-league historical baselines manually* — rejected for v1. Lahman's minor-league coverage is spotty and the OOTP→Lahman league_id crosswalk for IL/PCL/etc. isn't bijective. MLB-only is the user-visible win; minor-league pre-save advanced stats stay null (same as today).
