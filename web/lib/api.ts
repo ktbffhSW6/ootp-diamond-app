@@ -14,6 +14,10 @@
 //   is auto-generated from the Pydantic schemas (see that file).
 
 import type {
+  AISettingsResponse,
+  AISettingsUpdate,
+  AISummarizeRequest,
+  AISummarizeResponse,
   AwardsResponse,
   BattedBallsResponse,
   CockpitResponse,
@@ -31,6 +35,7 @@ import type {
   RecordsResponse,
   RosterResponse,
   SaveResponse,
+  SavesListResponse,
   StandingsResponse,
   StreaksResponse,
 } from "@/lib/types/api";
@@ -282,6 +287,51 @@ export async function getCompare(ids: number[]): Promise<CompareResponse> {
   return fetchJson<CompareResponse>(
     `/api/compare?ids=${encodeURIComponent(idStr)}`,
   );
+}
+
+// AI overlay (D14). Settings GET/POST manage provider / model /
+// use_level + (write-only) API key — secrets stored in the OS
+// keyring server-side, never returned. Summarize POST is on-demand
+// per call; v1 only supports `kind: "player"`.
+export async function getAiSettings(): Promise<AISettingsResponse> {
+  return fetchJson<AISettingsResponse>("/api/ai/settings");
+}
+
+export async function updateAiSettings(
+  body: AISettingsUpdate,
+): Promise<AISettingsResponse> {
+  return fetchJson<AISettingsResponse>("/api/ai/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function aiSummarize(
+  body: AISummarizeRequest,
+): Promise<AISummarizeResponse> {
+  return fetchJson<AISummarizeResponse>("/api/ai/summarize", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+// Save discovery + active-save switcher (D3 v2 / setup wizard).
+// `getSaves` lists every `*.lg` directory under the OOTP saves root
+// with a flag for which one is currently active. `setActiveSave`
+// persists the choice to ~/.diamond/active_save.toml + swaps the
+// API's in-memory warehouse singleton.
+export async function getSaves(): Promise<SavesListResponse> {
+  return fetchJson<SavesListResponse>("/api/saves");
+}
+
+export async function setActiveSave(saveName: string): Promise<SavesListResponse> {
+  return fetchJson<SavesListResponse>("/api/saves/active", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ save_name: saveName }),
+  });
 }
 
 // Trigger a one-click shutdown of both dev servers (Next.js :3000 and

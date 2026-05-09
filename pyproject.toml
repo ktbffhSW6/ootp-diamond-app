@@ -23,6 +23,11 @@ dependencies = [
     # accelerates request parsing on Windows.
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
+    # AI overlay (D14) — cross-platform OS keyring for API-key
+    # storage; httpx for provider HTTP calls (Anthropic / OpenAI).
+    # No provider SDKs to keep the adapter layer swap-friendly.
+    "keyring>=25.0.0",
+    "httpx>=0.27.0",
 ]
 
 [project.optional-dependencies]

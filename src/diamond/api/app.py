@@ -26,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from diamond.api.routes import (
     admin,
+    ai,
     awards,
     batted_balls,
     cockpit,
@@ -42,6 +43,7 @@ from diamond.api.routes import (
     records,
     roster,
     save,
+    saves,
     standings,
     streaks,
 )
@@ -86,6 +88,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router, prefix="/api", tags=["health"])
     app.include_router(save.router, prefix="/api", tags=["save"])
+    app.include_router(saves.router, prefix="/api", tags=["saves"])
     app.include_router(glossary.router, prefix="/api", tags=["glossary"])
     app.include_router(players.router, prefix="/api", tags=["players"])
     app.include_router(roster.router, prefix="/api", tags=["roster"])
@@ -101,6 +104,7 @@ def create_app() -> FastAPI:
     app.include_router(compare.router, prefix="/api", tags=["compare"])
     app.include_router(leaderboards.router, prefix="/api", tags=["leaderboards"])
     app.include_router(batted_balls.router, prefix="/api", tags=["batted-balls"])
+    app.include_router(ai.router, prefix="/api", tags=["ai"])
     app.include_router(photos.router, prefix="/api", tags=["photos"])
     app.include_router(admin.router, prefix="/api", tags=["admin"])
 

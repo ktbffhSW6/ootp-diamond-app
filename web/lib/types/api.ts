@@ -11,6 +11,80 @@
 */
 
 /**
+ * Per-provider metadata — name + key-presence flag.
+ *
+ * Listed for every supported provider so the settings UI can show
+ * "key set" / "key missing" indicators without needing a separate
+ * has-key endpoint per provider.
+ */
+export interface AIProviderInfo {
+  name: string;
+  has_key: boolean;
+}
+/**
+ * Current AI settings — non-secret view.
+ *
+ * `provider` / `model` / `use_level` mirror the on-disk settings;
+ * `providers` lists all supported providers + their key-set state
+ * for the picker UI.
+ */
+export interface AISettingsResponse {
+  provider: string;
+  model: string;
+  use_level: "off" | "on_demand" | "smart" | "always_on";
+  providers: AIProviderInfo[];
+}
+/**
+ * POST body for updating AI settings.
+ *
+ * Any subset of fields is allowed. `api_key` is write-only — it's
+ * stored in the OS keyring under the matching `provider` and never
+ * returned. To clear a key, send `api_key=""` and the route deletes
+ * the keyring entry.
+ */
+export interface AISettingsUpdate {
+  provider?: string | null;
+  model?: string | null;
+  use_level?: ("off" | "on_demand" | "smart" | "always_on") | null;
+  /**
+   * API key (write-only; stored in OS keyring)
+   */
+  api_key?: string | null;
+}
+/**
+ * POST body for the summarize endpoint.
+ *
+ * `kind` selects the prompt template — only "player" in v1. `target_id`
+ * is the player_id (or future team_id / etc.). `context` is an
+ * optional free-form addendum the frontend can pass (e.g., "compare
+ * to last year").
+ */
+export interface AISummarizeRequest {
+  kind: "player";
+  target_id: number;
+  context?: string | null;
+}
+/**
+ * Generated summary — plain markdown text.
+ *
+ * `provider` + `model` are echoed so the UI can show a "Generated
+ * by claude-3-5-haiku" footer on the result.
+ */
+export interface AISummarizeResponse {
+  text: string;
+  provider: string;
+  model: string;
+}
+/**
+ * POST body for /api/saves/active.
+ *
+ * `save_name` must be the directory name including the ``.lg``
+ * suffix and must match an entry returned by GET /api/saves.
+ */
+export interface ActiveSaveUpdate {
+  save_name: string;
+}
+/**
  * One award type with its display label + which sources have data
  * for it in the current league. Used by the frontend to render the
  * award picker and grey out era filters that would yield zero rows.
@@ -1460,6 +1534,35 @@ export interface SaveResponse {
   earliest_season: number | null;
   scoped_player_count: number;
   scoped_team_count: number;
+}
+/**
+ * One save under the OOTP saves root.
+ *
+ * `name` is the canonical save_name (directory name including the
+ * ``.lg`` suffix). `has_warehouse` is true iff the save's
+ * ``diamond/diamond.duckdb`` exists — drives the picker's
+ * "ingest first" hint. `last_modified` is epoch seconds, may be null
+ * on permission errors.
+ */
+export interface SaveSummaryDto {
+  name: string;
+  path: string;
+  has_warehouse: boolean;
+  last_modified: number | null;
+  is_active: boolean;
+}
+/**
+ * All saves under the configured OOTP saves root.
+ *
+ * `saves_root` is included so the UI can surface "looking in {root}"
+ * text without requiring a separate endpoint. `active_save_name` is
+ * redundant with the `is_active` flag on each row but cheaper for
+ * the UI to read directly.
+ */
+export interface SavesListResponse {
+  saves_root: string;
+  active_save_name: string;
+  saves: SaveSummaryDto[];
 }
 /**
  * A division — a list of team rows ordered by ``pos`` ascending.

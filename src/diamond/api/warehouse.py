@@ -28,13 +28,30 @@ import threading
 
 import duckdb
 
+from dataclasses import replace
+
 from diamond.config import BUILDING_THE_GREEN_MONSTER, SaveConfig
+from diamond.saves import load_active_save_name
 from diamond.schema.build import open_warehouse_db
+
+
+def _resolve_initial_save() -> SaveConfig:
+    """Pick the initial active save.
+
+    Reads ``~/.diamond/active_save.toml`` if present; otherwise falls
+    back to ``BUILDING_THE_GREEN_MONSTER``. League-scope + audit_team_id
+    stay copied from the default config — switching the scope tuple
+    across different team org-trees is v2.1.
+    """
+    persisted = load_active_save_name()
+    if not persisted or persisted == BUILDING_THE_GREEN_MONSTER.save_name:
+        return BUILDING_THE_GREEN_MONSTER
+    return replace(BUILDING_THE_GREEN_MONSTER, save_name=persisted)
 
 
 # Module-level singletons, lazily initialized on first request.
 _lock = threading.Lock()
-_active_save: SaveConfig = BUILDING_THE_GREEN_MONSTER
+_active_save: SaveConfig = _resolve_initial_save()
 _root_con: duckdb.DuckDBPyConnection | None = None
 
 

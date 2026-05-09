@@ -467,3 +467,61 @@ For everything *between* "hand-rolled" and those triggers — sortable leaderboa
 - `components/PlayerAvatar.tsx` — circular headshot with deterministic-color initials fallback.
 
 Each is a self-contained file ≤300 LOC. When the chart lib lands, evaluate each on a "rewrite or keep" axis — Sparkline + CareerArc are likely keepers (stable shape, perfect token integration); PlayerContractCard could go either way; PlayerAvatar isn't a chart and stays regardless.
+
+## D22 — Historical park factors backfill (Lahman BPF/PPF for ≤2019 MLB seasons)
+
+**Date**: 2026-05-13
+**Decision**: Pre-2020 MLB OPS+ / ERA+ now use the Lahman team-season park factor (BPF / PPF, 100-relative, divided by 100 to match OOTP's 1.0-relative convention). A new view `_park_factor_resolved (team_id, year, bat_park_avg, pit_park_avg, src)` is the single source of truth for `(team_id, year) → park_avg`, joined into both advanced builders. For 2020-2025 (BREF era — Lahman doesn't extend that far, BREF doesn't ship per-team park factors in our scrape) and 2026+ (save-native), the view falls back to the OOTP team's current-day `parks.avg` (modern-stadium proxy, same as before D22).
+
+OOTP↔Lahman crosswalk is hardcoded for the 30 modern MLB clubs by (`team_id`, `franchID`). franchID is stable through historical team renames (e.g., 'BAL' covers St Louis Browns 1902-1953 + Baltimore Orioles 1954-present), which is the right granularity for a franchise-as-stadium proxy. Defunct historical franchises (Brooklyn Robins, Boston Beaneaters) won't have OOTP team_id rows in pre-save player data — those player-rows fall through to `park_avg=1.0`, same as before D22.
+
+**Why**:
+
+Pre-D22, a 2001 SF Giants player-row joined Oracle Park's modern 1.003, when the actual 2001 NL pitcher's park factor at Pac Bell / 3Com / Candlestick was 0.93. That biased pre-2020 OPS+ / ERA+ on the order of ±5 percentage points across teams. The fix unblocks accurate cross-era comparisons (Bonds 2001 vs Trout 2018 vs Devers 2029) which is a big share of what `/explore/compare` is for.
+
+- Lahman publishes per-team BPF/PPF as part of `Teams.csv` going back to 1871; this is ~150K rows, trivially small to UNION into a view.
+- BPF and PPF differ for the same team-year (offense-park vs pitcher-park aren't symmetric — different ballpark dimensions affect HR rate vs BABIP differently); we plumb separate fields through `_park_factor_resolved` so batting builders use BPF and pitching uses PPF.
+- The view is conditional: if `history_lahman_teams` doesn't exist (fresh save without `fetch-history` run), L3 builds register a fallback view with the same shape that just exposes modern `teams.parks.avg`. No hard-fail path.
+
+Verification (pre→post): Bonds 2001 OPS+ 257→267 (BBR 259), Pujols 2003 189→193 (BBR 189), Trout 2018 198→201 (BBR 198), Pedro 2000 ERA+ 280 (BBR 291), Maddux 1995 ERA+ 277 (BBR 260), Coors 1995 BPF 1.29.
+
+**Alternatives considered**:
+
+- *Compute park factors from Lahman home/road run differential* — rejected. Lahman has team-level home games + total games, but home-only run scoring isn't broken out. Computing PF from runs requires play-by-play (Retrosheet) which we don't ingest.
+- *Maintain a hand-curated `pf_history.csv`* — rejected. Lahman already does this work and ships it; no reason to duplicate.
+- *Backfill 2020-2025 with FanGraphs / BREF scraper* — deferred. Pre-2020 fixes the bigger and more variable historical range; 2020-2025 are five years of relatively stable modern parks where the modern-proxy is reasonable. Backlog item.
+- *Apply BPF/PPF retroactively to wOBA / wRC+ / wRAA* — out of scope. Those formulas are park-neutral by definition (they use league-relative weighting, not park-relative); only OPS+ and ERA+ have the `(1 + (park_avg - 1) / k)` correction term.
+
+## D23 — Chart stack: Observable Plot for cohort viz; defer Vega-Lite + WebGL until JSON-spec authoring lands
+
+**Date**: 2026-05-13
+**Decision**: First chart-lib commitment for the project picks **Observable Plot** (`@observablehq/plot`). Used for the EV-LA scatter (`/explore/ev-la`) and the secondary stacked-bar view in the spray chart (`/explore/spray`). The polar-fan in the spray chart stays hand-rolled SVG (not a Plot-friendly shape).
+
+Plot adds ~150 KB gzipped to the chart routes and provides a declarative API ergonomic for both `Plot.dot` scatters and `Plot.barX` stacks. Reuses the project's existing color/discipline conventions (out muted / hit saturated / HR loud) without a custom theme bridge.
+
+**Why**:
+
+The viz triggers from D21 (WebGL cohorts, JSON-spec authoring, multi-view linking) haven't all fired — the v1 cohort scatter is per-player (≤700 BIP), not full-league (≥50K points), and we don't yet need spec-authoring or brushed views. But within "modest cohort size + multiple chart types share a styling vocabulary," Plot is the lowest-friction choice:
+
+- Smaller bundle than Plotly (~150 KB vs ~1 MB+).
+- Smaller and more ergonomic than Vega-Lite for the simple shapes we have today (dot scatter, stacked bar). Plot is closer to D3 with sensible defaults.
+- Pure SVG output integrates with the theme-token system without a custom mark renderer.
+- When WebGL or spec-authoring triggers fire, we can bring in Plotly (for the WebGL-scale path) or Vega-Lite (for the chart-builder path) alongside Plot rather than rewriting the simple shapes.
+
+**Catalog of v1 chart-lib usage**:
+
+- `web/components/EvLaScatter.tsx` — `Plot.dot` scatter with `Plot.rect` zone overlays (sweet-spot + barrel zone).
+- `web/components/SprayChart.tsx` — `Plot.barX` stacked bar (secondary view); the primary polar fan stays hand-rolled SVG.
+
+**When to revisit**:
+
+- **Plotly** when a single chart needs >10K points or true 3D / map-based views.
+- **Vega-Lite** when the `chart builder` slice (UI_DESIGN.md §6) lands — JSON-spec authoring is its native idiom and Plot doesn't expose a comparable serialization path.
+
+**Alternatives considered**:
+
+- *Vega-Lite from day one* — rejected. Heavier for the simple shapes we have now, and the chart-builder slice that justifies it isn't on the immediate roadmap.
+- *Plotly* — rejected. ~7× the bundle of Plot for capabilities we don't yet need.
+- *Recharts* — rejected. React-native is appealing but it's slower than Plot on >5K points and doesn't compose cleanly with custom SVG annotations.
+- *uPlot* — rejected. Tiny and fast but limited to time-series shapes; we need scatter + stacked bar.
+- *Continue hand-rolling* — rejected for scatter. EV-LA scatter with proper axis ticks + zone overlays + tooltips would be ~400 LOC of custom SVG; Plot ships it in ~95.

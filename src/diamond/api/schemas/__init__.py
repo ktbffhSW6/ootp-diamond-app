@@ -17,6 +17,13 @@ Conventions:
   import GlossaryEntry`` works regardless of the source file.
 """
 
+from diamond.api.schemas.ai import (
+    AIProviderInfo,
+    AISettingsResponse,
+    AISettingsUpdate,
+    AISummarizeRequest,
+    AISummarizeResponse,
+)
 from diamond.api.schemas.awards import (
     AwardCategoryRef,
     AwardHolderRow,
@@ -95,6 +102,11 @@ from diamond.api.schemas.roster import (
     RosterTeamRef,
 )
 from diamond.api.schemas.save import SaveResponse
+from diamond.api.schemas.saves import (
+    ActiveSaveUpdate,
+    SavesListResponse,
+    SaveSummaryDto,
+)
 from diamond.api.schemas.standings import (
     StandingsDivision,
     StandingsLeagueRef,
@@ -109,6 +121,11 @@ from diamond.api.schemas.streaks import (
 )
 
 __all__ = [
+    "AIProviderInfo",
+    "AISettingsResponse",
+    "AISettingsUpdate",
+    "AISummarizeRequest",
+    "AISummarizeResponse",
     "AwardCategoryRef",
     "AwardHolderRow",
     "AwardLeagueRef",
@@ -172,7 +189,10 @@ __all__ = [
     "RosterPlayer",
     "RosterResponse",
     "RosterTeamRef",
+    "ActiveSaveUpdate",
     "SaveResponse",
+    "SavesListResponse",
+    "SaveSummaryDto",
     "StandingsDivision",
     "StandingsLeagueRef",
     "StandingsResponse",

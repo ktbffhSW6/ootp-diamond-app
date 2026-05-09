@@ -69,6 +69,7 @@ export default function RootLayout({
               <NavLink href="/explore" label="Explore" />
               <span className="ml-auto" />
               <NavLink href="/glossary" label="Glossary" />
+              <NavLink href="/settings" label="⚙" />
             </nav>
             <div className="flex items-center gap-2">
               <ThemeSwitcher />

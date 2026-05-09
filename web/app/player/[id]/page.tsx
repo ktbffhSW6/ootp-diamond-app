@@ -12,6 +12,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { AISummarizeButton } from "@/components/AISummarizeButton";
 import { CareerArc } from "@/components/CareerArc";
 import { PlayerAvatar } from "@/components/PlayerAvatar";
 import { PlayerContractCard } from "@/components/PlayerContractCard";
@@ -291,6 +292,19 @@ export default async function PlayerPage({ params }: Props) {
       </nav>
 
       <PlayerStatsTab player={player} glossary={glossary} />
+
+      {/* AI summary — opt-in per click. Renders disabled state when no
+          key is set (with a deep-link to /settings/ai). */}
+      <section>
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-content-secondary">
+          AI summary
+        </h2>
+        <AISummarizeButton
+          kind="player"
+          targetId={player.bio.player_id}
+          label="Summarize career"
+        />
+      </section>
 
       <p className="pt-4 text-xs text-content-muted">
         <Link href="/" className="hover:text-content-primary">
