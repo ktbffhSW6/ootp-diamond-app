@@ -424,3 +424,46 @@ For aggregation purposes nulls are coalesced to 0 (Fangraphs convention; OOTP im
 - *Use Fangraphs Guts table directly* for woba_scale + linear weights instead of recomputing from Lahman aggregates — rejected. Fangraphs Guts requires an additional data source / scrape with no clear long-term URL stability, and our self-consistent Lahman-derived constants pass spot-checks (Bonds OPS+ 257 vs BBR 259, Pujols 189 vs 189) within 1-3 pts on park-aware metrics. The wRC+ gap (~10-15% high vs Fangraphs canonical) is from our park-blind wRC+ formula, NOT the constants — same bias hits save-side data. Fixing wRC+ to be park-adjusted is a separate refactor.
 - *Materialize a real L3 table for historical constants* instead of a view — rejected. The view is cheap (one aggregation per year × 155 years = trivial), and view-only means the constants always reflect the latest history backfill without a rebuild step. The rebuild dependency was already implicit (advanced tables rebuild on every L3 build).
 - *Defer to the user setting up minor-league historical baselines manually* — rejected for v1. Lahman's minor-league coverage is spotty and the OOTP→Lahman league_id crosswalk for IL/PCL/etc. isn't bijective. MLB-only is the user-visible win; minor-league pre-save advanced stats stay null (same as today).
+
+## D21 — Hand-rolled inline SVG for v1 visual primitives; defer chart-stack lib until cohort viz needs it
+
+**Date**: 2026-05-12
+**Decision**: For v1, all data viz on the site (Sparkline trend lines, CareerArc career-WAR chart, salary-stream bar viz, pressure-board metric coloring) is hand-rolled — pure inline SVG + Tailwind classes via the heat-scale module. No chart library (Vega-Lite, Plotly, Recharts, etc.) is added to the bundle. The chart-stack decision is deferred until a slice genuinely needs WebGL-scale cohorts or a JSON-spec authoring layer (most likely: spray charts on the player page, EV-LA scatter, league-wide distribution viz under Explore).
+
+**Why**:
+
+The visual upgrade slice (heat-scale + Sparkline + CareerArc + Cockpit v2, 2026-05-12) needed to land fast and feel substantial without committing the bundle to a charting framework whose API surface we'd carry forever. The shapes we needed — single-series trend lines, dot-per-year line charts with reference bands, salary bars — are all 50-200 LOC of straightforward SVG. Rolling them by hand:
+
+- Keeps the bundle small (Sparkline + CareerArc + PlayerContractCard add ≤2 KB total to the relevant routes after gzip).
+- Composes cleanly with the rest of the Tailwind / theme-token stack (CareerArc uses `fill-emerald-*` etc. directly; no chart-lib theme bridge).
+- Lets each viz match the exact shape of the data we have, without library-imposed conventions (e.g., CareerArc's WAR-magnitude dot fills + peak-tier reference band would be awkward to express in Vega-Lite's grammar).
+- Avoids the SSR / hydration / bundle-split complexity of a chart lib in a server-component-heavy app.
+
+The cost: a handful of bespoke SVG modules to maintain. Acceptable when each is small and the visual vocabulary is shared (heat-scale colors flow into both bar viz + sparkline dots).
+
+**When to revisit**:
+
+The decision flips when a slice needs *any* of:
+- **WebGL-scale point sets** — Statcast EV-LA scatter at full-league cohort scale (≥50K points) is well past hand-rolled SVG's comfort zone. Plotly with WebGL fallback handles this.
+- **Interactive grammar-of-graphics authoring** — the `chart builder` slice on Explore (UI_DESIGN.md §6) needs JSON-spec authoring with X/Y/color/facet pickers. Vega-Lite is purpose-built for this; no point reinventing.
+- **Coordinated multi-view linking** — e.g., a spray chart that filters when you brush an EV-LA scatter. Vega-Lite's signal-and-data API is the right primitive.
+
+For everything *between* "hand-rolled" and those triggers — sortable leaderboards, distribution histograms, simple scatters — TanStack Table + plain SVG is plenty. The first slice that genuinely hits one of the triggers above picks the lib (lean: **Vega-Lite** for JSON-spec serializability, smaller bundle, easier AI-prompt authoring; reserve Plotly for the WebGL-scale cohorts case).
+
+**Alternatives considered**:
+
+- *Pick Vega-Lite (or Plotly) now and use it everywhere from day one* — rejected. Adds 100-200 KB to the bundle, pulls in a theme-bridge layer we'd have to maintain alongside the existing token system, and forces every viz to fit the lib's grammar (some shapes — CareerArc's peak-tier band, salary-stream's option-year badges — are awkward to express). Premature commit.
+- *Use Recharts (React-native, smaller than Plotly)* — rejected. Still ~50 KB; still imposes its own theme conventions; doesn't carry through to the JSON-spec authoring vision (UI_DESIGN.md §6) which is a v2 selling point.
+- *Skip charts entirely until the chart-stack decision lands* — rejected. The "fun" upgrade slice (2026-05-12) was specifically about making the app feel less like spreadsheets; deferring viz entirely until the chart lib lands would have meant another 1-2 weeks before the app got any visual richness. Hand-rolling unblocked the win without committing the architecture.
+
+**Side benefit — visual vocabulary coherence**: because every primitive is built in-tree, the heat-scale color ramp (defined once in `web/lib/heatscale.ts`) shows up identically on roster-row text, pressure-board cells, player-page stat cells, cockpit spotlight headlines, and CareerArc dot fills. A chart lib would have introduced its own scale-color system that we'd have to mirror, drift from, and maintain in parallel. By the time we adopt Vega-Lite, the heat-scale vocabulary will be load-bearing enough that we'll thread it *into* the chart lib rather than the other way around.
+
+**Catalog of v1 hand-rolled visual primitives** (all in `web/`):
+
+- `lib/heatscale.ts` — color functions for 100-relative metrics + WAR magnitude.
+- `components/Sparkline.tsx` — generic inline-SVG trend chart with auto-trend coloring.
+- `components/CareerArc.tsx` — career-WAR-by-year line chart with WAR-magnitude dots + reference bands.
+- `components/PlayerContractCard.tsx` — CSS-bar salary timeline with option badges.
+- `components/PlayerAvatar.tsx` — circular headshot with deterministic-color initials fallback.
+
+Each is a self-contained file ≤300 LOC. When the chart lib lands, evaluate each on a "rewrite or keep" axis — Sparkline + CareerArc are likely keepers (stable shape, perfect token integration); PlayerContractCard could go either way; PlayerAvatar isn't a chart and stays regardless.

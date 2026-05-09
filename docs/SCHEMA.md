@@ -553,6 +553,24 @@ of drift bugs.
     because the audit reconcile harness needs per-dump comparison vs IE
     roster CSVs; L2 `f_pa_event` is multi-year sourced from L0 directly.
 
+11. **L3 league constants — pre-save MLB baselines via Lahman + BREF**
+    *(2026-05-12, D20)*. The `_lg_constants_advanced` view that the L3
+    advanced builders JOIN against is now a UNION of `_native` (OOTP
+    `league_history_*_event`, save years only) and `_imported` (Lahman
+    1871-2019 + BREF 2020-2025, summed across AL/NL into MLB
+    league_id=203, level_id=1). `f_player_season_advanced_batting`
+    grew from 30,440 → **244,183 rows** — every imported real-history
+    MLB player-season pre-2026 now resolves wOBA / wRC+ / OPS+ / FIP /
+    ERA+ / b_WAR. Spot-checks: Bonds 2001 OPS+ 257 (BBR 259), Pujols
+    2003 OPS+ 189 (exact), Trout 2018 OPS+ 198 (exact). Pre-2026
+    minor-league baselines remain null (Lahman MiLB coverage spotty);
+    pre-2026 park factors fall back to the team's current-day stadium
+    (modern-stadium proxy — small bias on OPS+/ERA+, none on
+    wOBA/wRC+/wRAA). Soft-skip when history tables are missing so
+    fresh warehouses build cleanly without `diamond fetch-history`.
+    Full reasoning + sparsity tables in DECISIONS D20 + DATA_NOTES
+    "Pre-save MLB league baselines" section.
+
 ---
 
 ## Summary diagram

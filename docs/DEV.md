@@ -96,19 +96,24 @@ default browser to `http://localhost:3000` after a 6-second pause to
 let Next.js's first compile finish. If you only need to restart one
 side, use `api.bat` / `web.bat` directly.
 
-Open http://localhost:3000 — you'll land on the home page with feature
-links. Two demo paths:
+Open http://localhost:3000 — you'll land on the **cockpit dashboard**
+(save header + warehouse stats + Sox division standings + top-3 MLB
+promotion/pressure pairs + 6 spotlight cards with sparkline + auto-
+generated insight + last 8 movement-ledger rows). Three demo paths:
 
 - **Glossary** — Next.js fetches `/api/glossary`, the FastAPI app
   converts the D15 dictionary's `STATS` dict to JSON, and the page
-  renders all 60 entries grouped by category. Click any entry for the
+  renders all 60+ entries grouped by category. Click any entry for the
   KaTeX-rendered formula detail page.
-- **Player page** (e.g. `/player/26166` for Gunnar Henderson) — bio
-  header + Bref-shaped Stats tab with batting/pitching/fielding/
-  advanced sections. Multi-stint years collapse to a clickable
-  TOT row that expands to per-(level, team) sub-rows. Advanced rows
-  pull from `f_player_season_advanced_*` (park-aware OPS+/ERA+/FIP/
-  wRC+/oWAR/pit_WAR per league-level).
+- **Player page** (e.g. `/player/26166` for Gunnar Henderson) — avatar
+  + bio header + Service & Status card + CareerArc SVG + Contract
+  bar viz + Bref-shaped Stats tab (batting / pitching / fielding /
+  advanced + Defensive Profile + Situational batting/pitching). Multi-
+  stint years collapse to a clickable TOT row that expands to
+  per-(level, team) sub-rows. Heat-scale coloring throughout.
+- **Compare** — `/explore/compare?ids=3259,28963,36239` renders Bonds
+  vs Trout vs Ohtani side-by-side with career stat blocks + WAR
+  sparkline overlays. Empty state surfaces three demo deep-links.
 
 ## Type generation pipeline
 
