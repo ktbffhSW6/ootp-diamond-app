@@ -9,7 +9,7 @@
 
 ---
 
-## TL;DR — the five layers (six counting `L_REF`, planned)
+## TL;DR — the five layers (six counting `L_REF`, planned; seven if `L_NEWS` is ever pulled in per D28)
 
 | Layer | Purpose | Source | Built when | Lifecycle |
 |---|---|---|---|---|
@@ -19,6 +19,7 @@
 | **L3 — derived** | Sabermetric stats, league constants, park factors, `player_movements`, awards rollups | L2 + L1 | After L2 | Full rebuild — DROP/CREATE |
 | **L4 — views** | User-facing query surface: standings, leaders, draft analyzer, HOF tracker, franchise rollups | L2 + L3 | Always-on (SQL views) | No materialization |
 | **L_REF — reference** *(planned, [D26](DECISIONS.md#d26--l_ref-reference-layer-from-ootp-parent-folder-data) + [D27](DECISIONS.md#d27--l_ref-is-per-save-frozen-at-first-ingest-opt-in-refresh))* | OOTP-canonical analytical lookup tables (xwOBA / xBA / RE288 / WPA / LI grids), historical baselines (era_stats / era_modifiers / era_fielding), park data (pt_ballparks + era_ballparks with handedness splits), crosswalks (Master.csv), engine config (financials, league templates, schema docs), real HoF plaques, brand colors | OOTP parent folder `<docs>/Out of the Park Developments/OOTP Baseball 27/` (`misc/*.txt`, `database/*.txt`, `stats/*.csv`, `hof/`, `colors/`) | **First `diamond ingest` only** — frozen for save lifetime per D27; opt-in refresh via `diamond ingest --refresh-lref` | Read-only canon — Diamond never writes to the parent folder. Per-save snapshot mirrors OOTP's own engine convention (save captures reference data at creation; install-folder patches don't retroactively rewrite saves) |
+| **L_NEWS — events / narratives** *(deferred, [D28](DECISIONS.md#d28--save-folder-data-stay-on-dump-csvs-as-primary-defer-l_news))* | OOTP-authoritative event log: `league_news` / `team_news` / `league_transactions` (with engine's own `transaction_type` codes) / `team_transactions` / `player_history` (dated bio narratives) / `league_injuries` / draft_log variants | Save folder `<save>/temp/text_data.sqlite3` | Append-only mirror on every `diamond ingest`, keyed by source `*_id` | Per-save independent copy. Different from L_REF's freeze pattern — this layer ACCUMULATES (new rows appended each ingest) but is independent of OOTP's `temp/` retention once mirrored. Deferred until UX need pulls it in (see D28). |
 
 Each save gets one DuckDB at `<save>/diamond/diamond.duckdb` (D2). All layers
 live inside it. L0 is the only save-state-mutating layer (per-dump archive);

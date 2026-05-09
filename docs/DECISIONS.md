@@ -713,3 +713,50 @@ The "None" rows could in principle be refreshed live without dispersion, but for
 - Per-stat "computed from L_REF version X" tag in the UI. Audit-trail is overkill; users who care can read `_diamond_settings`.
 - Mid-save automatic refresh detection. If the user never opts in, L_REF stays pinned forever — fine.
 - Multi-OOTP-version L_REF coexistence within a single save. If the user installs OOTP 28 and refreshes, the old OOTP-27-vintage L_REF is overwritten (with the prior `source_path` retained in settings as audit trail).
+
+## D28 — Save-folder data: stay on dump CSVs as primary; defer L_NEWS
+
+**Date**: 2026-05-13 (evening, paired with the save-folder deep-dive)
+
+**Decision**: After a meticulous deep-dive of `<save>/<save_name>.lg/`, Diamond commits to keeping the **monthly dump CSVs as the primary data source** for all stat / ratings / state data. The save-folder offers richer alternatives in three specific domains, but they're **deferred until a UX need pulls them in** rather than swapped in proactively.
+
+This decision pins:
+
+1. **Box scores HTML and replays are EPHEMERAL — never depend on them.** Empirically verified: `news/html/box_scores/*.html` and `replays/*.rpl` use `game_id` numbering that resets at season start. The entire folder gets rewritten annually as new game_ids land on the same numbers. Mtime histogram of 18,982 box scores in this save shows 18,935 touched in a single recent batch; sampled box scores at game_id positions 1, 100, 1000, ..., 18982 are ALL dated 2029 regardless of position. **All structured data displayed in box scores is already in our dumps** (`games.csv` + `games_score.csv` + `players_game_*.csv` + `players_at_bat_batting_stats.csv` → `f_pa_event` multi-year via D19). HTML box scores are OOTP's pre-rendered VIEW; we render our own from dump data.
+2. **`messages/` folder is dropped.** Per user preference — its content overlaps SQLite `league_news` with a different tag format; not worth maintaining two parsers.
+3. **`temp/text_data.sqlite3` is acknowledged as a future augmentation source** — empirically stable across 4 seasons in this save, but lives under `temp/` which is a yellow flag for long-term dependence. Three specific uplift areas catalogued in DATA_NOTES.md "Side-by-side" table:
+   - **Movements augmentation** — SQLite `league_transactions.transaction_type` is OOTP's authoritative classification (sign / release / trade / call-up / send-down / DFA / Rule 5). Our `f_l3_player_movements` currently INFERS this from snapshot diffs. Joining SQLite would replace the heuristic.
+   - **Player career bio timeline** — `player_history` (314,678 dated rows) gives per-player narrative event timelines (drafted from school X, signed bonus Y, traded to Z). No dump equivalent. New capability for the player page.
+   - **League / team news headlines** — `league_news` (16,718) + `team_news` (43,206) give a real news feed. No dump equivalent. Cockpit ticker / per-team feeds.
+4. **OOTP-internal binary `.dat` files are ignored.** `players.dat`, `retired.dat`, `faces.dat`, `teams.dat`, etc. are working state that OOTP projects to dump CSVs already; we get the projection.
+5. **`settings/db_monthly_dump_csv.cfg` is documented but not auto-modified.** This file controls what tables OOTP exports per dump cycle. Toggles `73-75` (ratings modes), `79-80` (messages), `81` (game_logs) are OFF by default. We don't auto-flip them on the user's behalf — too invasive. Future option: a setup-wizard checkbox that offers to enable specific toggles.
+6. **Dump cadence is left at user's chosen value.** OOTP supports Manual / Daily / Weekly / Monthly / End-of-season. The `RefreshButton.tsx` + `/api/admin/dump-status` polling auto-detects whatever cadence the user picks. Diamond doesn't push for daily dumps unless a UX need drives it.
+
+**Why defer L_NEWS rather than ship it now**:
+
+- L_REF (D26 + D27) is committed and ready to implement; layering L_NEWS on top of an unimplemented L_REF risks scope creep.
+- The three uplift areas are augmentations (better movements classification, new bio timeline, new news ticker) — none are blockers for current functionality.
+- The SQLite's stability is empirically encouraging but the `temp/` path leaves room for future surprise; we'd want to mirror into our own DuckDB tables before depending on it. That mirror layer is itself ~half the work of L_NEWS.
+- User explicitly chose to keep monthly dump cadence (vs flipping to weekly/daily) — strong signal that "intramonth freshness" isn't the priority right now.
+
+**What we WILL do** (the current decision):
+
+- Document the findings exhaustively in DATA_NOTES.md (the full save-folder catalog, the SQLite content table, the empirical stability evidence, the side-by-side comparison) so the option is fully spelled out for future-Claude.
+- Add L_NEWS as a deferred slice in BACKLOG.md with the same per-save mirror pattern (append-only by source `*_id`, not freeze-at-first like L_REF).
+- Keep the architecture decision-pinned via this D28 entry so future-Claude doesn't re-litigate or accidentally depend on ephemeral box scores.
+
+**Architectural commitments** (binding):
+
+- **Dumps remain the single source of truth for structured data.** Anything CSV-shaped that exists in dumps gets read from dumps.
+- **Never ingest box score HTMLs as a stable archive.** If a per-game detail page is ever needed, render from `games + games_score + players_game_* + f_pa_event` JOIN.
+- **Never depend on `replays/*.rpl`.** Pitch sequences (if ever needed) are derivable from `players_at_bat_batting_stats.csv`.
+- **L_NEWS, when implemented, is per-save append-only mirror** — copy SQLite rows into per-save DuckDB tables keyed by source `*_id`, never re-read old rows. Independent of OOTP's `temp/` retention. Different from L_REF which is per-save freeze (D27).
+
+**Cross-references**: D2 (per-save warehouse path), D8 (per-save reconciliation), D19 (multi-year `f_pa_event` PK with year disambiguation — same `game_id` recycling story), D24 (photo cache revalidation — file-rewrite-aware pattern), D26 (L_REF reference layer), D27 (L_REF per-save freeze).
+
+**Out of scope for v1**:
+
+- Auto-flipping `db_monthly_dump_csv.cfg` toggles. User-respect — they configured it.
+- Suggesting users flip OOTP's dump cadence away from monthly. If needed, we can recommend in `docs/DEV.md` later.
+- Reverse-engineering the binary `.dat` files. The CSV projections cover everything we need.
+- Reverse-engineering the binary `.rpl` replay format.

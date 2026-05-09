@@ -322,20 +322,167 @@ For simplicity we freeze the entire L_REF together; one coherent snapshot is eas
 
 ---
 
-## Save folder layout
+## Save folder layout — `<saves_root>/<save_name>.lg/`
+
+(Catalog freshened 2026-05-13 evening with empirical deep-dive of the live save folder. See **D28** for the architectural commitment around what we depend on vs what we deliberately ignore.)
 
 ```
 saved_games/<save_name>.lg/
-├── dump/                          ← OOTP writes monthly
-│   └── dump_yyyy_mm/
-│       └── csv/                   ← ~70 CSV files (the dump)
+│
+│   ─── ⭐ STABLE ARCHIVES (safe to depend on) ───
+├── dump/                          ← OOTP writes per dump cadence (default: monthly)
+│   ├── dump_2026_03/csv/          ~70 CSVs per dump
+│   ├── dump_2026_04/csv/
+│   ├── ...                        45 dumps in this save covering 2026-03 → 2029-11
+│   └── dump_2029_11/csv/
 ├── import_export/                 ← OOTP writes when user exports a roster view
-│                                    (Boston Red Sox org only at present)
+│                                    (21 IE roster CSVs for Boston Red Sox org;
+│                                    audited per Decision D8)
+├── temp/text_data.sqlite3         ⭐ 188MB live SQLite — see "SQLite content" below.
+│                                    Despite the "temp/" path, retains 4+ years of
+│                                    news/transactions/history. Append-only by
+│                                    monotonic id; updated continuously as the user
+│                                    sims. Empirically stable across this save.
+├── messages/*.txt                 18,725 numbered notification files. Append-only
+│                                    (oldest mtime = save start; numbering monotonic).
+│                                    Overlaps SQLite `league_news` with bracket-tag
+│                                    format `<Display:type#id>` instead of HTML
+│                                    anchors. **Per D28, dropped — SQLite covers it.**
+├── news/html/images/person_pictures/player_<id>.png
+│                                  Procedural face PNGs. Files persist; OOTP only
+│                                  rewrites them when user triggers regeneration.
+│                                  Wired into our /api/photos/players/{id}.png
+│                                  route per D24.
 └── diamond/                       ← OUR folder, OOTP doesn't touch
     ├── diamond.duckdb
     ├── diamond_config.json
     └── reconciliation/
+│
+│   ─── ❌ EPHEMERAL (wiped on season rollover) ───
+├── news/html/box_scores/*.html    18,982 per-game box scores. **WIPED ANNUALLY.**
+│                                  Empirical: every sampled game_box_<id>.html in
+│                                  this save is dated 2029, regardless of position.
+│                                  game_id resets at season start, so the entire
+│                                  folder is current-season scratch space. Mtime
+│                                  histogram: 18,935 of 18,982 files were touched
+│                                  in a single 2026-05 batch.
+├── replays/*.rpl                  6,481 highlight + replay files. Same recycling
+│                                  scheme as box scores. Binary OOTP format
+│                                  (magic bytes "OOTP\x1b...").
+├── news/html/leagues/             On-demand league reports (transactions, power
+├── news/html/players/                 rankings, preseason predictions). Regenerated
+├── news/html/teams/                   when user triggers; do not depend on.
+├── news/html/game_logs/           Single sample log; on-demand.
+├── news/html/{kml,real_time_sim,reports,temp}/
+│                                  Empty / on-demand / live-sim scratch.
+├── auto-save/*.dat                Mirror of root .dat files; OOTP's recovery copies.
+└── temp/text_data.sqlite3-{shm,wal}
+                                   SQLite write-ahead log files. 0 bytes on idle.
+│
+│   ─── ⚙ OOTP-INTERNAL BINARY (ignore — derived data, projected to dumps) ───
+├── faces.dat                      651MB — binary face cache (source for the
+│                                    procedural PNGs above)
+├── players.dat                    158MB — active-player binary state
+├── retired.dat                    157MB — retired-player binary state
+├── text_data.dat                  37MB — likely the source projected into
+│                                    temp/text_data.sqlite3
+├── world.dat                      12MB — geography/economy state
+├── teams.dat                      12MB — team binary state
+├── coaches.dat                    8.4MB — coaches
+├── messages.dat                   2MB — index over messages/*.txt
+├── scouting.dat                   2.6MB — scouting reports
+├── trades.dat / parks.dat / storylines.dat / offers.dat / weather.dat /
+│ human_managers.dat / games_in_progress.dat / flag_save_completed.dat / names.dat
+│                                  KB-MB each — various working state. ALL
+│                                  redundant with dump CSVs (OOTP projects these
+│                                  binaries into the CSV dumps we already ingest).
+│
+│   ─── 🎨 PER-SAVE COSMETIC OVERRIDES (override <install>/ counterparts) ───
+├── ballcaps/ jerseys/ pants/ socks/ colors/
+│                                  User-customizable uniform asset folders. Take
+│                                  precedence over <install>/ folders when the
+│                                  user customizes uniforms in this save.
+├── 3d_ballparks/compositions/{ootp3d,sc}/
+│                                  3D ballpark composition state; binary.
+│
+│   ─── 📋 OPERATIONAL CONFIG ───
+├── settings/db.cfg                Small key-value config (bb_cards_enabled,
+│                                  load_real_pictures, load_photofit_files, etc.)
+├── settings/db_monthly_dump_csv.cfg   ⭐ THE DUMP-TOGGLE FILE. Format:
+│                                  `<id> <on=1/off=0> <table_name>`. Defines what
+│                                  OOTP exports each dump cycle. Currently OFF
+│                                  in this save and worth knowing about:
+│                                    73 0 Show OSA player ratings
+│                                    74 0 Show real player ratings
+│                                    75 0 Show no player ratings
+│                                    79 0 messages
+│                                    80 0 add full message text to messages table
+│                                    81 0 game_logs
+│                                  Per D28, we don't auto-flip these. User-tunable
+│                                  in OOTP's "Database Export" dialog.
+├── settings/last_date_simulated.dat   Tiny binary — last sim-date marker
+├── page_links/{bookmark,recent}_page_links
+│                                  Binary UI navigation history (recent pages,
+│                                  bookmarks). Personalization fodder if ever
+│                                  needed; low priority.
+└── ...
 ```
+
+### `temp/text_data.sqlite3` content (the major 2026-05-13 finding)
+
+A real SQLite 3.x database, queryable directly via `sqlite3` / DuckDB's `sqlite_scanner`. **Empirically retained across the entire save's lifetime** — 4 full seasons preserved here despite the `temp/` path. Tables:
+
+| Table | Rows in this save | Schema | Notes |
+|---|---|---|---|
+| `league_news` | 16,718 | `news_id, league_id, news_date (YYYYMMDD), news_text, season` | 4,149 / 4,124 / 4,077 / 4,368 rows for 2026/2027/2028/2029. HTML-tagged: `<a href="../players/player_43404.html">Alex Vesia</a>` |
+| `team_news` | 43,206 | `news_id, team_id, news_date, news_text, season` | Per-team framing of league news |
+| `league_transactions` | 149,769 | `transaction_id, league_id, transaction_date, transaction_type (INT), transaction_text, season` | **OOTP's authoritative `transaction_type` codebook** (sign / release / trade / call-up / send-down / DFA / Rule 5 / etc.) |
+| `team_transactions` | 350,169 | same shape | Per-team framing |
+| `player_history` | 314,678 | `history_id, player_id, history_date, history_text, season` | **Dated narrative timeline per player** (drafted from school X, signed bonus Y, called up, traded to Z, awards, retired). Includes pre-save real-life events for OOTP-imported real-history players |
+| `league_injuries` | 63,065 | `injury_id, league_id, injury_date, injury_text, season` | Narrative; structured rows are in dump's `players_injury_history.csv` |
+| `league_draft_log` | 722 | `draft_id, league_id, draft_date, draft_text, season` | Round-by-round narrative |
+| `league_expansion_draft_log`, `league_fa_draft_log`, `league_fantasy_draft_log`, `league_rule5_draft_log`, `team_development`, `team_injuries` | varies | Self-explanatory | |
+| `game_logs` | **0 in this save** | `game_log_id, game_id, game_log_code, game_log_text, season` | Empty because dump-toggle `81 game_logs` is OFF in this save's `db_monthly_dump_csv.cfg` |
+
+**Tag format** in text columns: HTML anchors `<a href="../players/player_<id>.html">Display Name</a>` and `<a href="../teams/team_<id>.html">Display Name</a>`. Trivial regex extraction:
+
+```python
+re.findall(r'<a href="\.\./(?:players|teams)/(?:player|team)_(\d+)\.html">([^<]+)</a>', text)
+```
+
+**Stability caveat**: lives under `temp/` which is a yellow flag. Empirically stable here, but if we ever depend on it we should mirror the rows into our own per-save L_NEWS DuckDB tables keyed by source `*_id` so we're independent of OOTP's `temp/` retention. Append-only mirror pattern (vs L_REF's freeze pattern per D27).
+
+### Empirical stability evidence (2026-05-13)
+
+How we determined which save-folder sources are stable vs ephemeral:
+
+**Box scores test** — sampled `game_box_{1, 100, 1000, 5000, 10000, 15000, 18000, 18982}.html`. Every file is dated 2029 inside, regardless of position. 18,935 of 18,982 files have mtimes in 2026-05 (a single recent batch). **Conclusion: `game_id` resets at season start; the folder is wiped + rewritten annually.**
+
+**SQLite test** — `SELECT season, COUNT(*) FROM league_news GROUP BY season` returns 4,149 / 4,124 / 4,077 / 4,368 across 2026/2027/2028/2029 — all four seasons retained. `news_id` is monotonic. `league_transactions` shows the same pattern (36k-38k rows per season, all 4 retained). **Conclusion: append-only event log, stable.**
+
+**Messages test** — `message5.txt` mtime is 2026-04-14 (save start); `message18725.txt` mtime is 2026-05-02 (last sim run). Numbering monotonic. **Conclusion: append-only, stable** (but per D28 we drop it — overlaps SQLite).
+
+### Side-by-side: what we use from dumps vs save-folder alternatives
+
+| Domain | Current source (L0 / dumps) | Save-folder alternative | Verdict |
+|---|---|---|---|
+| Player current state / ratings | `players_personal.csv`, `players_batting.csv`, `players_fielding.csv`, `scouted_ratings.csv`, etc. | `players.dat` (binary) | ✅ Keep dumps. No accessible alt. |
+| Player season stat totals | `players_career_*.csv` | `players.dat` (binary) | ✅ Keep dumps. |
+| Game-level events / linescores / PA events | `games.csv` + `games_score.csv` + `players_game_*.csv` + `players_at_bat_batting_stats.csv` (multi-year via D19) | HTML box scores (ephemeral) + replays (ephemeral binary) | ✅ Keep dumps. Save-folder versions are pre-rendered VIEWS that wipe annually. |
+| Team / standings / playoffs | `teams.csv`, `team_record_snapshot.csv`, `league_history.csv`, etc. | binary `.dat` / ephemeral HTML | ✅ Keep dumps. |
+| Awards (structured) | `players_awards.csv`, `league_history_all_star.csv` | SQLite `league_news` (narrative only) | ✅ Keep dumps for structured. |
+| **Player movements / transactions** | DERIVED from snapshot diffs across monthly dumps (`f_l3_player_movements`); `transaction_type` inferred from level/team deltas | **SQLite `league_transactions`** (149,769 rows) — OOTP's authoritative `transaction_type` code + dated narrative | 🔄 SQLite would AUGMENT (replace heuristic classification with engine's own code). Deferred per D28. |
+| **Player career bio timeline** | We don't have this. Player page shows static birth/nationality only. | **SQLite `player_history`** (314,678 dated narrative rows per player) | ➕ Net-new capability. No dump equivalent. Deferred per D28. |
+| Injuries (structured) | `players_injury_history.csv` | SQLite `league_injuries` (narrative) | ✅ Keep dumps. |
+| Draft history | `players_career_*.csv` filtered + our `f_l3_draft_class` | SQLite `league_draft_log` (narrative) | ✅ Keep dumps. |
+| **League / team news headlines** | We don't have this. Cockpit recent-moves is hand-built from movements ledger. | **SQLite `league_news`** (16,718) + `team_news` (43,206) | ➕ Net-new capability. No dump equivalent. Deferred per D28. |
+| Photos / faces | `<save>/news/html/images/person_pictures/player_<id>.png` via D24 route | `faces.dat` (binary master cache) | ✅ Keep PNG path. |
+| Schedule | `games.csv` rows with `played=0` | same | ✅ Keep dumps. |
+| Park data (per-save) | `parks.csv` from dump + L_REF (D26+D27) for historical | `parks.dat` (binary) | ✅ Keep dumps + L_REF. |
+| Trade history | `teams_trade_history.csv` | `trades.dat` (binary) + SQLite | ✅ Keep dumps. |
+| Game logs (per-game text) | Empty (dump-toggle 81 OFF; SQLite `game_logs` = 0 rows) | Both paths require user opt-in via `db_monthly_dump_csv.cfg` | ⚠️ Deferred — needs toggle flip. |
+
+**Net**: SQLite uniquely augments three areas (movements `transaction_type`, player_history bio timeline, league/team news ticker). Everything else stays on dumps. See D28 for the deferral commitment.
 
 ## Dump file size hierarchy (largest first, dump_2029_11)
 

@@ -183,6 +183,84 @@ These are the visual polish follow-ons:
 
 ---
 
+## 🔬 L_NEWS layer — DEFERRED (D28)
+
+After the 2026-05-13 evening deep-dive of `<save>/<save_name>.lg/`, we
+identified the `temp/text_data.sqlite3` SQLite database as a potential
+augmentation source. **Deferred per D28** — dumps remain primary; L_NEWS
+is the option-to-pull-in-later if a UX need surfaces. Do NOT implement
+ahead of the L_REF slices above unless explicitly asked.
+
+The SQLite is empirically stable across 4 seasons in the canonical save
+(append-only by source `*_id`) but lives under `temp/` which is a
+yellow flag for long-term dependence. When L_NEWS lands, it follows a
+**per-save append-only mirror pattern** (different from L_REF's
+freeze-at-first per D27) — copy SQLite rows into per-save DuckDB tables
+keyed by source `*_id`, never re-read old rows, independent of OOTP's
+`temp/` retention.
+
+### Three uplift areas L_NEWS would unblock
+
+1. **Movements augmentation** — replace our snapshot-diff inferred
+   `transaction_type` in `f_l3_player_movements` with OOTP's authoritative
+   `league_transactions.transaction_type` integer code (sign / release /
+   trade / call-up / send-down / DFA / Rule 5 / etc.). Cross-validates
+   against snapshot-diff for any deltas. SQLite has 149,769 transactions
+   in this save with date + type + narrative.
+
+2. **Player career bio timeline (NEW capability)** — `player_history`
+   table has 314,678 dated narrative rows ("Drafted by Colorado in 46th
+   rd from Gilbert HS, AZ", signed-bonus, debut, traded-to, awards,
+   retired). NO dump equivalent. Would land as a new "Career Timeline"
+   section on the player page below the bio header.
+
+3. **League / team news ticker (NEW capability)** — `league_news`
+   (16,718) + `team_news` (43,206) give dated news headlines. NO dump
+   equivalent. Cockpit headline ticker + per-team news feeds. Tag format
+   is HTML anchors `<a href="../players/player_<id>.html">Name</a>` so
+   we can deep-link into player/team pages.
+
+### Sketch implementation (when not deferred)
+
+- [ ] `src/diamond/schema/l_news.py` — new ingest module reading from
+      `<save>/temp/text_data.sqlite3` via DuckDB's `sqlite_scanner`
+      extension or direct `sqlite3` library.
+- [ ] **Append-only mirror** — `INSERT INTO lnews_league_news SELECT *
+      FROM read_sqlite(...) WHERE news_id > (SELECT COALESCE(MAX(news_id),
+      0) FROM lnews_league_news)`. Same pattern for transactions /
+      player_history / injuries / draft_log.
+- [ ] Tables: `lnews_league_news`, `lnews_team_news`,
+      `lnews_league_transactions`, `lnews_team_transactions`,
+      `lnews_player_history`, `lnews_league_injuries`,
+      `lnews_league_draft_log`.
+- [ ] Skip `messages/*.txt` (per D28 — dropped); skip ephemeral
+      `news/html/box_scores/*.html` and `replays/*.rpl` (per D28 — never
+      depend on).
+- [ ] Decode `transaction_type` integer codes — likely an `IntEnum` in
+      `src/diamond/constants.py` once we sample enough rows to verify.
+- [ ] HTML-anchor parser — small util to extract `(entity_type, id,
+      display_name)` tuples from `<a href="../{type}s/{type}_{id}.html">
+      {name}</a>`. Trivial regex.
+- [ ] `/api/news?league_id=&limit=` and `/api/news/team/{team_id}` and
+      `/api/players/{id}/timeline` endpoints.
+- [ ] UI: cockpit headline ticker; player-page Career Timeline section;
+      per-team news feed on team page (when team page lands).
+
+### Why deferred
+
+- L_REF (D26 + D27) is committed and ready to implement. Layering
+  L_NEWS on top of unimplemented L_REF risks scope creep.
+- All three uplift areas are augmentations or new-capability — none
+  block existing functionality.
+- SQLite stability evidence is encouraging but `temp/` path leaves room
+  for future surprise; the mirror layer to make us independent is
+  itself ~half the L_NEWS work.
+- User explicitly chose to keep monthly dump cadence in 2026-05-13
+  conversation — strong signal that "intramonth freshness" isn't
+  a current priority.
+
+---
+
 ## Schema & Ingest phase (current — Phase 2)
 
 Audit-first gate (Decision D10) lifted 2026-05-04. ~270 of ~360 IE columns
