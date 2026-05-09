@@ -19,6 +19,7 @@ import type {
   HealthResponse,
   MovementsResponse,
   PlayerResponse,
+  RecordsResponse,
   RosterResponse,
   SaveResponse,
   StandingsResponse,
@@ -97,6 +98,30 @@ export async function getStandings(
   if (year !== undefined) params.push(`year=${year}`);
   const qs = params.length === 0 ? "" : `?${params.join("&")}`;
   return fetchJson<StandingsResponse>(`/api/standings${qs}`);
+}
+
+// Records leaderboard payload — top-N rows for one (scope × discipline ×
+// category) combination, optionally filtered to a source bucket via
+// the `era` arg ("all" | "save" | "real" | "statcast"). All args are
+// optional; the backend falls back to sane defaults
+// (scope=season, discipline=batting, category=HR, era=all, limit=25)
+// and re-ranks rows server-side so the rendered list is the source of
+// truth for ordering.
+export async function getRecords(args: {
+  scope?: "season" | "career";
+  discipline?: "batting" | "pitching";
+  category?: string;
+  era?: "all" | "save" | "real" | "statcast";
+  limit?: number;
+}): Promise<RecordsResponse> {
+  const params: string[] = [];
+  if (args.scope) params.push(`scope=${args.scope}`);
+  if (args.discipline) params.push(`discipline=${args.discipline}`);
+  if (args.category) params.push(`category=${encodeURIComponent(args.category)}`);
+  if (args.era) params.push(`era=${args.era}`);
+  if (args.limit !== undefined) params.push(`limit=${args.limit}`);
+  const qs = params.length === 0 ? "" : `?${params.join("&")}`;
+  return fetchJson<RecordsResponse>(`/api/records${qs}`);
 }
 
 // Trigger a one-click shutdown of both dev servers (Next.js :3000 and

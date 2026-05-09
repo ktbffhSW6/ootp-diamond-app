@@ -15,9 +15,10 @@ export default function HistoryPage() {
       sections={[
         {
           title: "Records",
-          status: "soon",
+          status: "live",
+          href: "/history/records",
           blurb:
-            "Single-season + career records, league + franchise. Backed by the existing `diamond records` CLI.",
+            "All-time leaderboards (single-season + career, batting + pitching + Statcast). Save data + Lahman 1871-2019 + BREF 2020-2025 + cross-source merged career rollups.",
         },
         {
           title: "Awards history",

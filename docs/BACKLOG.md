@@ -551,10 +551,28 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
   (top regret signals + promotion/demotion candidates from the
   pressure board), standings + Pythag, recent-moves feed embedded
   inline.
-- [ ] **History view content** — port the existing CLI surfaces
+- [/] **History view content** — port the existing CLI surfaces
   (`diamond records`, `awards`, `hof`, `streaks`, `draft <year>`) to
-  web views under `/history/...`. Stub page already lists the
-  planned sections.
+  web views under `/history/...`. Stub page lists the planned sections.
+  - [x] **Records** *(2026-05-12)* — `/history/records` lives.
+    `GET /api/records?scope=&discipline=&category=&era=&limit=` UNIONs
+    save + Lahman 1871-2019 + BREF 2020-2025 + cross-source merged
+    career rollups + Statcast 2015-2025. Three flat picker rows
+    (Scope / Discipline / Era) + a Category strip dynamically populated
+    from `f_record_player`. Source chips color-coded per source
+    (emerald=save, indigo=lahman, sky=bref, violet=merged, amber=statcast);
+    rows clickable to `/player/<id>` when the row carries a save
+    player_id. Server re-ranks globally when era=all; bad query strings
+    fall back to defaults rather than 404'ing.
+  - [ ] **Awards** *(next)* — career trophy cases + per-season races.
+    Cleanest data shape (single L3 fact `f_award_career_player`).
+  - [ ] **Hall of Fame** — Cooperstown roster + on-the-bubble
+    candidates. Backed by `players_current.hall_of_fame` + the
+    `f_award_career_player` rollup (already powers `diamond hof`).
+  - [ ] **Streaks** — top-50-per-(streak_id × scope) leaderboards
+    from `f_player_streak`. Smallest surface; quick win.
+  - [ ] **Draft classes** — `diamond draft <year>` port. Per-class
+    retention + outcome buckets from `f_draft_class`.
 - [ ] **League view content** — Standings shipped 2026-05-11; remaining:
   leaderboards, awards races, free-agent pool. Stub-strip below the
   standings block lists what's still pending.

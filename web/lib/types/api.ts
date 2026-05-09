@@ -541,14 +541,47 @@ export interface PlayerRosterStatus {
  *   Slash line is what the player ALLOWED. Lower OPS in clutch = good
  *   (the UI inverts the color hint accordingly).
  *
- * Splits cover the canonical "clutch" cuts:
+ * Splits cover the canonical clutch / leverage / platoon / count /
+ * spray cuts (14 in total, organized into five clusters):
  *
- * - ``all``         — every regular-season PA (parity row vs the
+ * Leverage:
+ *
+ * - ``all``          — every regular-season PA (parity row vs the
  *   regular batting/pitching season totals).
- * - ``risp``        — runner on 2nd OR 3rd at start of PA (`risp_flag`).
- * - ``risp_2out``   — RISP AND outs ≥ 2 (the highest-leverage RBI chance).
- * - ``late_close``  — 7th inning or later AND OOTP `Close` flag (Bref-style
+ * - ``risp``         — runner on 2nd OR 3rd at start of PA (`risp_flag`).
+ * - ``risp_2out``    — RISP AND outs ≥ 2 (the highest-leverage RBI chance).
+ * - ``late_close``   — 7th inning or later AND OOTP `Close` flag (Bref-style
  *   "Late & Close": tying / go-ahead run on / at-bat / on-deck).
+ *
+ * Bases:
+ *
+ * - ``bases_empty``  — base1=base2=base3=0 (low-leverage baseline).
+ * - ``bases_loaded`` — base1>0 AND base2>0 AND base3>0 (max RBI chance).
+ *
+ * Platoon:
+ *
+ * - ``vs_left`` / ``vs_right`` — opposing hand (LHP/RHP for batter
+ *   view, LHB/RHB for pitcher view). Switch-hitters resolve to the
+ *   opposite of the pitcher's throwing hand for the pitcher view.
+ *
+ * Counts (count BEFORE the resolving pitch):
+ *
+ * - ``first_pitch`` — 0-0 result (PA resolved on pitch 1).
+ * - ``two_strike``  — strikes=2 when resolved.
+ * - ``full_count``  — 3-2 when resolved.
+ *
+ * Spray (BIP only — K/BB/HBP excluded; AVG within these splits is
+ * hits-per-BIP since AB ≈ COUNT(*) within the BIP filter; OBP
+ * collapses to AVG since BB/HBP are zero):
+ *
+ * - ``pull`` / ``center`` / ``oppo`` — based on `hit_xy` packed
+ *   coord (`x = hit_xy / 16`). Empirically batter-relative — same
+ *   `x ≤ 5 → pull`, `6..9 → center`, `x ≥ 10 → oppo` rule for
+ *   both hands.
+ *
+ * Sanity invariants (verified live): bases_empty + (bases-with-runners)
+ * = all; vs_left + vs_right = all when handedness is fully populated;
+ * pull + center + oppo = total BIP for that (year, level).
  *
  * Slash line is computed server-side so the frontend doesn't have to
  * re-derive it. ``split_label`` is the display string ("RISP, 2 out" /
@@ -585,6 +618,82 @@ export interface PlayerSituationalRow {
   obp: number | null;
   slg: number | null;
   ops: number | null;
+}
+/**
+ * Lightweight category handle for the picker.
+ *
+ * ``available_sources`` lists which sources have data for this
+ * (scope, discipline, category). Used by the frontend to hide the
+ * Era filter when only one source exists (Career WAR is save-only,
+ * for example) or to grey out an Era option that won't return rows.
+ * ``label`` is the human-readable name ("Home Runs" / "Wins Above
+ * Replacement"); ``unit_label`` is the suffix to append after the
+ * value ("mph", "%", "ft", or empty for counters + WAR).
+ */
+export interface RecordCategoryRef {
+  category: string;
+  label: string;
+  unit_label: string;
+  direction: "asc" | "desc";
+  available_sources: ("save" | "lahman" | "bref" | "merged" | "statcast")[];
+}
+/**
+ * One leaderboard line.
+ *
+ * ``rank`` is the in-render rank — when ``era='all'`` the route
+ * re-ranks across the merged source list, so this can differ from
+ * ``rank_in_source`` (the original within-source rank, kept for
+ * traceability + tooltip).
+ *
+ * ``player_id`` populated → the UI renders the name as a link to
+ * ``/player/<id>``. When null (most lahman/bref/statcast rows for
+ * real players who aren't in the save), the name renders as plain
+ * text. ``external_id`` is the source's own ID (bbref_id for
+ * lahman/bref, mlb_id for statcast) — surfaced for completeness
+ * but not clickable.
+ *
+ * ``year`` is null for career-scope rows; ``team_abbr`` is the
+ * team at peak (career) or season team (season). Nullable in
+ * edge cases (early-1880s pre-team-tracking rows in Lahman).
+ */
+export interface RecordRow {
+  rank: number;
+  rank_in_source: number;
+  source: "save" | "lahman" | "bref" | "merged" | "statcast";
+  player_id: number | null;
+  external_id: string | null;
+  display_name: string;
+  year: number | null;
+  team_abbr: string | null;
+  value: number;
+}
+/**
+ * Whole payload for one rendered leaderboard.
+ *
+ * The picker payload (``available_categories`` + the active
+ * scope/discipline/category/era) lets the frontend render every
+ * control without round-trips. Switching axes is a Link change —
+ * no client-side state.
+ *
+ * ``rows`` is already sorted (by ``rank`` ascending), already
+ * rank-stamped, already era-filtered. The frontend renders straight
+ * from this list with no additional sort/filter logic — keeps the
+ * server as the single source of ordering truth.
+ *
+ * ``total_in_source`` is the count *before* the limit was applied,
+ * so the page can show "showing top 25 of 150" hints when more
+ * rows exist (full top-50 / top-150 still surfaceable via the CLI
+ * or a future "show all" toggle).
+ */
+export interface RecordsResponse {
+  scope: "season" | "career";
+  discipline: "batting" | "pitching";
+  category: string;
+  era: "all" | "save" | "real" | "statcast";
+  direction: "asc" | "desc";
+  available_categories: RecordCategoryRef[];
+  rows: RecordRow[];
+  total_in_source: number;
 }
 /**
  * Latest-season batting line at the player's current level.

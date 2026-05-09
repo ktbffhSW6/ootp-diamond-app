@@ -44,6 +44,11 @@ from diamond.api.schemas.player import (
     PlayerSituationalRow,
     TeamRef,
 )
+from diamond.api.schemas.records import (
+    RecordCategoryRef,
+    RecordRow,
+    RecordsResponse,
+)
 from diamond.api.schemas.roster import (
     RosterBattingLine,
     RosterLevelGroup,
@@ -85,6 +90,9 @@ __all__ = [
     "PlayerResponse",
     "PlayerRosterStatus",
     "PlayerSituationalRow",
+    "RecordCategoryRef",
+    "RecordRow",
+    "RecordsResponse",
     "RosterBattingLine",
     "RosterLevelGroup",
     "RosterPitchingLine",
