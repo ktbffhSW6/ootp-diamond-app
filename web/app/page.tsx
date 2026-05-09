@@ -95,11 +95,11 @@ const TOOLS: Tool[] = [
       "Bref-shaped player card with a Stats tab (batting / pitching / fielding / advanced sections, multi-stint disclosure rows). Demo path: Gunnar Henderson.",
   },
   {
-    status: "soon",
+    status: "live",
     title: "Pressure board",
-    href: null,
+    href: "/pressure",
     blurb:
-      "Who *should* move — companion to the movement ledger. For each level, players mashing relative to the level median vs. players struggling at the next level up. Decisions-queue input.",
+      "Who *should* move — companion to the movement ledger. For each level, the strongest performers (call-up candidates) on the left, the weakest (send-down or replace) on the right. Cross-level pattern reveals roster decisions: 130 OPS+ at AAA next to 75 OPS+ at MLB = obvious swap.",
   },
   {
     status: "soon",
