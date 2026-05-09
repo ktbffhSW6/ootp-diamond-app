@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 export default async function SaveSettingsPage() {
   const data = await getSaves();
   return (
-    <main className="mx-auto max-w-3xl px-6 py-8">
+    <div className="mx-auto max-w-3xl">
       <header className="mb-6">
         <h1 className="text-2xl font-bold text-content-primary">
           Active save
@@ -32,6 +32,6 @@ export default async function SaveSettingsPage() {
         </p>
       </header>
       <SaveSwitcher initial={data} />
-    </main>
+    </div>
   );
 }

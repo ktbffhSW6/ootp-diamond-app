@@ -12,14 +12,15 @@
 //   (Real Statcast uses EV ≥ 98 + LA ∈ [26°, 30°] expanding with EV;
 //   we shrink the EV floor by ~5 to match OOTP's lower scale.)
 // - **Sweet-spot zone** (subtle blue) — LA ∈ [8°, 32°] across all EVs.
-//   This is the "any contact in the sweet spot" band.
 //
-// LA axis: -30 to +60 covers ~99% of contact (chops below -30° and
-// pop-ups above 60° still render but with the axis clipped).
+// Width tracks the container via ResizeObserver (lib/useElementWidth)
+// so the scatter fills whatever pane it lives in. LA axis -30 to +60
+// covers ~99% of contact.
 
 import * as Plot from "@observablehq/plot";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 
+import { useElementWidth } from "@/lib/useElementWidth";
 import type { BattedBallEvent } from "@/lib/types/api";
 
 const RESULT_LABELS: Record<number, string> = {
@@ -45,13 +46,15 @@ interface Props {
 }
 
 export function EvLaScatter({ rows, height = 480 }: Props) {
-  const ref = useRef<HTMLDivElement>(null);
+  const { ref, width } = useElementWidth<HTMLDivElement>(720);
 
   useEffect(() => {
     if (!ref.current) return;
+    // Empty the host before each re-render. We deliberately don't
+    // re-use the previous chart node — Plot regenerates SVG marks
+    // every time so there's no benefit to retention.
     ref.current.innerHTML = "";
 
-    // Filter to events with both EV + LA (rare nulls).
     const events = rows.filter(
       (r) => r.exit_velo !== null && r.launch_angle !== null,
     );
@@ -64,14 +67,12 @@ export function EvLaScatter({ rows, height = 480 }: Props) {
       result: e.result,
     }));
 
-    // Reference zones drawn as Plot.rect marks. We render them BEHIND
-    // the dots so the points sit on top.
     const sweetSpotZone = [{ ev0: 50, ev1: 130, la0: 8, la1: 32 }];
     const barrelZone = [{ ev0: 93, ev1: 130, la0: 22, la1: 38 }];
 
     const chart = Plot.plot({
       height,
-      width: 720,
+      width,
       x: { label: "Exit Velocity (mph)", domain: [50, 130], grid: true },
       y: { label: "Launch Angle (°)", domain: [-30, 60], grid: true },
       color: {
@@ -114,14 +115,14 @@ export function EvLaScatter({ rows, height = 480 }: Props) {
     });
     ref.current.appendChild(chart);
     return () => chart.remove();
-  }, [rows, height]);
+  }, [rows, height, width, ref]);
 
   if (rows.length === 0) {
     return (
-      <div className="rounded-lg border border-border bg-surface-card p-6 text-center text-content-muted">
+      <div className="rounded-md border border-border bg-surface-card p-6 text-center text-content-muted">
         No batted-ball events to plot.
       </div>
     );
   }
-  return <div ref={ref} className="rounded-lg border border-border bg-surface-card p-2" />;
+  return <div ref={ref} className="rounded-md border border-border bg-surface-card p-2" />;
 }

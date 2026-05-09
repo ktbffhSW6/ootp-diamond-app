@@ -311,25 +311,27 @@ export default async function CockpitPage() {
     : (save.org_team_abbr ?? `Team ${save.org_team_id}`);
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4">
       {/* ── Header — save identity ───────────────────────────────── */}
-      <header className="space-y-2 border-b border-border pb-6">
-        <p className="text-xs font-medium uppercase tracking-wider text-content-muted">
-          Front office
-        </p>
-        <h1 className="text-3xl font-bold tracking-tight text-content-primary">
-          {orgLabel}
-          {save.latest_season !== null && (
-            <span className="ml-3 text-2xl font-medium text-content-secondary">
-              · {save.latest_season} season
-            </span>
-          )}
-        </h1>
-        <p className="font-mono text-sm text-content-muted">{save.save_name}</p>
+      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border pb-3">
+        <div className="flex items-baseline gap-3">
+          <p className="text-[10px] font-medium uppercase tracking-wider text-content-muted">
+            Front office
+          </p>
+          <h1 className="text-xl font-semibold tracking-tight text-content-primary">
+            {orgLabel}
+            {save.latest_season !== null && (
+              <span className="ml-2 text-sm font-normal text-content-secondary">
+                · {save.latest_season} season
+              </span>
+            )}
+          </h1>
+        </div>
+        <p className="font-mono text-xs text-content-muted">{save.save_name}</p>
       </header>
 
       {/* ── Warehouse status row ─────────────────────────────────── */}
-      <section className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Stat
           label="Dumps tracked"
           value={fmtCount(save.dump_count)}
@@ -361,7 +363,7 @@ export default async function CockpitPage() {
       </section>
 
       {/* ── Cockpit row 1: Standings + Pressure summary ─────────── */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {/* Standings strip */}
         <section className="rounded-md border border-border bg-surface-card p-4">
           <SectionHeader
@@ -448,7 +450,7 @@ export default async function CockpitPage() {
           hrefLabel="Full roster"
         />
         {data.spotlight.length > 0 ? (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
             {data.spotlight.map((card) => (
               <SpotlightCard key={card.player_id} card={card} />
             ))}
@@ -504,14 +506,14 @@ function Stat({
   sub: string;
 }) {
   return (
-    <div className="space-y-1 rounded-md border border-border bg-surface-card p-4">
-      <p className="text-xs font-medium uppercase tracking-wider text-content-muted">
+    <div className="rounded-md border border-border bg-surface-card px-3 py-2">
+      <p className="text-[10px] font-medium uppercase tracking-wider text-content-muted">
         {label}
       </p>
-      <p className="text-xl font-semibold tabular-nums text-content-primary">
+      <p className="mt-0.5 text-base font-semibold tabular-nums leading-tight text-content-primary">
         {value}
       </p>
-      <p className="text-xs text-content-muted">{sub}</p>
+      <p className="mt-0.5 text-[11px] leading-tight text-content-muted">{sub}</p>
     </div>
   );
 }

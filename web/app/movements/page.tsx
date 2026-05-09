@@ -325,22 +325,24 @@ export default async function MovementsPage({
   const latest = data.available_seasons[0] ?? data.season;
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight text-content-primary">
-          Movement ledger
-        </h1>
-        <p className="mt-2 max-w-2xl text-sm text-content-secondary">
-          Promotions, demotions, acquisitions, and departures for{" "}
-          <span className="font-medium text-content-primary">{orgLabel}</span> in {data.season}.
-          Verdict reads off OPS+ (batters) or ERA+ (pitchers) at the
-          relevant level vs. league average — both scale 100 = average.
-          MLB call-ups use a stricter threshold (≥100 = working) than the
-          lower levels (≥90 = working). For departures the semantics
-          invert: a player thriving elsewhere after we let them go reads
-          as 🔴 — we let someone good go.
+    <div className="space-y-4">
+      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border pb-2">
+        <div className="flex items-baseline gap-3">
+          <p className="text-[10px] font-medium uppercase tracking-wider text-content-muted">
+            Club · Movements
+          </p>
+          <h1 className="text-xl font-semibold tracking-tight text-content-primary">
+            {orgLabel}
+            <span className="ml-2 text-sm font-normal text-content-secondary">
+              · {data.season}
+            </span>
+          </h1>
+        </div>
+        <p className="text-xs text-content-muted">
+          Verdict on OPS+ (batters) / ERA+ (pitchers); MLB ≥100 working, MiLB ≥90.
+          Departures invert — 🔴 = let good player go.
         </p>
-      </div>
+      </header>
 
       <div className="flex flex-wrap items-center gap-4">
         <YearPicker

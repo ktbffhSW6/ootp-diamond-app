@@ -45,17 +45,21 @@ export default async function LeaderboardsPage(
   ]);
 
   return (
-    <main className="mx-auto max-w-7xl px-6 py-8">
-      <header className="mb-6">
-        <p className="text-xs uppercase tracking-wide text-content-muted">
-          League
-        </p>
-        <h1 className="text-2xl font-bold text-content-primary">
-          Leaderboards
-        </h1>
-        <p className="mt-1 text-sm text-content-secondary">
-          Pick a stat + filters, click any column header to re-sort. 32
-          stats supported across batting / pitching / Statcast.
+    <div className="space-y-4">
+      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border pb-2">
+        <div className="flex items-baseline gap-3">
+          <p className="text-[10px] font-medium uppercase tracking-wider text-content-muted">
+            League · Leaderboards
+          </p>
+          <h1 className="text-xl font-semibold tracking-tight text-content-primary">
+            {leaderboardRes.stat.label}
+            <span className="ml-2 text-sm font-normal text-content-secondary">
+              · {leaderboardRes.year ?? "latest"}
+            </span>
+          </h1>
+        </div>
+        <p className="text-xs text-content-muted">
+          32 stats · click any column header to re-sort
         </p>
       </header>
 
@@ -66,6 +70,6 @@ export default async function LeaderboardsPage(
           initialPaMin={paMin}
         />
       </Suspense>
-    </main>
+    </div>
   );
 }

@@ -338,22 +338,21 @@ export default async function LeaguePage({
     data.sub_leagues.length > 1 || data.sub_leagues[0]?.sub_league_name != null;
 
   return (
-    <div className="space-y-8">
-      <header className="space-y-2 border-b border-border pb-6">
-        <p className="text-xs font-medium uppercase tracking-wider text-content-muted">
-          League · Standings
-        </p>
-        <h1 className="text-3xl font-bold tracking-tight text-content-primary">
-          {leagueLabel}
-        </h1>
-        <p className="text-sm text-content-secondary">
-          Standings as of{" "}
-          <span className="font-mono text-content-primary">
-            {fmtSnapshotDate(data.dump_date)}
-          </span>{" "}
-          ({data.year} season). Records reflect the OOTP monthly snapshot —
-          mid-season cuts show in-progress standings, the November dump shows
-          end-of-season finals.
+    <div className="space-y-4">
+      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border pb-2">
+        <div className="flex items-baseline gap-3">
+          <p className="text-[10px] font-medium uppercase tracking-wider text-content-muted">
+            League · Standings
+          </p>
+          <h1 className="text-xl font-semibold tracking-tight text-content-primary">
+            {leagueLabel}
+            <span className="ml-2 text-sm font-normal text-content-secondary">
+              · {data.year}
+            </span>
+          </h1>
+        </div>
+        <p className="font-mono text-xs text-content-muted">
+          As of {fmtSnapshotDate(data.dump_date)}
         </p>
       </header>
 

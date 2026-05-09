@@ -24,7 +24,7 @@ const PANELS = [
 
 export default function SettingsLanding() {
   return (
-    <main className="mx-auto max-w-3xl px-6 py-8">
+    <div className="mx-auto max-w-3xl">
       <h1 className="text-2xl font-bold text-content-primary">Settings</h1>
       <p className="mt-1 text-sm text-content-secondary">
         Per-feature configuration. Theme and Quit are in the header.
@@ -41,6 +41,6 @@ export default function SettingsLanding() {
           </Link>
         ))}
       </div>
-    </main>
+    </div>
   );
 }

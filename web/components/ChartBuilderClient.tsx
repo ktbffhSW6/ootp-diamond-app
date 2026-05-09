@@ -17,8 +17,9 @@
 import * as Plot from "@observablehq/plot";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useTransition } from "react";
 
+import { useElementWidth } from "@/lib/useElementWidth";
 import type {
   ChartBuilderResponse,
   LeaderboardOption,
@@ -54,7 +55,7 @@ export function ChartBuilderClient({
   const router = useRouter();
   const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
-  const ref = useRef<HTMLDivElement>(null);
+  const { ref, width } = useElementWidth<HTMLDivElement>(800);
 
   // Picker state mirrors URL-resolved values from the server fetch.
   const x = initial.x_stat;
@@ -110,7 +111,7 @@ export function ChartBuilderClient({
     if (initial.mode === "histogram") {
       chart = Plot.plot({
         height: 420,
-        width: 800,
+        width,
         x: { label: xLabel, grid: true },
         y: { label: "Players", grid: true },
         marks: [
@@ -156,7 +157,7 @@ export function ChartBuilderClient({
 
       chart = Plot.plot({
         height: 480,
-        width: 800,
+        width,
         x: { label: xLabel, grid: true, reverse: xSpec?.direction === "asc" },
         y: { label: yLabel, grid: true, reverse: ySpec?.direction === "asc" },
         color: colorSpec
@@ -179,7 +180,7 @@ export function ChartBuilderClient({
     return () => {
       if (chart && "remove" in chart) (chart as SVGElement).remove();
     };
-  }, [initial, x, y, color, xSpec, ySpec, colorSpec]);
+  }, [initial, x, y, color, xSpec, ySpec, colorSpec, width, ref]);
 
   return (
     <div className="space-y-4">

@@ -58,34 +58,26 @@ export default async function ExplorePage(
   ]);
 
   return (
-    <main className="mx-auto max-w-7xl px-6 py-8">
-      <header className="mb-6">
-        <p className="text-xs uppercase tracking-wide text-content-muted">
-          Explore
-        </p>
-        <h1 className="text-2xl font-bold text-content-primary">
-          Chart Builder
-        </h1>
-        <p className="mt-1 text-sm text-content-secondary">
-          Pick X (and optional Y) from the 32-stat catalog; filter by
-          year / level / min-qualifier. Cross-table is fair game —
-          &quot;Avg EV vs HR&quot; works because every supported stat
-          keys on (player, year, league, level).
-        </p>
-        <p className="mt-2 text-xs text-content-muted">
-          Per-player charts (spray, EV / LA) live on the{" "}
-          <a className="text-link hover:text-link-hover" href="/roster">
-            player page
-          </a>
-          . League-wide tools live under{" "}
+    <div className="space-y-4">
+      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border pb-2">
+        <div className="flex items-baseline gap-3">
+          <p className="text-[10px] font-medium uppercase tracking-wider text-content-muted">
+            Explore
+          </p>
+          <h1 className="text-xl font-semibold tracking-tight text-content-primary">
+            Chart Builder
+          </h1>
+        </div>
+        <p className="text-xs text-content-muted">
+          Cross-table picker · per-player on the{" "}
+          <a className="text-link hover:text-link-hover" href="/roster">player page</a>
+          {" "}· league-wide on{" "}
           <a className="text-link hover:text-link-hover" href="/league/leaderboards">
-            League → Leaderboards
-          </a>{" "}
-          and{" "}
+            Leaderboards
+          </a>{" / "}
           <a className="text-link hover:text-link-hover" href="/league/compare">
-            League → Compare
+            Compare
           </a>
-          .
         </p>
       </header>
 
@@ -94,6 +86,6 @@ export default async function ExplorePage(
         initial={dataRes}
         initialQualifierMin={qualifierMin}
       />
-    </main>
+    </div>
   );
 }

@@ -165,8 +165,12 @@ export function StadiumSprayChart({
         </div>
       )}
 
-      {/* Chart */}
-      <div className="rounded-lg border border-border bg-surface-card p-2">
+      {/* Chart — capped at 720px wide so the field doesn't balloon
+          on ultrawide monitors (the 500×480 viewBox at full container
+          width would be 1500px+ tall on a 1920 panel). The aspectRatio
+          style + max-w give us a faithful field shape that doesn't
+          eat the whole page. */}
+      <div className="mx-auto max-w-[720px] rounded-md border border-border bg-surface-card p-2">
         <svg
           viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
           className="block w-full"

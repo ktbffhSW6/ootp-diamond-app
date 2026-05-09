@@ -315,21 +315,20 @@ export default async function ComparePage({
   }
 
   return (
-    <div className="space-y-8">
-      <header className="space-y-2 border-b border-border pb-6">
-        <p className="text-xs font-medium uppercase tracking-wider text-content-muted">
-          League · Compare
-        </p>
-        <h1 className="text-3xl font-bold tracking-tight text-content-primary">
-          {data && data.players.length > 0
-            ? `Compare · ${data.players.map((p) => p.display_name).join(" vs ")}`
-            : "Compare players"}
-        </h1>
-        <p className="text-sm text-content-secondary">
-          Side-by-side career stat blocks + overlaid WAR sparklines.
-          Cross-era is fair game — D20&apos;s pre-save MLB league baselines
-          mean Bonds 2001 / Trout 2018 / Skubal 2029 all carry full
-          advanced numbers.
+    <div className="space-y-4">
+      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border pb-2">
+        <div className="flex items-baseline gap-3">
+          <p className="text-[10px] font-medium uppercase tracking-wider text-content-muted">
+            League · Compare
+          </p>
+          <h1 className="text-xl font-semibold tracking-tight text-content-primary">
+            {data && data.players.length > 0
+              ? data.players.map((p) => p.display_name).join(" vs ")
+              : "Compare players"}
+          </h1>
+        </div>
+        <p className="text-xs text-content-muted">
+          Side-by-side career blocks + WAR sparklines · cross-era via D20 pre-save baselines
         </p>
       </header>
 

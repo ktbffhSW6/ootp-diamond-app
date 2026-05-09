@@ -264,20 +264,21 @@ export default async function PressurePage({
   });
 
   return (
-    <div className="space-y-8">
-      <header className="space-y-2 border-b border-border pb-6">
-        <p className="text-xs font-medium uppercase tracking-wider text-content-muted">
-          Club · Pressure Board
-        </p>
-        <h1 className="text-3xl font-bold tracking-tight text-content-primary">
-          {data.year} Pressure Board
-        </h1>
-        <p className="text-sm text-content-secondary">
-          The "who <em>should</em> move" view. For each level, the strongest
-          performers (call-up candidates) sit on the left; the weakest
-          (send-down or replacement candidates) on the right. Pattern-match
-          across levels — a 130 OPS+ at AAA next to a 75 OPS+ at MLB is the
-          obvious roster decision.
+    <div className="space-y-4">
+      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border pb-2">
+        <div className="flex items-baseline gap-3">
+          <p className="text-[10px] font-medium uppercase tracking-wider text-content-muted">
+            Club · Pressure Board
+          </p>
+          <h1 className="text-xl font-semibold tracking-tight text-content-primary">
+            Pressure
+            <span className="ml-2 text-sm font-normal text-content-secondary">
+              · {data.year}
+            </span>
+          </h1>
+        </div>
+        <p className="text-xs text-content-muted">
+          Left = call-up candidates (top OPS+/ERA+); right = send-down candidates (bottom)
         </p>
       </header>
 

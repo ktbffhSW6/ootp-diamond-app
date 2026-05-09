@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 export default async function AiSettingsPage() {
   const settings = await getAiSettings();
   return (
-    <main className="mx-auto max-w-3xl px-6 py-8">
+    <div className="mx-auto max-w-3xl">
       <header className="mb-6">
         <h1 className="text-2xl font-bold text-content-primary">AI Settings</h1>
         <p className="mt-1 text-sm text-content-secondary">
@@ -27,6 +27,6 @@ export default async function AiSettingsPage() {
         </p>
       </header>
       <AISettingsForm initial={settings} />
-    </main>
+    </div>
   );
 }

@@ -1,15 +1,22 @@
 // Root layout — every page renders inside this shell.
 //
-// Per D16: minimal v1 chrome, page content owns the bulk of the real
-// estate. Top nav reflects the IA committed in conversation: Club /
-// League / World / History / Explore are the scope-and-purpose tabs;
-// Glossary is the cross-cutting reference. ThemeSwitcher + Quit live
-// in the corner.
+// 2026-05-13: refactored for an LSEG-Workspace-style information-dense
+// terminal feel (per docs/ui_examples reference shots). Concrete shifts
+// from the previous max-w-6xl center-column design:
 //
-// The inline script in <head> reads `localStorage["diamond.theme"]`
-// and stamps the resulting `data-theme` onto <html> before the body
-// paints — without it, every reload flashes the default light theme
-// for ~50ms before the chosen theme takes over.
+//   - **Full-width content**: `<main>` fills the viewport with a small
+//     responsive horizontal pad (px-3 sm:px-4 lg:px-6). On a 1920+
+//     monitor this is ~700 extra pixels of usable real estate per page.
+//   - **Compact two-band header**: tight 36px brand+nav row + a
+//     secondary controls row. Total chrome height ~56px (down from
+//     ~72px) and visually denser.
+//   - **Sharp corners + thin borders**: the LSEG aesthetic is
+//     utilitarian. Components keep their existing rounded-md tokens
+//     for v1; future polish pass tightens this further.
+//
+// The inline script in <head> still reads `localStorage["diamond.theme"]`
+// and stamps `data-theme` on <html> before body paints — flash-free
+// theme on reload.
 
 import "./globals.css";
 
@@ -26,11 +33,7 @@ export const metadata: Metadata = {
     "OOTP 27 monthly-dump warehouse + analytics. Bloomberg-terminal-meets-Fangraphs for franchise mode.",
 };
 
-// No-flash theme init. Runs synchronously before the body renders;
-// reads localStorage and sets the attribute, falling back to "dark"
-// on first load or any read error. Dark is the default per the
-// 2026-05-08 user preference — light/neutral/cb still selectable
-// from the ThemeSwitcher.
+// No-flash theme init. Synchronous; runs before body paint.
 const THEME_INIT_SCRIPT = `
 (function () {
   try {
@@ -53,16 +56,19 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
-      <body className="h-full bg-surface-page text-content-primary antialiased">
-        <header className="border-b border-border bg-surface-card">
-          <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-3">
+      <body className="h-full bg-surface-page text-content-primary text-sm antialiased">
+        <header className="sticky top-0 z-30 border-b border-border bg-surface-card/95 backdrop-blur-sm">
+          {/* Compact single-row chrome — full bleed with small horizontal pad. */}
+          <div className="flex items-center gap-4 px-3 py-2 sm:px-4 lg:px-6">
             <Link
               href="/"
-              className="text-lg font-semibold tracking-tight text-content-primary"
+              className="flex items-center gap-1.5 text-sm font-semibold tracking-tight text-content-primary"
             >
-              💎 Diamond
+              <span aria-hidden="true">💎</span>
+              <span>Diamond</span>
             </Link>
-            <nav className="flex flex-1 items-center gap-5 text-sm text-content-secondary">
+            <span className="h-4 w-px bg-border" aria-hidden="true" />
+            <nav className="flex flex-1 items-center gap-1 text-xs uppercase tracking-wide text-content-secondary">
               <NavLink href="/" label="Club" />
               <NavLink href="/league" label="League" />
               <NavLink href="/world" label="World" />
@@ -70,26 +76,29 @@ export default function RootLayout({
               <NavLink href="/explore" label="Explore" />
               <span className="ml-auto" />
               <NavLink href="/glossary" label="Glossary" />
-              <NavLink href="/settings" label="⚙" />
+              <NavLink href="/settings" label="Settings" />
             </nav>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <RefreshButton />
               <ThemeSwitcher />
               <QuitButton />
             </div>
           </div>
         </header>
-        <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
+        <main className="px-3 py-4 sm:px-4 lg:px-6">{children}</main>
       </body>
     </html>
   );
 }
 
 function NavLink({ href, label }: { href: string; label: string }) {
+  // Compact LSEG-style nav button: tight padding, hover surface fill,
+  // low text weight. The inline divider above separates the brand
+  // from the nav cluster.
   return (
     <Link
       href={href}
-      className="hover:text-content-primary transition-colors"
+      className="rounded px-2 py-1 transition-colors hover:bg-surface-elevated hover:text-content-primary"
     >
       {label}
     </Link>

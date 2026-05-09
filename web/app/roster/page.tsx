@@ -33,25 +33,25 @@ export default async function RosterPage() {
   );
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight text-content-primary">
-          Roster
-        </h1>
-        <p className="mt-2 max-w-2xl text-sm text-content-secondary">
-          Every active player in the{" "}
-          <span className="font-medium text-content-primary">{orgLabel}</span>{" "}
-          org tree, grouped by their current level. Stats are{" "}
-          {data.season} totals at each player&apos;s current level — bouncing
-          between levels won&apos;t conflate the numbers here. Click a name
-          for the full player page (cross-level history, fielding,
-          stints).
+    <div className="space-y-4">
+      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border pb-2">
+        <div className="flex items-baseline gap-3">
+          <p className="text-[10px] font-medium uppercase tracking-wider text-content-muted">
+            Club · Roster
+          </p>
+          <h1 className="text-xl font-semibold tracking-tight text-content-primary">
+            {orgLabel}
+            <span className="ml-2 text-sm font-normal text-content-secondary">
+              · {data.season}
+            </span>
+          </h1>
+        </div>
+        <p className="text-xs text-content-muted">
+          {totalPlayers} player{totalPlayers === 1 ? "" : "s"} ·{" "}
+          {data.groups.length} level{data.groups.length === 1 ? "" : "s"} ·
+          stats are level-scoped (no cross-level conflation)
         </p>
-        <p className="mt-1 text-xs text-content-muted">
-          {totalPlayers} player{totalPlayers === 1 ? "" : "s"} loaded across{" "}
-          {data.groups.length} level{data.groups.length === 1 ? "" : "s"}.
-        </p>
-      </div>
+      </header>
 
       <RosterClient data={data} />
 

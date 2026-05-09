@@ -47,20 +47,23 @@ export default async function GlossaryPage() {
   const grouped = groupByCategory(data.entries, data.categories);
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight text-content-primary">
-          Stat glossary
-        </h1>
-        <p className="mt-2 max-w-2xl text-sm text-content-secondary">
-          {data.count} stats across {data.categories.length} categories.
-          Single source of truth at{" "}
-          <code className="rounded bg-surface-elevated px-1.5 py-0.5 font-mono text-xs text-content-primary">
-            diamond.dictionary.STATS
-          </code>{" "}
-          (Decision D15). Click any stat for full formula + interpretation.
+    <div className="space-y-4">
+      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border pb-2">
+        <div className="flex items-baseline gap-3">
+          <p className="text-[10px] font-medium uppercase tracking-wider text-content-muted">
+            Reference
+          </p>
+          <h1 className="text-xl font-semibold tracking-tight text-content-primary">
+            Stat glossary
+            <span className="ml-2 text-sm font-normal text-content-secondary">
+              · {data.count} stats / {data.categories.length} categories
+            </span>
+          </h1>
+        </div>
+        <p className="text-xs text-content-muted">
+          D15 dictionary at <code className="font-mono">diamond.dictionary.STATS</code> · click for formula
         </p>
-      </div>
+      </header>
 
       {data.categories.map((cat) => {
         const entries = grouped[cat] ?? [];
