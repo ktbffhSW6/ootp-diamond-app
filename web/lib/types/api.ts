@@ -811,6 +811,58 @@ export interface MovementsResponse {
   rows: MovementRow[];
 }
 /**
+ * One ballpark from `lref_pt_ballparks`.
+ */
+export interface Park {
+  team_id_br: string | null;
+  franch_id: string | null;
+  team_name: string | null;
+  park_name: string;
+  capacity: number | null;
+  park_type: string | null;
+  surface: string | null;
+  path: string | null;
+  dimensions: ParkDimensions;
+  factors: ParkFactors;
+}
+/**
+ * 7-segment outfield wall geometry.
+ */
+export interface ParkDimensions {
+  ll_d: number | null;
+  lf_d: number | null;
+  lcf_d: number | null;
+  cf_d: number | null;
+  rcf_d: number | null;
+  rf_d: number | null;
+  rl_d: number | null;
+  ll_h: number | null;
+  lf_h: number | null;
+  lcf_h: number | null;
+  cf_h: number | null;
+  rcf_h: number | null;
+  rf_h: number | null;
+  rl_h: number | null;
+}
+/**
+ * Park factors. Overall + LH/RH splits.
+ */
+export interface ParkFactors {
+  ba_overall: number | null;
+  hr_overall: number | null;
+  ba_lh: number | null;
+  hr_lh: number | null;
+  ba_rh: number | null;
+  hr_rh: number | null;
+}
+/**
+ * List of all parks in the OOTP install-folder catalog.
+ */
+export interface ParksResponse {
+  count: number;
+  parks: Park[];
+}
+/**
  * Per-(year, league_id, level_id) advanced batting stats.
  *
  * One row per league-year-level a player accumulated PA in. Multi-team

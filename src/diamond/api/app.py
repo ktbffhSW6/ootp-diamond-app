@@ -38,6 +38,7 @@ from diamond.api.routes import (
     hof,
     leaderboards,
     movements,
+    parks,
     photos,
     players,
     pressure,
@@ -106,6 +107,7 @@ def create_app() -> FastAPI:
     app.include_router(leaderboards.router, prefix="/api", tags=["leaderboards"])
     app.include_router(chart_builder.router, prefix="/api", tags=["chart-builder"])
     app.include_router(batted_balls.router, prefix="/api", tags=["batted-balls"])
+    app.include_router(parks.router, prefix="/api", tags=["parks"])
     app.include_router(ai.router, prefix="/api", tags=["ai"])
     app.include_router(photos.router, prefix="/api", tags=["photos"])
     app.include_router(admin.router, prefix="/api", tags=["admin"])
