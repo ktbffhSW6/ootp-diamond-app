@@ -641,3 +641,75 @@ Two motivations: (1) the hand-coded approximations are starting to show — the 
 - Parsing the binary `.odb` files (`historical_database.odb`, `historical_lineups.odb`). Format is OOTP-internal; if we ever need the data, it's also in the CSV exports.
 - Writing to OOTP — Diamond stays read-only relative to the parent folder.
 - Watching for live updates while OOTP is running — L_REF is per-launch, not continuous.
+
+## D27 — L_REF is per-save, frozen at first ingest, opt-in refresh
+
+**Date**: 2026-05-13 (evening, paired with D26)
+
+**Decision**: L_REF tables (canonical OOTP reference data ingested from the install folder per D26) are **snapshotted into each save's warehouse at first ingest** and **frozen for the lifetime of that save**. Refresh is opt-in via `diamond ingest --refresh-lref` (with a CLI diff preview before commit). OOTP install upgrades (e.g., OOTP 28+) trigger a natural prompt because the source path changes.
+
+This means the misc/ analytical lookup tables (xwOBA / xBA / xSLG / RE288 / WPA / LI / xiso) and the database/era_* baselines are **part of the save's reproducibility contract** — once ingested, the same save always computes the same numbers, regardless of subsequent OOTP patches.
+
+**Why**:
+
+OOTP itself captures install-folder reference data into the save at save-creation time, then ignores subsequent edits to install-folder copies. That's why mid-version patches don't break running saves — the engine treats reference data as **write-once for save lifecycle**. If we ingest L_REF naively from the live install folder on every `diamond ingest`, we lose that protection: numbers we computed yesterday could shift today purely because OOTP shipped a patch, even though the user's save itself didn't change.
+
+Concrete dispersion examples if we DIDN'T freeze:
+
+- A patched `era_stats.txt` 2001 NL OBP-baseline → Bonds 2001 OPS+ moves silently between yesterday's report and today's.
+- A patched `xwoba_table.txt` (LA, EV) cell → xwOBA values for past at-bats shift retroactively.
+- A patched `xiso_table.txt` zone classifier → barrel% on a past Crochet line jumps because a borderline BIP got reclassified.
+
+The fix mirrors the engine: snapshot L_REF into the save's own warehouse at first ingest, freeze it there, treat install-folder refresh as an explicit user opt-in.
+
+**Risk by L_REF category** (which actually drift on patch):
+
+| Category | Source files | Drift on install patch? |
+|---|---|---|
+| Calculation tables | `misc/{xwoba,xba,xslg,re288,li,wpa,xiso}_table.txt`, `pi_table.txt` | **Yes** — re-classifying historical BIPs / re-deriving WPA against new tables |
+| League baselines | `era_stats.txt`, `era_stats_minors.txt`, `era_modifiers.txt`, `era_fielding.txt`, `total_modifiers.txt` | **Yes** — pre-2026 OPS+ / ERA+ / wRC+ all move |
+| Park factors | `era_ballparks.txt`, `pt_ballparks.txt` | **Yes** — handedness-split factors and 7-segment dimensions could revise |
+| Engine config | `major_league_baseball.json`, `financials.txt`, `*.json` league templates | **Yes** — save's actual rules captured at save creation; live edits would mislead |
+| Crosswalks | `Master.csv`, `MiLBMaster.csv`, `players.csv` | None — pure ID lookups; additions/typo-fixes are upgrades |
+| Schema docs | `db_structure_*.txt` | None — documentation |
+| Cosmetic | logos, colors, ballpark textures, hof plaques + index.json | None — visual assets |
+
+The "None" rows could in principle be refreshed live without dispersion, but for simplicity we freeze the entire L_REF together at first ingest and refresh together via `--refresh-lref`. One coherent snapshot is easier to reason about than per-category staleness.
+
+**Implementation**:
+
+1. **First `diamond ingest` for a save** — ingest L_REF into per-save DuckDB (`<save>/diamond/diamond.duckdb`) as `lref_*` tables.
+2. **Persist provenance** in `_diamond_settings`:
+   ```toml
+   [lref]
+   ingested_at = "2026-05-13T20:14:33Z"
+   source_path = "C:/Users/chris/Documents/Out of the Park Developments/OOTP Baseball 27"
+   ootp_version = "27"
+   [lref.files]
+   "database/era_ballparks.txt"  = { mtime = "2026-03-25T...", sha1 = "..." }
+   "database/era_stats.txt"      = { mtime = "2026-03-06T...", sha1 = "..." }
+   "misc/xwoba_table.txt"        = { mtime = "2025-12-02T...", sha1 = "..." }
+   ...
+   ```
+3. **All analytical queries** read from the per-save snapshot via `lref_*` table names — never from the live install folder. No `read_csv_auto('<ootp>/...')` calls outside the L_REF ingest module.
+4. **Subsequent `diamond ingest` runs** detect L_REF already populated and **skip** L_REF re-ingest by default (silent — this is the steady state).
+5. **Explicit refresh**: `diamond ingest --refresh-lref` re-reads from the install folder, computes a diff preview ("3 files changed: era_ballparks.txt, era_stats.txt, Master.csv — proceed?"), confirms before overwriting. Settings page exposes the same toggle as a button.
+6. **OOTP version bump**: when the source path changes (`OOTP Baseball 27` → `OOTP Baseball 28`), settings page surfaces "new OOTP version detected — refresh L_REF?" rather than silent re-ingest. Old `lref.source_path` stays in `_diamond_settings` for reproducibility audit.
+
+**Storage cost**: ~30-50MB per save once L_REF tables are populated (240 + 3,105 + 24,747 + ... rows across ~10 tables, plus the misc/ lookup tables which are tiny). Negligible vs typical save size of GB+.
+
+**Alternatives considered**:
+
+- *Single global `~/.diamond/lref.duckdb`* — already rejected in D26 for cross-database JOIN complexity. Per-save snapshot adds the freeze property "for free" given we're already storing per save.
+- *Symlink L_REF tables across saves* — DuckDB doesn't support cross-database symlinks; would defeat the freeze property anyway.
+- *Track install-folder mtimes per save and warn-on-mismatch but still read live* — half-measure that doesn't actually freeze the values; first-time-after-mismatch reads still drift.
+- *No `--refresh-lref` flag, freeze forever* — rejected. Without an opt-in surface, users can never pick up legitimate corrections (e.g., a Master.csv typo fix that adds a missing real-history ID).
+- *Per-category freeze (freeze baselines but live-read crosswalks)* — rejected. Adds complexity without material upside; one coherent snapshot is easier to reason about.
+
+**Cross-references**: D2 (per-save warehouse path), D8 (per-save reconciliation), D26 (the L_REF layer itself).
+
+**Out of scope for v1**:
+
+- Per-stat "computed from L_REF version X" tag in the UI. Audit-trail is overkill; users who care can read `_diamond_settings`.
+- Mid-save automatic refresh detection. If the user never opts in, L_REF stays pinned forever — fine.
+- Multi-OOTP-version L_REF coexistence within a single save. If the user installs OOTP 28 and refreshes, the old OOTP-27-vintage L_REF is overwritten (with the prior `source_path` retained in settings as audit trail).

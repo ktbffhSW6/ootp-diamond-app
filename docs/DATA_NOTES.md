@@ -8,35 +8,221 @@
 
 ## OOTP installation layout — `<docs>/Out of the Park Developments/OOTP Baseball 27/`
 
-(Discovered 2026-05-13 evening; D26 commits to ingesting much of this into `L_REF`.)
+(Discovered 2026-05-13 evening; **D26** commits to ingesting much of this into `L_REF`. **D27** pins L_REF as per-save, frozen at first ingest, with opt-in refresh via `diamond ingest --refresh-lref` — mirrors OOTP's own engine convention of freezing reference data at save creation.)
 
-The OOTP 27 user-documents root contains ~500MB of static reference data shared across all saves — we'd been ignoring it through Phases 1-3. **Treat as read-only canon; never write into the parent folder.**
+The OOTP 27 user-documents root contains ~500MB of static reference data we'd been ignoring through Phases 1-3. **Treat as read-only canon; never write into the parent folder.** Detailed deep-dive folded in 2026-05-13 evening (covering misc/ analytical lookup tables, expanded database/ catalog, hof/ plaques, colors/ XML, tables/ binary formats, ballparks/ asset structure).
 
 ```
 <docs>/Out of the Park Developments/OOTP Baseball 27/
+├── misc/                          ← ⭐ OOTP's canonical analytical lookup tables
+│   │                                (NOT just hints/recaps — most of this folder is
+│   │                                the math the engine itself uses at sim time).
+│   │                                Reading these directly guarantees our numbers
+│   │                                match the in-game UI exactly.
+│   ├── xwoba_table.txt            xwOBA grid: rows=launch_angle (−45 to +N°),
+│   │                              cols=exit_velocity (50–110 mph). Bilinear-
+│   │                              interpolate (LA, EV) → expected wOBA. Replaces
+│   │                              our hand-rolled Statcast xwOBA logic.
+│   ├── xba_table.txt              xBA, same shape. 107 rows.
+│   ├── xslg_table.txt             xSLG, same shape.
+│   ├── xiso_table.txt             6-zone Statcast launch_speed_angle classifier
+│   │                              (1=weak, 2=topped, 3=under, 4=flare/burner,
+│   │                              5=solid, 6=barrel). Replaces our barrel/SS/HH
+│   │                              classification in `f_player_season_statcast_*`.
+│   ├── re288_table.txt            Run-expectancy by (outs, base-state, count):
+│   │                              8 base × 3 outs × 12 counts. Replaces tango-
+│   │                              style RE matrix. 24×14 grid.
+│   ├── li_table.txt               Tom Tango leverage index — (home/away, inning,
+│   │                              outs, b1, b2, b3) → LI by run differential.
+│   │                              432 rows. Replaces FanGraphs-derived LI tables.
+│   ├── wpa_table.txt              Win probability — same shape, returns win-prob
+│   │                              for each home-team run-diff state. 480 rows,
+│   │                              15-decimal precision (sim-derived).
+│   ├── pi_table.txt               Pitch-impact 3×18 matrix (FB/Breaking/Off-speed
+│   │                              × outcome buckets). No external equivalent.
+│   ├── conversions.txt            ❌ misnomer — this is the OOTP help-page ID
+│   │                              lookup, NOT stat conversions. Skip.
+│   ├── hints_*.txt                In-game hint text in 6 languages (UI only).
+│   ├── historical_recaps_*.txt    Yearly recap blurbs in 6 languages (UI only).
+│   ├── tts_pronunciation.txt      TTS phoneme overrides (UI only).
+│
 ├── database/                      ← canonical reference data
-│   ├── pt_ballparks.txt           240 rows: current MLB+MiLB park dimensions +
-│   │                              7-segment outfield (LL/LF/LCF/CF/RCF/RF/RL
-│   │                              distances + heights) + LH/RH split park
-│   │                              factors per stat (BA/2B/3B/HR). Authoritative.
-│   ├── era_ballparks.txt          3,105 rows × 155 years (1871-2025): historical
-│   │                              park dimensions + factors per (year, team, park)
-│   │                              with handedness splits. 944KB.
-│   ├── era_stats.txt              82-col historical league averages per season
-│   │                              (BA/OBP/SLG/OPS/ERA/K%/BB%/fielding splits/
-│   │                              GB:FB ratios/etc.). 112KB.
-│   ├── era_stats_minors.txt       Same shape for minor leagues. 996KB.
-│   ├── db_structure_complete_ootp21_csv.txt    Canonical OOTP CSV schema docs.
+│   ├── pt_ballparks.txt           240 rows × 47 cols: current MLB+MiLB park
+│   │                              dimensions + 7-segment outfield (LL/LF/LCF/CF/
+│   │                              RCF/RF/RL distances + heights) + LH/RH split
+│   │                              park factors per stat (BA/2B/3B/HR/Overall).
+│   │                              Authoritative. Includes `path` column linking
+│   │                              to the per-park asset folder.
+│   ├── era_ballparks.txt          3,105 rows × 45 cols × 155 years (1871-2025):
+│   │                              historical park dimensions + factors per
+│   │                              (year, team) with handedness splits. Has multi-
+│   │                              source IDs (`teamIDBR, teamIDlahman45,
+│   │                              teamIDretro`) for cross-source matching.
+│   │                              REPLACES Lahman BPF/PPF (single-number 100-rel).
+│   │                              944KB.
+│   ├── era_stats.txt              157 rows × **82 cols**, 1870-2025: MLB league
+│   │                              averages per season. Far richer than Lahman
+│   │                              aggregates: BA/OBP/SLG/OPS, ERA/IPouts/WHIP/
+│   │                              K:BB, GB:FB, GB%, CG%, SHO/W, SV/W, WP/IPout,
+│   │                              Balks/IPout, PB/IPout, SF/(IPout−K), BFP/27,
+│   │                              Pickoffs/RFB, ERC, XBT, OF Assists+Putouts/
+│   │                              IPout, **DefEff Spread, BABIP Spread**,
+│   │                              **pitcher-AB ratio**, SP-vs-RP ERA, Pos-Player
+│   │                              SAC/AB, IB Swinging Singles, Bunt Singles,
+│   │                              **MLB pBABIP**, IBB. **REPLACES our D20 Lahman+
+│   │                              BREF UNION** for `_lg_constants_advanced_imported`.
+│   │                              112KB.
+│   ├── era_stats_minors.txt       2,335 rows × 47 cols, 1901-2025: per-(MiLB-
+│   │                              league, year) baselines (IL, PCL, etc.).
+│   │                              **UNBLOCKS the deferred MiLB pre-2026 advanced-
+│   │                              stats backlog** ("League history coverage
+│   │                              2026-2029... pre-2026 minor-league rows still
+│   │                              render — for advanced stats... deferred").
+│   │                              996KB.
+│   ├── era_modifiers.txt          153 rows × 11 cols (1871-2024): per-year
+│   │                              talent multipliers (Contact, Gap Power, HR
+│   │                              Power, Eye, Avoid K, Stuff, Movement, Control,
+│   │                              Speed, Fielding). OOTP's canonical era-
+│   │                              adjustment for cross-era player comparisons.
+│   ├── era_fielding.txt           156 rows × 22 cols (1871-2025): per-year
+│   │                              fielding baselines — per-position FLD%, OF
+│   │                              FLD, P FLD per 9IP, P (PO+A+DP)/9ip, per-
+│   │                              position (PO+A+DP)/G, OF (A+DP)/G. Enables
+│   │                              fielding-component WAR adjustments and
+│   │                              historical fielding-rate baselines.
+│   ├── total_modifiers.txt        155 rows × 45 cols: composite year multipliers
+│   │                              across the full ratings stack including park,
+│   │                              era, league. The neutralized variant
+│   │                              (`total_modifiers_neutralized.txt`) backs out
+│   │                              park. Used internally for engine-side rating
+│   │                              normalization.
+│   ├── financials.txt             157 rows × 16 cols (1871-2027): per-year
+│   │                              salary engine — `coefficient, cashmaximum,
+│   │                              avgcoach, minplayer, superstar/star/good/
+│   │                              aboveavg/avg/belowavg/fair/poor` (salary
+│   │                              brackets), `media, MLBAvgAttend, SuggTicket`.
+│   │                              **OOTP's salary-bracket engine** — lets us
+│   │                              validate service-time / arb / contract-card
+│   │                              numbers against engine values.
+│   ├── weather.txt                514 rows × 27 cols: per-(nation_id, city,
+│   │                              region, month) avg temp + wind speed for ~500
+│   │                              weather stations. Backs OOTP's per-game
+│   │                              weather sim. Useful for park-factor refinement
+│   │                              (cold/wind affect HR rates).
+│   ├── players.csv                12,855 rows × **231 cols** — the OOTP "default
+│   │                              player pool" with full ratings + birth + 10
+│   │                              contract slots + 10 extension slots + scouting
+│   │                              IDs (`gracenote_id, chadwick_id, mlb_id,
+│   │                              fangraphs_id, baseballcube_id, perfectgame_id,
+│   │                              npb_id, kbo_id, kbobb_id, cpbl_id, bcl_id,
+│   │                              silp_id, serienacional_id, rfebs_id,
+│   │                              bbstatcz_id, twbsball_id, prepbbrep_id,
+│   │                              baseball_america_id`). Massive cross-source
+│   │                              ID pool — beats Chadwick by ~10× the external
+│   │                              source coverage.
+│   ├── major_league_baseball.json Authoritative MLB league template — roster
+│   │                              sizes (26 active / 40 secondary / 28 expanded),
+│   │                              service rules (waivers=3 days, dfa=7,
+│   │                              batter_il=10, pitcher_il=15, il_60_length=60),
+│   │                              DH rules, foreign-player limits, scheduling.
+│   │                              **We hand-code several of these today.**
+│   ├── british_national_baseball_league.json + honkbal_hoofdklasse.json +
+│   │ korean_baseball_organization.json   Sister league templates.
+│   ├── db_structure_ootp27_csv.txt  31KB — **the version-current schema doc**.
+│   │                              ~70 tables documented with exact CSV column
+│   │                              lists. We've been working from the OOTP21
+│   │                              fallback; this is the up-to-date reference.
+│   ├── db_structure_complete_ootp21_csv.txt    Older OOTP21 schema doc.
 │   ├── db_structure_complete_ootp21_mysql.txt  MySQL DDL form.
 │   ├── db_structure_complete_ootp21_access.txt MS Access form.
-│   ├── names.xml                  36MB — name generator data.
-│   ├── world_default.xml          24MB — geography (countries / states / cities).
-│   ├── schools.xml                11MB — colleges + high schools for draft.
-│   ├── team_nick_names.xml        Nickname generator for newgen franchises.
-│   ├── british_national_baseball_league.json  Sample alt-league config.
+│   ├── names.xml                  37MB — name generator data.
+│   ├── world_default.xml          25MB — geography (countries / states / cities).
+│   │                              Resolves `nation_id` / `city_id` codebooks.
+│   ├── schools.xml                11MB — every NCAA / NAIA / JuCo / international
+│   │                              school. Joins to player `commit_school_id` +
+│   │                              `school_id`. Unblocks "school-program
+│   │                              retrospectives" on the draft page.
+│   ├── team_nick_names.xml        778 historical nicknames (UI flavor only).
 │   ├── beard_frequency_default.txt
-│   ├── weather.txt
 │   └── nation_flags/              Country flag PNGs.
+│
+├── hof/                           ← ⭐ Real Hall-of-Fame plaques + artifacts
+│   ├── index.json                 19 plaques + 21 artifacts referenced, each
+│   │                              keyed by `bbref` (Lahman BBref ID). Plaque
+│   │                              text includes year inducted + position +
+│   │                              nickname; artifact captions include "500th
+│   │                              Career HR bat", "Shoes from 37th Consecutive
+│   │                              Stolen Base", etc.
+│   └── *.png                      8 PNGs on disk now (Bagwell, Carter, Ford,
+│                                  Gibson, Griffey Jr., Kaline, Sandberg, O.
+│                                  Smith); index references 19, the rest must
+│                                  download lazily from OOTP's CDN at first
+│                                  display. **Drop-in upgrade for /history/hof**
+│                                  page — match by Master.csv `bbrefID`.
+│
+├── colors/                        ← Per-team uniform + brand-color XMLs
+│   ├── _readme.txt                Documents the format clearly.
+│   └── *.xml                      36 files — one per real-world team across MLB
+│                                  (30) + KBO + a couple specials. Each enumerates
+│                                  UNIFORM blocks (Home/Away/Alt 1/2/3) with
+│                                  weekday rules, jersey font, asset filenames,
+│                                  color codes. **Per-team brand colors for chart
+│                                  accents and team-page hero panels.**
+│
+├── tables/                        ← OOTP's saved column-layouts (binary)
+│   └── all_players, team_players_batters, team_players_pitchers, draft_combine,
+│                                  draft_combine_scout, draft_history,
+│                                  idraft_players, international_amateurs,
+│                                  fa_players, waivers_players, league_stats_
+│                                  players, search_players, team_ml_players,
+│                                  all_coaches, ... (30 binary files). Each is
+│                                  OOTP's persisted column-config for a specific
+│                                  view. Visible labels in the binary: `Default,
+│                                  Batting Ratings, Batting Potential, Batting
+│                                  Stats 1, Batting Stats 2, Batting Superstats
+│                                  1/2, Pitching Ratings, Pitching Potential,
+│                                  Individual Pitch Ratings, Pitching Stats 1/2`.
+│                                  **OOTP's authoritative menu of which-stat-
+│                                  goes-on-which-screen** — reverse-engineerable
+│                                  to extract canonical column orderings for our
+│                                  roster page + Chart Builder catalog.
+│
+├── stats/                         ← historical reference data (Lahman-shape)
+│   ├── Master.csv                 24,747 rows × 68 cols — `playerid` (OOTP) ↔
+│   │                              `lahmanID` ↔ `BBrefMiLBid` ↔ `retroID` ↔
+│   │                              `holtzID` crosswalk + draft pitch arsenal +
+│   │                              position experience + scouting ratings.
+│   │                              REPLACES our Chadwick Register lookup. 6MB.
+│   ├── MiLBMaster.csv             29MB × 35 cols — minor-league master with
+│   │                              `BBrefMinorsID, MlbID, SeamheadsRetroID`.
+│   │                              Vastly richer than Lahman MiLB.
+│   ├── MiLBLeagues.csv            238KB × 30 cols — `LeagueAbbrev, BbrefLgID,
+│   │                              LevelName, Level, LevelsBelowMLB`, schedule
+│   │                              format, playoff format, DH used.
+│   ├── MiLBTeams.csv              5.4MB × 56 cols — MiLB team-seasons with full
+│   │                              stat block + BPF/PPF + `LevelBelow,
+│   │                              MiLBFranchise`.
+│   ├── Teams.csv                  669KB — Lahman-style historical teams 1871–
+│   │                              with W/L/R/RA/ERA/park + BPF/PPF + multi-source
+│   │                              IDs (`teamIDBR, teamIDlahman45, teamIDretro,
+│   │                              hist_team_id, ros_team_id, unique_id`).
+│   ├── EOSRosters.csv             3.4MB — End-of-season historical rosters per
+│   │                              (year, league, team, lahmanID, manager).
+│   ├── ODRosters.csv              3.4MB — Opening-day historical rosters, same
+│   │                              shape.
+│   ├── UniNumbers.csv             1.9MB — Historical uniform numbers per
+│   │                              (lahmanID, year). Trivia-grade.
+│   ├── SeriesPost.csv             12KB — World Series + LCS results 1884–
+│   │                              present (winner, loser, wins/losses/ties).
+│   ├── historical_database.odb    122MB binary historical DB. Magic bytes
+│   │                              `00 ff d8 14 00 00 5f 02` then visible field-
+│   │                              name strings — custom OOTP TLV format, NOT
+│   │                              SQLite. **Don't bother cracking — the CSVs
+│   │                              cover everything.**
+│   ├── historical_minor_database.odb  274MB binary MiLB DB.
+│   ├── historical_lineups.odb     55MB binary lineups.
+│   ├── historical_transactions.odb  9.5MB binary transactions.
+│   ├── stats.odb / stats_player_teams.odb  smaller binary blobs.
 │
 ├── stats/                         ← historical reference data (Lahman-shape)
 │   ├── Master.csv                 24,747 rows × 68 cols — `playerid` (OOTP) ↔
@@ -107,13 +293,32 @@ The OOTP 27 user-documents root contains ~500MB of static reference data shared 
 ├── backups/                       ← OOTP's own save backups
 ├── debug/                         ← debug logs
 ├── online_data/ online_scripts/   ← online sync data
-├── stats/                         ← historical reference (already covered above)
-├── misc/                          ← hints + recap text in 6 languages
-├── tables/                        ← per-user UI table layouts
+├── stats/                         ← historical reference (covered above)
+├── misc/                          ← analytical lookup tables (covered above)
+├── tables/                        ← UI table layouts (covered above)
+├── colors/                        ← brand colors (covered above)
+├── hof/                           ← HoF plaques (covered above)
 ├── screenshots/                   ← OOTP's screenshot output
 ├── saved_games/                   ← user saves (`.lg` folders, see below)
 └── ...
 ```
+
+### Per-save freeze convention (D27)
+
+L_REF tables that ingest from this layout are **per-save and frozen at first ingest**. Once a save's first `diamond ingest` completes, its `lref_*` tables are pinned to whatever vintage of the install-folder data existed at that moment. Subsequent `diamond ingest` runs **skip** L_REF re-ingest by default; explicit `diamond ingest --refresh-lref` opts into pulling new data with a CLI diff preview.
+
+This mirrors OOTP's own engine convention: the engine captures install-folder reference data into the save at save-creation time and ignores subsequent install-folder edits, which is why mid-version OOTP patches don't break running saves. We inherit that same write-once-for-save-lifecycle property by snapshotting L_REF into the save's own DuckDB.
+
+**Categories that would drift on patch if we DIDN'T freeze:**
+
+- Calculation tables (`misc/{xwoba,xba,xslg,re288,wpa,li,xiso}_table.txt`) — re-classifying historical BIPs against new tables shifts barrel% etc.
+- League baselines (`era_stats.txt`, `era_stats_minors.txt`, `era_modifiers.txt`, `era_fielding.txt`) — pre-2026 OPS+/ERA+/wRC+ all move
+- Park factors (`era_ballparks.txt`, `pt_ballparks.txt`) — handedness-split factors shift
+- Engine config (`major_league_baseball.json`, `financials.txt`) — save's actual rules captured at save creation; live edits would mislead
+
+**Categories that don't drift (additions are upgrades):** crosswalks (`Master.csv`, `MiLBMaster.csv`, `players.csv`), schema docs, cosmetic assets.
+
+For simplicity we freeze the entire L_REF together; one coherent snapshot is easier to reason about than per-category staleness. See **D27** for the full design.
 
 ---
 

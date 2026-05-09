@@ -18,15 +18,20 @@
 | **L2 — facts** | Star-shaped fact tables at well-defined grains (player-season, team-season, PA-event) | L1 | After L1 | Full rebuild — DROP/CREATE |
 | **L3 — derived** | Sabermetric stats, league constants, park factors, `player_movements`, awards rollups | L2 + L1 | After L2 | Full rebuild — DROP/CREATE |
 | **L4 — views** | User-facing query surface: standings, leaders, draft analyzer, HOF tracker, franchise rollups | L2 + L3 | Always-on (SQL views) | No materialization |
-| **L_REF — reference** *(planned, [D26](DECISIONS.md#d26--l_ref-reference-layer-from-ootp-parent-folder-data))* | OOTP-canonical reference data (ballpark dimensions, era stats, OOTP↔Lahman crosswalk, MiLB master) shared across all saves | OOTP parent folder `<docs>/Out of the Park Developments/OOTP Baseball 27/` (`database/*.txt`, `stats/*.csv`) | One-time + on OOTP version bump (mtime-skip) | Read-only canon — Diamond never writes to the parent folder |
+| **L_REF — reference** *(planned, [D26](DECISIONS.md#d26--l_ref-reference-layer-from-ootp-parent-folder-data) + [D27](DECISIONS.md#d27--l_ref-is-per-save-frozen-at-first-ingest-opt-in-refresh))* | OOTP-canonical analytical lookup tables (xwOBA / xBA / RE288 / WPA / LI grids), historical baselines (era_stats / era_modifiers / era_fielding), park data (pt_ballparks + era_ballparks with handedness splits), crosswalks (Master.csv), engine config (financials, league templates, schema docs), real HoF plaques, brand colors | OOTP parent folder `<docs>/Out of the Park Developments/OOTP Baseball 27/` (`misc/*.txt`, `database/*.txt`, `stats/*.csv`, `hof/`, `colors/`) | **First `diamond ingest` only** — frozen for save lifetime per D27; opt-in refresh via `diamond ingest --refresh-lref` | Read-only canon — Diamond never writes to the parent folder. Per-save snapshot mirrors OOTP's own engine convention (save captures reference data at creation; install-folder patches don't retroactively rewrite saves) |
 
 Each save gets one DuckDB at `<save>/diamond/diamond.duckdb` (D2). All layers
 live inside it. L0 is the only save-state-mutating layer (per-dump archive);
-L1-L3 are deterministic functions of L0; L_REF is a deterministic function
-of the OOTP installation. The data in L_REF is identical across every save
-on the same machine — duplicating it per warehouse is the deliberate
-trade for simpler in-warehouse JOINs (vs cross-database queries to a
-shared `~/.diamond/lref.duckdb`).
+L1-L3 are deterministic functions of L0; **L_REF is a deterministic function
+of the OOTP installation at first-ingest time** — once snapshotted, it stays
+pinned to that vintage. The data in L_REF is identical across every save
+on the same machine *as of the moment each was first ingested*; per D27 it
+diverges if (a) the user opts into `--refresh-lref` on one save but not
+another, or (b) the user installs a new OOTP major version after some saves
+were already ingested. Per-save duplication is the deliberate trade — for
+simpler in-warehouse JOINs (vs cross-database queries to a shared
+`~/.diamond/lref.duckdb`) AND to inherit the freeze property OOTP itself
+provides for in-flight saves.
 
 ---
 

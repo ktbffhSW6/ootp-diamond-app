@@ -6,31 +6,118 @@
 
 ---
 
-## 🔜 Next major work — L_REF reference layer (D26)
+## 🔜 Next major work — L_REF reference layer (D26 + D27)
 
 **Highest-priority next-up as of 2026-05-13 evening.** New ingest layer reads from
 the OOTP parent folder (`<docs>/Out of the Park Developments/OOTP Baseball 27/`)
-into `lref_*` tables shared across saves. See DECISIONS.md D26 for full
-rationale; DATA_NOTES.md "OOTP installation layout" section catalogs the
-source files.
+into per-save `lref_*` tables. See **DECISIONS.md D26** for the layer rationale,
+**D27** for the per-save freeze-at-first-ingest convention, and **DATA_NOTES.md
+"OOTP installation layout"** for the source-file catalog (expanded
+2026-05-13 evening with the misc/ analytical lookup tables, expanded database/
+content, hof/ plaques, colors/ XML, tables/ binary formats).
 
-Slice 1 — L_REF ingest layer (~90 min):
+**Structural requirement (D27)**: L_REF is per-save and frozen at first ingest.
+On first `diamond ingest`, L_REF tables snapshot into the save's own DuckDB and
+stay pinned to that vintage for the save's lifetime. Refresh is opt-in via
+`diamond ingest --refresh-lref` with CLI diff preview. This mirrors OOTP's own
+engine convention (save captures reference data at creation; install-folder
+patches don't retroactively rewrite running saves).
 
-- [ ] `src/diamond/schema/l_ref.py` — new ingest module. CTAS for:
+Re-ranked 2026-05-13 evening based on the deep-dive of `misc/` + `database/` +
+`hof/` + `colors/` + `tables/`. The misc/ analytical lookup tables jumped to
+top priority — they're the single highest-leverage win in the parent folder
+(swap our hand-rolled xwOBA/RE/WPA/LI math for OOTP's lookup tables, guaranteed
+in-game-UI parity, ~30 minutes of CSV-loader work).
+
+### Slice 1 — L_REF ingest layer with per-save freeze (~90 min):
+
+- [ ] `src/diamond/schema/l_ref.py` — new ingest module.
+- [ ] **Per-save freeze (D27)** — on first ingest, snapshot L_REF into per-save
+      `<save>/diamond/diamond.duckdb`. Subsequent `diamond ingest` runs detect
+      `lref_*` tables already populated and skip silently.
+- [ ] **Provenance** — stash per-file mtime + SHA1 + ingest timestamp + source
+      path + OOTP version in `_diamond_settings.lref.*` so we can answer
+      "what vintage of L_REF is this save pinned to?" without re-reading the
+      install folder.
+- [ ] **Refresh path** — `diamond ingest --refresh-lref` re-reads from install
+      folder, computes diff vs current snapshot, prints summary ("3 files
+      changed: era_ballparks.txt, era_stats.txt, Master.csv"), prompts for
+      confirmation before overwriting.
+- [ ] CTAS for the analytical-table tier (top priority — these are the
+      "calculation parity" wins):
+      - `lref_xwoba_table`, `lref_xba_table`, `lref_xslg_table` — xwOBA / xBA /
+        xSLG grids by (LA, EV) ← `misc/xwoba_table.txt` + siblings
+      - `lref_xiso_table` — 6-zone Statcast LSA classifier ← `misc/xiso_table.txt`
+      - `lref_re288_table` — RE by (outs, bases, count) ← `misc/re288_table.txt`
+      - `lref_li_table` — leverage index ← `misc/li_table.txt`
+      - `lref_wpa_table` — win probability ← `misc/wpa_table.txt`
+      - `lref_pi_table` — pitch impact ← `misc/pi_table.txt`
+- [ ] CTAS for the baselines + park factors tier:
       - `lref_pt_ballparks` (240 rows) ← `database/pt_ballparks.txt`
       - `lref_era_ballparks` (3,105 rows × 155 years) ← `database/era_ballparks.txt`
-      - `lref_era_stats` ← `database/era_stats.txt`
+      - `lref_era_stats` (82-col MLB league avgs) ← `database/era_stats.txt`
       - `lref_era_stats_minors` ← `database/era_stats_minors.txt`
+      - `lref_era_modifiers` ← `database/era_modifiers.txt`
+      - `lref_era_fielding` ← `database/era_fielding.txt`
+      - `lref_total_modifiers` ← `database/total_modifiers.txt`
+      - `lref_financials` ← `database/financials.txt`
+      - `lref_weather` ← `database/weather.txt`
+- [ ] CTAS for the crosswalks + history tier:
       - `lref_master` ← `stats/Master.csv` (24,747-row OOTP↔Lahman crosswalk)
-      - `lref_milb_master` ← `stats/MiLBMaster.csv`
+      - `lref_milb_master` ← `stats/MiLBMaster.csv` (29MB)
       - `lref_teams_history` ← `stats/Teams.csv`
-- [ ] Mtime-based skip logic — only re-ingest when source file mtime changed.
-      Stored in `_diamond_ingests` with synthetic `dump_name` like `lref_<file>`.
-- [ ] CLI: `diamond ingest --lref` flag (or runs automatically on every ingest;
-      decide based on cost — should be ~5-10s for 6 CSV reads).
-- [ ] Wire into `build_warehouse` orchestrator alongside L0.
+      - `lref_milb_leagues` ← `stats/MiLBLeagues.csv`
+      - `lref_milb_teams` ← `stats/MiLBTeams.csv`
+      - `lref_eos_rosters` ← `stats/EOSRosters.csv`
+      - `lref_od_rosters` ← `stats/ODRosters.csv`
+      - `lref_uni_numbers` ← `stats/UniNumbers.csv`
+      - `lref_series_post` ← `stats/SeriesPost.csv`
+      - `lref_default_players` ← `database/players.csv` (231-col seed pool)
+- [ ] Wire into `build_warehouse` orchestrator (runs once on first ingest only).
 
-Slice 2 — ballpark integration:
+### Slice 2 — calculation-parity swap (highest analytical leverage):
+
+- [ ] Replace barrel% / sweet_spot% / hard_hit% computation in
+      `f_player_season_statcast_*` with a JOIN to `lref_xiso_table` (look up
+      LSA zone from (LA, EV), classify zones 4-6 = sweet-spot, zone 6 = barrel,
+      EV ≥ ~95 mph = hard-hit).
+- [ ] Add a new column `xwoba_pa` to `f_pa_event` that bilinear-interpolates
+      `lref_xwoba_table` for each BIP. Aggregate to season-level `xwoba_season`
+      in `f_player_season_advanced_batting`. Wire into player-page Advanced
+      and Custom Leaderboards stat catalog.
+- [ ] Optional (defer if scope creeps): RE288-derived RE24 + WPA + LI columns
+      for `f_pa_event` from `lref_re288_table` + `lref_wpa_table` +
+      `lref_li_table`. Unblocks high-leverage / clutch leaderboards.
+
+### Slice 3 — era-aware park factors (D22 v2):
+
+- [ ] Update `_park_factor_resolved` view to read from `lref_era_ballparks`
+      (replaces `history_lahman_teams` join).
+- [ ] Extend `f_player_season_advanced_batting` builder to read LH/RH splits
+      and apply to OPS+/wRC+ via blending using player.bats (switch-hitters
+      get a 60/40 blend per Tango convention).
+- [ ] Verify Bonds 2001 / Pujols 2003 / Trout 2018 numbers match BBR more
+      tightly than D22 v1.
+
+### Slice 4 — D20 v2 (replace Lahman+BREF UNION with era_stats):
+
+- [ ] Update `_lg_constants_advanced_imported` to pull from `lref_era_stats`
+      instead of UNIONing Lahman + BREF. Drops two external data sources.
+- [ ] Sanity-check pre-2026 OPS+/ERA+ values vs D20 — values should be
+      essentially identical (both Lahman and OOTP era_stats trace to the same
+      MLB-historical source data) but L_REF version is OOTP-canonical.
+
+### Slice 5 — MiLB pre-save baselines (clears deferred backlog):
+
+- [ ] Use `lref_milb_master` + `lref_era_stats_minors` + `lref_milb_leagues`
+      to extend `_lg_constants_advanced_imported` with minor-league rows.
+      OOTP-imported pre-2026 minor-league player-seasons get advanced stats
+      instead of `—`.
+- [ ] Need an OOTP-league-id ↔ MiLB-league-name crosswalk; pull from
+      `MiLBLeagues.csv` if it has OOTP league IDs, otherwise derive from save's
+      `leagues_personal` joining on name + level + year.
+
+### Slice 6 — ballpark integration:
 
 - [ ] `/api/parks` route reads from `lref_pt_ballparks`, returns full 7-segment
       geometry + LH/RH split factors per park.
@@ -38,22 +125,13 @@ Slice 2 — ballpark integration:
       of hand-coded `web/lib/stadiums.ts`. Delete `web/lib/stadiums.ts`.
 - [ ] Add 7-segment outline rendering (we currently use 5 anchor points).
 
-Slice 3 — D22 v2 era-aware park factors with handedness splits:
-
-- [ ] Update `_park_factor_resolved` view to read from `lref_era_ballparks`
-      (replaces `history_lahman_teams` join).
-- [ ] Extend `f_player_season_advanced_batting` builder to read LH/RH splits
-      and apply to OPS+/wRC+ via blending using player.bats.
-- [ ] Verify Bonds 2001 / Pujols 2003 / Trout 2018 numbers match BBR more
-      tightly than D22 v1.
-
-Slice 4 — OOTP↔Lahman crosswalk swap:
+### Slice 7 — OOTP↔Lahman crosswalk swap:
 
 - [ ] Replace `history_player_id_map` Chadwick lookup with `lref_master` JOINs
       in `history.py` and the records / awards / hof endpoints.
 - [ ] Delete the Chadwick fetcher code if everything routes through lref_master.
 
-Slice 5 — real team logos rendering:
+### Slice 8 — real team logos rendering:
 
 - [ ] `/api/logos/{abbr}` route serves `<ootp>/logos/<filename>.oi` with
       `Content-Type: image/png` (`.oi` files are PNGs, magic-bytes confirmed).
@@ -63,17 +141,24 @@ Slice 5 — real team logos rendering:
       cockpit with a `<TeamLogo abbr={abbr}>` `<img>` component.
 - [ ] PlayerAvatar / current-team chip on player page header gets the logo.
 
-Slice 6 — schema doc fold:
+### Slice 9 — real HoF plaques on `/history/hof`:
 
-- [ ] Read `database/db_structure_complete_ootp21_csv.txt` and fold canonical
-      column meanings into `docs/DATA_NOTES.md` + `docs/SCHEMA.md`. Stop
-      reverse-engineering.
+- [ ] Read `<ootp>/hof/index.json`, JOIN to `lref_master` on `bbref` to get
+      OOTP `playerid`s, surface plaque text + photo URL on inductee cards.
+- [ ] `/api/hof/plaque/{bbref}.png` route serves `<ootp>/hof/{bbref}.png` for
+      the 8 PNGs on disk; falls through to PlayerAvatar's initials placeholder
+      for the other 11 referenced inductees (lazy-load from OOTP CDN deferred).
+- [ ] Drop in plaque description text ("Inducted 1974 / Starting Pitcher /
+      'Whitey'") below the photo on the inductee card.
 
-Slice 7 — MiLB pre-save baselines (clears v2.2 backlog item):
+### Slice 10 — schema doc fold + per-team brand colors:
 
-- [ ] Use `lref_milb_master` + `lref_era_stats_minors` to extend
-      `_lg_constants_advanced_imported` with minor-league rows. OOTP-imported
-      pre-2026 minor-league player-seasons get advanced stats instead of `—`.
+- [ ] Read `database/db_structure_ootp27_csv.txt` (version-current, replacing
+      our ootp21 fallback) and fold canonical column meanings into
+      `docs/DATA_NOTES.md` + `docs/SCHEMA.md`. Stop reverse-engineering.
+- [ ] Parse `<ootp>/colors/<team>.xml` files into a small lookup (team_abbr →
+      primary/secondary hex). Wire into standings rows + player-page bio header
+      as accent stripes / colored chips. Cosmetic but visibly elevates the IA.
 
 ---
 
