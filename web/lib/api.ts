@@ -22,6 +22,7 @@ import type {
   HofResponse,
   MovementsResponse,
   PlayerResponse,
+  PressureResponse,
   RecordsResponse,
   RosterResponse,
   SaveResponse,
@@ -197,6 +198,21 @@ export async function getDraft(args: {
   if (args.year !== undefined) params.push(`year=${args.year}`);
   const qs = params.length === 0 ? "" : `?${params.join("&")}`;
   return fetchJson<DraftClassResponse>(`/api/draft${qs}`);
+}
+
+// Pressure-board payload — per-level promotion candidates +
+// pressure cases for the org tree at one year. Backend defaults
+// to latest year + 6-per-side. Org scope is implicit (the active
+// save's audit_team_id + parent rollup).
+export async function getPressure(args: {
+  year?: number;
+  limit?: number;
+}): Promise<PressureResponse> {
+  const params: string[] = [];
+  if (args.year !== undefined) params.push(`year=${args.year}`);
+  if (args.limit !== undefined) params.push(`limit=${args.limit}`);
+  const qs = params.length === 0 ? "" : `?${params.join("&")}`;
+  return fetchJson<PressureResponse>(`/api/pressure${qs}`);
 }
 
 // Trigger a one-click shutdown of both dev servers (Next.js :3000 and

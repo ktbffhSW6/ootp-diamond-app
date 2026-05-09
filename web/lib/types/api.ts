@@ -824,6 +824,67 @@ export interface PlayerSituationalRow {
   ops: number | null;
 }
 /**
+ * One level's pressure-board card.
+ *
+ * ``promotion_candidates`` is sorted by ``metric DESC`` (best
+ * performers first). ``pressure_cases`` is sorted by ``metric
+ * ASC`` (worst first). Each is capped to a small N (configurable
+ * via the route's ``limit``; default 6) so the per-level card
+ * stays scannable.
+ *
+ * ``level_name`` is the display label (MLB / AAA / AA / A+ / A /
+ * Rk / DSL). ``level_id`` mirrors OOTP's level numeric.
+ */
+export interface PressureLevelGroup {
+  level_id: number;
+  level_name: string;
+  qualifying_count: number;
+  promotion_candidates: PressurePlayer[];
+  pressure_cases: PressurePlayer[];
+}
+/**
+ * One player-row on a pressure-board card.
+ *
+ * ``role`` distinguishes batters vs pitchers (their metric column
+ * + sample-volume column are different). Batter rows surface
+ * ``ops_plus`` + ``pa``; pitcher rows surface ``era_plus`` + ``ip``.
+ * The frontend picks the right column based on ``role``.
+ *
+ * ``team_abbr`` is the team where the player accumulated the
+ * most volume at this level — matches the dominant-team rollup
+ * in ``f_player_season_advanced_*``.
+ *
+ * ``war`` is OOTP's directly-supplied combined WAR (b_war for
+ * batters, p_war for pitchers). Useful as a value sanity-check
+ * alongside the rate stat.
+ */
+export interface PressurePlayer {
+  player_id: number;
+  display_name: string;
+  role: "batter" | "pitcher";
+  pa: number | null;
+  ip: number | null;
+  metric: number;
+  delta: number;
+  war: number;
+  team_abbr: string | null;
+  position: number | null;
+}
+/**
+ * Whole payload — every level with org rows above the sample bar.
+ *
+ * Levels with no qualifying players drop out (an A-ball complex
+ * with three pre-call-up rookies hits zero qualifiers and is
+ * skipped). ``available_years`` lets the year picker render
+ * without a second round-trip.
+ */
+export interface PressureResponse {
+  year: number;
+  available_years: number[];
+  org_team_id: number;
+  levels: PressureLevelGroup[];
+}
+/**
  * Lightweight category handle for the picker.
  *
  * ``available_sources`` lists which sources have data for this

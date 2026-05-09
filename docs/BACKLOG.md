@@ -518,11 +518,18 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
     (count BEFORE the resolving pitch).
   - **Spray** (3): pull / center / oppo; BIP-only; UI skips color
     coding since denominator semantics differ from the All baseline.
-- [ ] **Pressure board** — companion to the movement ledger. For each
-  level, players mashing relative to the level median vs. players
-  struggling at the next level up. The "who *should* move" view.
-  Lives under Club (Decisions queue section per UI_DESIGN.md §1) or
-  as a peer page; data exists in `f_player_season_advanced_*`.
+- [x] **Pressure board** *(2026-05-12)* — `/pressure` lives.
+  `GET /api/pressure?year=&limit=` returns per-level promotion
+  candidates (top OPS+/ERA+) + pressure cases (bottom) for the
+  org tree. Two-column cards per level (MLB / AAA / AA / A+ /
+  A / Rk / DSL) — left = promotion, right = pressure. Color-coded
+  metric cells (emerald for ≥10 above 100, rose for ≤10 below).
+  Sample bars: 50 PA / 20 IP. Org scope auto-derived from
+  `audit_team_id`. Cross-level reading reveals decisions: a 130
+  OPS+ at AAA next to a 75 OPS+ at MLB = obvious roster swap.
+  Sits as a peer page (`/pressure`) for now; renest under
+  `/club/pressure` when the Club tab gets a coordinated cleanup
+  pass alongside `/movements` and `/roster`.
 - [ ] **Compare under Explore** — pick N players, render side-by-side
   stat tables + overlaid trajectories. Cross-era support via
   career-year axis. Trout-vs-Cobb is the canonical demo. First live
