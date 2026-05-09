@@ -309,107 +309,53 @@ milb_joined AS (
     WHERE TRY_CAST(esm."Year" AS INTEGER) IS NOT NULL
       AND TRY_CAST(esm.AB AS DOUBLE) > 0
 ),
--- ── MLB (existing — Lahman 1871-2019 + BREF 2020-2025) ────────────────────
-lahman_bat AS (
-    SELECT
-        yearID AS year,
-        SUM(AB)::DOUBLE  AS ab,
-        SUM(H)::DOUBLE   AS h,
-        SUM("2B")::DOUBLE AS d,
-        SUM("3B")::DOUBLE AS t,
-        SUM(HR)::DOUBLE  AS hr,
-        SUM(BB)::DOUBLE  AS bb,
-        SUM(COALESCE(IBB, 0))::DOUBLE AS ibb,
-        SUM(COALESCE(HBP, 0))::DOUBLE AS hp,
-        SUM(COALESCE(SF, 0))::DOUBLE  AS sf,
-        SUM(COALESCE(SH, 0))::DOUBLE  AS sh,
-        SUM(COALESCE(SO, 0))::DOUBLE  AS k,
-        SUM(R)::DOUBLE   AS r,
-        -- PA derived: AB + BB + HBP + SF + SH (CI not tracked; <0.01% of PA)
-        SUM(AB + BB + COALESCE(HBP, 0) + COALESCE(SF, 0) + COALESCE(SH, 0))::DOUBLE AS pa
-    FROM history_lahman_batting
-    WHERE lgID IN ('AL','NL','AA','FL','NA','PL','UA') AND yearID <= 2019
-    GROUP BY yearID
-),
-bref_bat AS (
-    SELECT
-        year AS year,
-        SUM(AB)::DOUBLE  AS ab,
-        SUM(H)::DOUBLE   AS h,
-        SUM("2B")::DOUBLE AS d,
-        SUM("3B")::DOUBLE AS t,
-        SUM(HR)::DOUBLE  AS hr,
-        SUM(BB)::DOUBLE  AS bb,
-        SUM(COALESCE(IBB, 0))::DOUBLE AS ibb,
-        SUM(COALESCE(HBP, 0))::DOUBLE AS hp,
-        SUM(COALESCE(SF, 0))::DOUBLE  AS sf,
-        SUM(COALESCE(SH, 0))::DOUBLE  AS sh,
-        SUM(COALESCE(SO, 0))::DOUBLE  AS k,
-        SUM(R)::DOUBLE   AS r,
-        SUM(PA)::DOUBLE  AS pa
-    FROM history_bref_batting
-    WHERE Lev IN ('Maj-AL','Maj-NL') AND year BETWEEN 2020 AND 2025
-    GROUP BY year
-),
-all_bat AS (
-    SELECT * FROM lahman_bat
-    UNION ALL
-    SELECT * FROM bref_bat
-),
-lahman_pit AS (
-    SELECT
-        yearID AS year,
-        SUM(IPouts)::DOUBLE AS outs,
-        SUM(ER)::DOUBLE     AS er,
-        SUM(HR)::DOUBLE     AS hra,
-        SUM(BB)::DOUBLE     AS pit_bb,
-        SUM(COALESCE(HBP, 0))::DOUBLE AS pit_hp,
-        SUM(COALESCE(SO, 0))::DOUBLE  AS pit_k
-    FROM history_lahman_pitching
-    WHERE lgID IN ('AL','NL','AA','FL','NA','PL','UA') AND yearID <= 2019
-    GROUP BY yearID
-),
-bref_pit AS (
-    SELECT
-        year,
-        SUM(IPouts)::DOUBLE AS outs,
-        SUM(ER)::DOUBLE     AS er,
-        SUM(HR)::DOUBLE     AS hra,
-        SUM(BB)::DOUBLE     AS pit_bb,
-        SUM(COALESCE(HBP, 0))::DOUBLE AS pit_hp,
-        SUM(COALESCE(SO, 0))::DOUBLE  AS pit_k
-    FROM history_bref_pitching
-    WHERE Lev IN ('Maj-AL','Maj-NL') AND year BETWEEN 2020 AND 2025
-    GROUP BY year
-),
-all_pit AS (
-    SELECT * FROM lahman_pit
-    UNION ALL
-    SELECT * FROM bref_pit
-),
+-- ── MLB (Slice 4: lref_era_stats — OOTP-canonical, replaces Lahman+BREF UNION) ──
+-- One row per (year) covering 1870-2025. Replaces the prior
+-- lahman_bat + bref_bat + lahman_pit + bref_pit UNION pattern with a
+-- single OOTP-blessed source. Same numerical answer — both Lahman and
+-- OOTP era_stats trace to the same MLB-historical aggregates — but no
+-- external fetch dependency, no UNION boundary at 2019/2020.
 mlb_joined AS (
     SELECT
-        203 AS league_id, b.year, 1 AS level_id,
-        b.pa  AS lg_pa,
-        b.ab  AS lg_ab,
-        b.h   AS lg_h,
-        b.d   AS lg_d,
-        b.t   AS lg_t,
-        b.hr  AS lg_hr,
-        b.bb  AS lg_bb,
-        b.ibb AS lg_ibb,
-        b.hp  AS lg_hp,
-        b.sf  AS lg_sf,
-        b.r   AS lg_r,
-        (b.h - b.d - b.t - b.hr) AS lg_singles,
-        COALESCE(p.outs, 0.0)   AS lg_outs,
-        COALESCE(p.er,   0.0)   AS lg_er,
-        COALESCE(p.hra,  0.0)   AS lg_hra,
-        COALESCE(p.pit_bb, 0.0) AS lg_pit_bb,
-        COALESCE(p.pit_hp, 0.0) AS lg_pit_hp,
-        COALESCE(p.pit_k,  0.0) AS lg_pit_k
-    FROM all_bat b
-    LEFT JOIN all_pit p ON p.year = b.year
+        203 AS league_id,
+        CAST(esm."YEAR" AS INTEGER) AS year,
+        1 AS level_id,
+        TRY_CAST(esm.BFP AS DOUBLE)      AS lg_pa,
+        TRY_CAST(esm.AB AS DOUBLE)       AS lg_ab,
+        TRY_CAST(esm.Hits AS DOUBLE)     AS lg_h,
+        TRY_CAST(esm.Doubles AS DOUBLE)  AS lg_d,
+        TRY_CAST(esm.Triples AS DOUBLE)  AS lg_t,
+        TRY_CAST(esm.Homeruns AS DOUBLE) AS lg_hr,
+        TRY_CAST(esm.BB AS DOUBLE)       AS lg_bb,
+        COALESCE(TRY_CAST(esm.IBB AS DOUBLE), 0.0) AS lg_ibb,
+        TRY_CAST(esm.HBP AS DOUBLE)      AS lg_hp,
+        COALESCE(
+            TRY_CAST(esm."SF/(IPouts-K)" AS DOUBLE)
+                * (TRY_CAST(esm.IPouts AS DOUBLE) - TRY_CAST(esm.K AS DOUBLE)),
+            0.0
+        )                                AS lg_sf,
+        COALESCE(
+            TRY_CAST(esm."Runs per 27 IPouts" AS DOUBLE)
+                * TRY_CAST(esm.IPouts AS DOUBLE) / 27.0,
+            0.0
+        )                                AS lg_r,
+        TRY_CAST(esm.Hits AS DOUBLE)
+            - TRY_CAST(esm.Doubles AS DOUBLE)
+            - TRY_CAST(esm.Triples AS DOUBLE)
+            - TRY_CAST(esm.Homeruns AS DOUBLE) AS lg_singles,
+        TRY_CAST(esm.IPouts AS DOUBLE)   AS lg_outs,
+        COALESCE(
+            TRY_CAST(esm.ERA AS DOUBLE) * TRY_CAST(esm.IPouts AS DOUBLE) / 27.0,
+            0.0
+        )                                AS lg_er,
+        TRY_CAST(esm.Homeruns AS DOUBLE) AS lg_hra,
+        TRY_CAST(esm.BB AS DOUBLE)       AS lg_pit_bb,
+        TRY_CAST(esm.HBP AS DOUBLE)      AS lg_pit_hp,
+        TRY_CAST(esm.K AS DOUBLE)        AS lg_pit_k
+    FROM lref_era_stats esm
+    WHERE TRY_CAST(esm."YEAR" AS INTEGER) IS NOT NULL
+      AND TRY_CAST(esm.AB AS DOUBLE) > 0
+      AND CAST(esm."YEAR" AS INTEGER) <= 2025  -- save years take over from 2026
 ),
 joined AS (
     SELECT * FROM mlb_joined
@@ -1165,28 +1111,27 @@ def build_l3_advanced(
     #    JOIN against the union view. Order matters — the final view
     #    references both component views by name.
     con.execute(_LG_CONSTANTS_NATIVE_VIEW_SQL)
-    # _imported view depends on history_lahman_* + history_bref_*. If the
-    # one-time `diamond fetch-history` backfill hasn't run yet, those
-    # tables don't exist and the view registration fails. Soft-skip in
-    # that case so warehouse builds don't hard-fail on a fresh save —
-    # advanced stats for pre-save seasons stay null until history is loaded.
-    history_loaded = con.execute(
+    # _imported view (Slice 4): MLB rows from `lref_era_stats` (1870-2025);
+    # MiLB rows from `lref_era_stats_minors` (Slice 5). Both come from
+    # L_REF, which is per-save and frozen at first ingest (D27). Soft-skip
+    # only on a pre-Slice-1 warehouse where L_REF hasn't been ingested yet.
+    lref_era_loaded = con.execute(
         """
-        SELECT COUNT(*) >= 4 FROM information_schema.tables
-        WHERE table_name IN ('history_lahman_batting','history_lahman_pitching',
-                             'history_bref_batting','history_bref_pitching')
+        SELECT COUNT(*) >= 2 FROM information_schema.tables
+        WHERE table_name IN ('lref_era_stats', 'lref_era_stats_minors')
         """
     ).fetchone()[0]
-    if history_loaded:
+    if lref_era_loaded:
         con.execute(_LG_CONSTANTS_IMPORTED_VIEW_SQL)
         con.execute(_LG_CONSTANTS_VIEW_SQL)
         if verbose:
             console.print(
                 "  [green]✓[/green] _lg_constants_advanced (view) "
-                "[dim]native + imported (Lahman 1871-2019 + BREF 2020-2025)[/dim]"
+                "[dim]native + imported (lref_era_stats MLB 1870-2025 + "
+                "lref_era_stats_minors AAA/AA/A+/A 1901-2024)[/dim]"
             )
     else:
-        # Without history tables, the final union view is just the native rows.
+        # Without L_REF, the final union view is just the native rows.
         con.execute(
             "CREATE OR REPLACE VIEW _lg_constants_advanced AS "
             "SELECT * FROM _lg_constants_advanced_native"
@@ -1194,8 +1139,8 @@ def build_l3_advanced(
         if verbose:
             console.print(
                 "  [yellow]![/yellow] _lg_constants_advanced (view) "
-                "[dim]native only — run `diamond fetch-history` to backfill "
-                "pre-save MLB baselines[/dim]"
+                "[dim]native only — run `diamond ingest` to ingest L_REF for "
+                "pre-save baselines[/dim]"
             )
 
     # 1b. Register `_park_factor_resolved` (D22) — backfills Lahman
