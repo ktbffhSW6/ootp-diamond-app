@@ -219,7 +219,98 @@ FROM scaled
 # these too, so player-rows + league-rows stay consistent).
 _LG_CONSTANTS_IMPORTED_VIEW_SQL = f"""
 CREATE OR REPLACE VIEW _lg_constants_advanced_imported AS
-WITH lahman_bat AS (
+WITH
+-- ── Slice 5 (MiLB pre-save baselines) ─────────────────────────────────────
+-- Map save MiLB league_id → era_stats_minors League name. Names match
+-- exactly between the save's `leagues.name` and the file's `League`
+-- column for the 11 leagues with substantive Lahman MiLB coverage. The 3
+-- save MiLB leagues without a match (DSL=234, ACL=217, FCL=218) have
+-- essentially no pre-save Lahman data anyway — Complex/Rookie short-season
+-- leagues. Hardcoded crosswalk because (a) names are stable, (b) the user's
+-- save might use different league_ids per D3 v2.1 but the level/name pair
+-- still resolves correctly via this lookup applied to the save's own data.
+milb_xwalk(league_id, era_league) AS (
+    VALUES
+        (204, 'International League'),
+        (205, 'Pacific Coast League'),
+        (206, 'Eastern League'),
+        (207, 'Southern League'),
+        (208, 'Texas League'),
+        (209, 'Northwest League'),
+        (210, 'South Atlantic League'),
+        (211, 'Midwest League'),
+        (212, 'California League'),
+        (213, 'Carolina League'),
+        (252, 'Florida State League')
+),
+-- Resolve level_id from the save itself rather than hardcoding — league_id
+-- is 1:1 with level_id within a single save, but the user's save_configs
+-- may diverge from the canonical Building-the-Green-Monster set.
+milb_level_per_league AS (
+    SELECT league_id, MIN(level_id) AS level_id
+    FROM f_player_season_batting
+    WHERE league_id IN (
+        SELECT league_id FROM milb_xwalk
+    )
+    GROUP BY league_id
+),
+-- One JOINed row per (save_league_id, year). Derive the same column shape
+-- as the MLB CTEs so we can UNION downstream. era_stats_minors carries
+-- league-aggregate stats — pitcher-side HR-allowed equals batter-side HR
+-- by identity (league total), so we reuse the same fields for both sides.
+-- IBB is not in era_stats_minors → 0 (Lahman has the same gap pre-1955;
+-- effect on woba_scale is sub-percent).
+milb_joined AS (
+    SELECT
+        x.league_id,
+        CAST(esm."Year" AS INTEGER) AS year,
+        l.level_id,
+        TRY_CAST(esm.BFP AS DOUBLE)      AS lg_pa,
+        TRY_CAST(esm.AB AS DOUBLE)       AS lg_ab,
+        TRY_CAST(esm.Hits AS DOUBLE)     AS lg_h,
+        TRY_CAST(esm.Doubles AS DOUBLE)  AS lg_d,
+        TRY_CAST(esm.Triples AS DOUBLE)  AS lg_t,
+        TRY_CAST(esm.Homeruns AS DOUBLE) AS lg_hr,
+        TRY_CAST(esm.BB AS DOUBLE)       AS lg_bb,
+        0.0::DOUBLE                      AS lg_ibb,
+        TRY_CAST(esm.HBP AS DOUBLE)      AS lg_hp,
+        -- SF recovered from rate × non-K-out denominator
+        COALESCE(
+            TRY_CAST(esm."SF/(IPouts-K)" AS DOUBLE)
+                * (TRY_CAST(esm.IPouts AS DOUBLE) - TRY_CAST(esm.K AS DOUBLE)),
+            0.0
+        )                                AS lg_sf,
+        -- Runs from R/27IPouts × IPouts / 27
+        COALESCE(
+            TRY_CAST(esm."Runs per 27 IPouts" AS DOUBLE)
+                * TRY_CAST(esm.IPouts AS DOUBLE) / 27.0,
+            0.0
+        )                                AS lg_r,
+        -- Singles by subtraction
+        TRY_CAST(esm.Hits AS DOUBLE)
+            - TRY_CAST(esm.Doubles AS DOUBLE)
+            - TRY_CAST(esm.Triples AS DOUBLE)
+            - TRY_CAST(esm.Homeruns AS DOUBLE) AS lg_singles,
+        TRY_CAST(esm.IPouts AS DOUBLE)   AS lg_outs,
+        -- ER = ERA × innings / 9 = ERA × IPouts / 27
+        COALESCE(
+            TRY_CAST(esm.ERA AS DOUBLE) * TRY_CAST(esm.IPouts AS DOUBLE) / 27.0,
+            0.0
+        )                                AS lg_er,
+        TRY_CAST(esm.Homeruns AS DOUBLE) AS lg_hra,
+        TRY_CAST(esm.BB AS DOUBLE)       AS lg_pit_bb,
+        TRY_CAST(esm.HBP AS DOUBLE)      AS lg_pit_hp,
+        TRY_CAST(esm.K AS DOUBLE)        AS lg_pit_k
+    FROM milb_xwalk x
+    JOIN lref_era_stats_minors esm
+        ON esm."League" = x.era_league
+    JOIN milb_level_per_league l
+        ON l.league_id = x.league_id
+    WHERE TRY_CAST(esm."Year" AS INTEGER) IS NOT NULL
+      AND TRY_CAST(esm.AB AS DOUBLE) > 0
+),
+-- ── MLB (existing — Lahman 1871-2019 + BREF 2020-2025) ────────────────────
+lahman_bat AS (
     SELECT
         yearID AS year,
         SUM(AB)::DOUBLE  AS ab,
@@ -296,7 +387,7 @@ all_pit AS (
     UNION ALL
     SELECT * FROM bref_pit
 ),
-joined AS (
+mlb_joined AS (
     SELECT
         203 AS league_id, b.year, 1 AS level_id,
         b.pa  AS lg_pa,
@@ -319,6 +410,11 @@ joined AS (
         COALESCE(p.pit_k,  0.0) AS lg_pit_k
     FROM all_bat b
     LEFT JOIN all_pit p ON p.year = b.year
+),
+joined AS (
+    SELECT * FROM mlb_joined
+    UNION ALL
+    SELECT * FROM milb_joined
 ),
 derived AS (
     SELECT *,
