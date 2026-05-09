@@ -319,6 +319,27 @@ L_REF tables that ingest from this layout are **per-save and frozen at first ing
 - Tier 3 (`stats/`): master 24,746, milb_master 212,325, teams_history 3,142, milb_leagues 2,317, milb_teams 23,075, eos_rosters 99,643, od_rosters 102,254, uni_numbers 86,589, series_post 411
 - **Total: 575,587 rows / 27 tables / ~60MB ingested in one CTAS pass.**
 
+### Slices 2-6 (data layer): which L_REF tables are actively consumed (D29)
+
+After the 2026-05-14 marathon, the L_REF tables actively wired into calc / API paths:
+
+| L_REF table | Consumer | Slice |
+|---|---|---|
+| `lref_xwoba_table` (106 × 61) | `_xwoba_lookup` view → `_f_pa_event_xstats` view → `f_player_season_xstats_batting/pitching` (20,787 / 21,504 rows) | 2 |
+| `lref_xba_table` (106 × 61) | `_xba_lookup` view → same chain → `xba_bip` column | 2 |
+| `lref_xslg_table` (106 × 61) | `_xslg_lookup` view → same chain → `xslg_bip` column | 2 |
+| `lref_era_stats` (156 yrs × 82 cols) | `mlb_joined` CTE in `_lg_constants_advanced_imported` view → MLB pre-2026 league constants (replaces Lahman+BREF UNION) | 4 |
+| `lref_era_stats_minors` (2,335 league-years × 47 cols) | `milb_joined` CTE in `_lg_constants_advanced_imported` view → MiLB pre-2026 league constants for IL / PCL / EL / SL / TL / NWL / SAL / MWL / CAL / CAR / FSL | 5 |
+| `lref_era_ballparks` (3,105 park-seasons) | `_park_factor_resolved` view → handedness-aware bat_park_avg in `f_player_season_advanced_batting` builder | 3 |
+| `lref_pt_ballparks` (240 modern parks) | `/api/parks` route → `ParksResponse` with 7-segment geometry + LH/RH factors | 6 |
+
+L_REF tables loaded but **not yet consumed by any path** (frozen and waiting):
+- `misc/`: xiso_table, re288_table, li_table, wpa_table, pi_table
+- `database/`: era_modifiers, era_fielding, total_modifiers, financials, weather, default_players
+- `stats/`: master, milb_master, teams_history, milb_leagues, milb_teams, eos_rosters, od_rosters, uni_numbers, series_post
+
+Inactive doesn't mean useless — they're available for future slices via direct DuckDB queries against the per-save warehouse. xiso_table waits on a `(LA, EV) → LSA` reverse-engineering effort; re288/wpa/li wait on RE24/WPA/LI column work on `f_pa_event`.
+
 This mirrors OOTP's own engine convention: the engine captures install-folder reference data into the save at save-creation time and ignores subsequent install-folder edits, which is why mid-version OOTP patches don't break running saves. We inherit that same write-once-for-save-lifecycle property by snapshotting L_REF into the save's own DuckDB.
 
 **Categories that would drift on patch if we DIDN'T freeze:**

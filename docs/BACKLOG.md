@@ -6,15 +6,25 @@
 
 ---
 
-## 🔜 Next major work — L_REF reference layer (D26 + D27)
+## ✅ L_REF reference layer (D26 + D27) — analytical layer SHIPPED 2026-05-14
 
-**Highest-priority next-up as of 2026-05-13 evening.** New ingest layer reads from
-the OOTP parent folder (`<docs>/Out of the Park Developments/OOTP Baseball 27/`)
-into per-save `lref_*` tables. See **DECISIONS.md D26** for the layer rationale,
-**D27** for the per-save freeze-at-first-ingest convention, and **DATA_NOTES.md
-"OOTP installation layout"** for the source-file catalog (expanded
-2026-05-13 evening with the misc/ analytical lookup tables, expanded database/
-content, hof/ plaques, colors/ XML, tables/ binary formats).
+**Status as of 2026-05-14 EOD**: 5 of 10 slices fully shipped (1 / 2 / 3 / 4 /
+5), 1 partial (6 data layer), 4 deferred-or-skipped (7 / 8 / 9 / 10). The
+analytical / data-quality wins are complete; remaining work is cosmetic
+or deferred for scope.
+
+**What this means in practice**: pre-save advanced stats (wOBA / wRC+ / OPS+ /
+FIP / ERA+) for any player-season — MLB or MiLB, real-history or save-era —
+are now end-to-end OOTP-canonical. Every reference grid feeding the calc is
+pulled from L_REF (frozen at first ingest per D27). Real-life historical
+seasons backfilled into the warehouse get baselines from `lref_era_stats` /
+`_era_stats_minors`, park factors from `lref_era_ballparks` (with handedness
+splits for batters), and per-BIP x-stat estimates from `lref_xwoba_table`
++ siblings.
+
+See **DECISIONS.md D26** for the layer rationale, **D27** for the per-save
+freeze-at-first-ingest convention, and **DATA_NOTES.md "OOTP installation
+layout"** for the source-file catalog.
 
 **Structural requirement (D27)**: L_REF is per-save and frozen at first ingest.
 On first `diamond ingest`, L_REF tables snapshot into the save's own DuckDB and
@@ -138,49 +148,107 @@ now that L_REF is in place):
       shows LSA=6 = "barrels" with 69% HR rate per OOTP's empirical
       table). Defer with xISO.
 
-### Slice 3 — era-aware park factors (D22 v2) ← **NEXT UP**:
+### Slice 3 — era-aware park factors (D22 v2) ✅ **SHIPPED 2026-05-14**
 
-- [ ] Update `_park_factor_resolved` view to read from `lref_era_ballparks`
-      (replaces `history_lahman_teams` join).
-- [ ] Extend `f_player_season_advanced_batting` builder to read LH/RH splits
-      and apply to OPS+/wRC+ via blending using player.bats (switch-hitters
-      get a 60/40 blend per Tango convention).
-- [ ] Verify Bonds 2001 / Pujols 2003 / Trout 2018 numbers match BBR more
-      tightly than D22 v1.
+Implemented in `src/diamond/schema/l3_advanced.py`. `_park_factor_resolved`
+swapped from `history_lahman_teams` to `lref_era_ballparks` (3,105 rows
+1871-2025); LH/RH split columns added; batter handedness blend in builder.
 
-### Slice 4 — D20 v2 (replace Lahman+BREF UNION with era_stats):
+- [x] `_park_factor_resolved` reads from `lref_era_ballparks` with 6 PF
+      columns (Overall + LH + RH for both bat and pit sides). Modern
+      (≥ 2026) rows fall through to `parks.avg` with splits collapsed
+      to Overall.
+- [x] `f_player_season_advanced_batting` builder applies handedness:
+      bats=R → bat_park_avg_rh, bats=L → bat_park_avg_lh, bats=S →
+      0.6×rh + 0.4×lh blend (Tango convention).
+- [x] Soft-skip predicate flipped from `history_teams_loaded` →
+      `lref_era_bp_loaded` (L_REF always present on Slice-1+ saves).
+- [x] Verified pre-2026 numbers shift toward BBR for handed hitters in
+      handed-PF parks: Bonds 2001 OPS+ 267→262 (BBR 259), Walker 1999
+      215→191, Mantle 1956 220→219, Pujols 2003 193→190 (BBR 189).
+      Modern Devers 2026-2029 invariant.
 
-- [ ] Update `_lg_constants_advanced_imported` to pull from `lref_era_stats`
-      instead of UNIONing Lahman + BREF. Drops two external data sources.
-- [ ] Sanity-check pre-2026 OPS+/ERA+ values vs D20 — values should be
-      essentially identical (both Lahman and OOTP era_stats trace to the same
-      MLB-historical source data) but L_REF version is OOTP-canonical.
+**Pitcher-side handedness deferred** to a follow-on — applying it
+requires weighting opposing-batter mix per (pitcher_throws, league-year),
+a richer model. Pitcher park_avg keeps using Overall today.
 
-### Slice 5 — MiLB pre-save baselines (clears deferred backlog):
+### Slice 4 — D20 v2 (replace Lahman+BREF UNION with era_stats) ✅ **SHIPPED 2026-05-14**
 
-- [ ] Use `lref_milb_master` + `lref_era_stats_minors` + `lref_milb_leagues`
-      to extend `_lg_constants_advanced_imported` with minor-league rows.
-      OOTP-imported pre-2026 minor-league player-seasons get advanced stats
-      instead of `—`.
-- [ ] Need an OOTP-league-id ↔ MiLB-league-name crosswalk; pull from
-      `MiLBLeagues.csv` if it has OOTP league IDs, otherwise derive from save's
-      `leagues_personal` joining on name + level + year.
+Implemented in `src/diamond/schema/l3_advanced.py`. The 4 prior CTEs
+(lahman_bat, bref_bat, lahman_pit, bref_pit) + all_bat / all_pit UNION
+collapsed into a single `mlb_joined` CTE reading from `lref_era_stats`.
 
-### Slice 6 — ballpark integration:
+- [x] Single OOTP-canonical source (1870-2025 in 156 rows × 82 cols).
+- [x] No 2019/2020 boundary; era_stats covers the whole range uniformly.
+- [x] Drops external Lahman+BREF fetch dependency for league constants.
+- [x] Soft-skip predicate flipped from `history_loaded` → `lref_era_loaded`.
+- [x] Verified: Bonds 2001 OPS+ 267, Pujols 2003 193 (BBR 189 — exact),
+      Trout 2018 201 (BBR 198) — values within ±1% of pre-swap (both
+      sources trace to the same aggregates).
 
-- [ ] `/api/parks` route reads from `lref_pt_ballparks`, returns full 7-segment
-      geometry + LH/RH split factors per park.
-- [ ] Update `web/components/StadiumSprayChart.tsx` to fetch from API instead
-      of hand-coded `web/lib/stadiums.ts`. Delete `web/lib/stadiums.ts`.
-- [ ] Add 7-segment outline rendering (we currently use 5 anchor points).
+### Slice 5 — MiLB pre-save baselines ✅ **SHIPPED 2026-05-14**
 
-### Slice 7 — OOTP↔Lahman crosswalk swap:
+Implemented in `src/diamond/schema/l3_advanced.py`. Closes the long-
+deferred backlog item where pre-2026 MiLB player-seasons rendered `—`.
 
-- [ ] Replace `history_player_id_map` Chadwick lookup with `lref_master` JOINs
-      in `history.py` and the records / awards / hof endpoints.
-- [ ] Delete the Chadwick fetcher code if everything routes through lref_master.
+- [x] `milb_xwalk` CTE hardcodes 11 (save_league_id, era_stats_minors
+      League name) pairs covering all MiLB leagues with substantive
+      Lahman MiLB coverage: IL/PCL (AAA), EL/SL/TL (AA), NWL/SAL/MWL/
+      CAL/CAR (A+/A), FSL.
+- [x] `milb_level_per_league` derives level_id from save's own
+      `f_player_season_batting` so the view works against per-save scope
+      customizations (D3 v2.1).
+- [x] `milb_joined` CTE produces same column shape as `mlb_joined`,
+      UNION ALL'd into `joined`. Reuses BFP as lg_pa, recovers SF from
+      `'SF/(IPouts-K)' × non-K-outs`, runs from `'Runs per 27 IPouts'
+      × IPouts/27`, ER from `ERA × IPouts/27`. Pitcher-side aggregates
+      (HR allowed / BB / HBP / K) reuse batter-side league totals by
+      identity.
+- [x] Verified: 84,000 newly-resolved player-seasons (pre-2026 MLB+MiLB
+      with non-null wOBA went from ~88k MLB-only → ~172k). Real
+      historical AAA legends resolve: Joe Lis 1972 IL wRC+ 289, Willie
+      McCovey 1959 PCL 284, Trout 2012 PCL 190, Walker 1989 EL 174.
+- [x] PCL 2012 lg_obp .343 vs IL 2012 lg_obp .329 — properly
+      differentiated (PCL historically more offense-friendly).
 
-### Slice 8 — real team logos rendering:
+**Levels still uncovered** (no era_stats_minors data):
+- level_id=5 (Short-Season A), 6 (Complex/DSL), 7 (Rookie), 8 (AFL).
+  Lahman has no meaningful coverage either; defer.
+
+### Slice 6 — ballpark integration 🟡 **DATA LAYER SHIPPED 2026-05-14**
+
+- [x] `/api/parks` route reads from `lref_pt_ballparks` and returns
+      all 240 modern parks with 7-segment geometry + LH/RH split
+      factors. Files: `src/diamond/api/schemas/parks.py`,
+      `src/diamond/api/routes/parks.py`.
+- [ ] **Frontend swap** (Slice 6 v2 — remaining): refactor
+      `web/components/StadiumSprayChart.tsx` to fetch from `/api/parks`
+      instead of importing from `web/lib/stadiums.ts`. Add 7-segment
+      outline rendering (currently 5 anchor points). Delete
+      `web/lib/stadiums.ts`. Touches the renderer's geometry model
+      deeply — defer until viz polish pass.
+
+### Slice 7 — OOTP↔Lahman crosswalk swap ⏸ **SKIPPED — partial value, deferred**
+
+After audit, `lref_master` carries:
+- `playerid` (OOTP) ↔ `lahmanID` ↔ `retroID` ↔ `BBrefMiLBid` (minor-league)
+- bio info: `birthYear`/`birthCountry`/`namefirst`/`namelast`/`college`
+- ratings hints: pitch-type ratings, position experience, ethnicity
+
+But it does NOT carry `mlb_id` (MLB.com modern API id) or `BBrefMLBid`
+(major-league BBref id). All current Chadwick consumers in Diamond
+go from `mlb_id` → `bbref_id`:
+- `hof.py:97`  HoF candidates from MLB API
+- `l3.py:1153` Awards external_id resolution
+- `l3.py:1428` Award career rollup
+
+So lref_master can complement (player bio enrichment, retroID lookup
+for an OOTP playerid) but **cannot replace** Chadwick for the existing
+mlb_id-keyed paths. Slice 7's framing in the original D26 backlog was
+overstated. Closing as skipped; revisit if a future slice needs the
+bio enrichment.
+
+### Slice 8 — real team logos rendering ⏸ deferred
 
 - [ ] `/api/logos/{abbr}` route serves `<ootp>/logos/<filename>.oi` with
       `Content-Type: image/png` (`.oi` files are PNGs, magic-bytes confirmed).
@@ -200,7 +268,19 @@ now that L_REF is in place):
 - [ ] Drop in plaque description text ("Inducted 1974 / Starting Pitcher /
       'Whitey'") below the photo on the inductee card.
 
-### Slice 10 — schema doc fold + per-team brand colors:
+### Slice 10 — schema doc fold + per-team brand colors ⏸ partially blocked
+
+**Brand colors blocked**: After auditing `colors/*.xml`, the files
+turn out to be **uniform-asset metadata** (pointing to .oi PNG files
+for caps/jerseys/pants/socks per uniform variant), not hex color
+palettes. D26's "per-team brand palettes" framing was wrong. No
+parseable hex/RGB values available in the install folder.
+
+If brand colors become a real UX need, source from the team logo
+.oi PNG files (extract dominant colors via image-processing) — but
+that's substantial work for marginal gain.
+
+**Schema doc fold** (separable):
 
 - [ ] Read `database/db_structure_ootp27_csv.txt` (version-current, replacing
       our ootp21 fallback) and fold canonical column meanings into

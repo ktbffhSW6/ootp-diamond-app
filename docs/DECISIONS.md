@@ -764,3 +764,43 @@ This decision pins:
 - Suggesting users flip OOTP's dump cadence away from monthly. If needed, we can recommend in `docs/DEV.md` later.
 - Reverse-engineering the binary `.dat` files. The CSV projections cover everything we need.
 - Reverse-engineering the binary `.rpl` replay format.
+
+## D29 — L_REF rollout: analytical slices shipped, cosmetic deferred (2026-05-14)
+
+**Date**: 2026-05-14 (EOD, paired with the L_REF Slice 2-6 marathon)
+
+**Decision**: After shipping L_REF Slices 1 (ingest+freeze), 2 (xwOBA/xBA/xSLG calc-parity), 3 (era park factors w/ LH/RH splits), 4 (era_stats source swap), 5 (MiLB pre-save baselines), and 6 data-layer (/api/parks), we close the L_REF rollout's analytical phase. Remaining slices (7 OOTP↔Lahman crosswalk, 6 frontend refactor, 8 logos, 9 HoF plaques, 10 brand colors) are either skipped, deferred, or partially blocked.
+
+**What's now end-to-end OOTP-canonical**:
+
+- League constants for advanced stats — `lref_era_stats` (MLB, 1870-2025) + `lref_era_stats_minors` (MiLB AAA/AA/A+/A, 1901-2024)
+- Park factors with handedness splits — `lref_era_ballparks` (3,105 historical park-seasons, 1871-2025)
+- Per-BIP expected stats — `lref_xwoba_table` + `lref_xba_table` + `lref_xslg_table` ((LA, EV) → x-stat grids)
+
+Pre-save advanced stats (wOBA / wRC+ / OPS+ / FIP / ERA+) for any player-season — MLB or MiLB, real-history or save-era — now read every reference value from L_REF, frozen with the save per D27. There is **no remaining external-fetch dependency for advanced-stat calculation**. Lahman/BREF/Statcast fetches via `diamond fetch-history` are still used by per-player record / award / HoF leaderboards (different consumers, not the analytical surface).
+
+**Why some slices were skipped**:
+
+- **Slice 7** (Master.csv replaces Chadwick): blocked by data shape. `lref_master` carries `playerid` ↔ `lahmanID` ↔ `retroID` ↔ `BBrefMiLBid` (minor-league) but no `mlb_id` and no `BBrefMLBid`. Current Chadwick consumers (HoF MLB-API integration, awards leaderboard) all go from `mlb_id` → `bbref_id`, which lref_master can't satisfy. Master.csv complements but doesn't replace Chadwick. Closing Slice 7 as skipped; if a future slice needs the bio enrichment (birth/college/draft-value etc.), revisit then.
+- **Slice 10** (per-team brand colors): blocked by misframed source. `colors/*.xml` files turn out to be uniform-asset metadata pointing to `.oi` PNG files (caps/jerseys/pants/socks), NOT hex/RGB color palettes as D26 suggested. No parseable color data available in the install folder. Either source from the team logo PNGs via image-processing (substantial work) or leave brand colors out of v1.
+
+**Why the cosmetic remainder is deferred**:
+
+- **Slice 6 frontend refactor** (delete `web/lib/stadiums.ts`, switch `StadiumSprayChart` to API + 7-segment renderer): touches the renderer's geometry model deeply. Data layer (`/api/parks`) shipped; frontend stays on hand-coded 5-point geometry until viz polish pass.
+- **Slice 8** (team logos): real cosmetic win — replaces `font-mono BOS` chips across 5+ pages with `<TeamLogo>` rendering OOTP's `.oi` PNG files. Requires manual team_abbr → filename catalog plus `/api/logos/{abbr}` route plus React component. ~45 min of focused frontend work.
+- **Slice 9** (HoF plaques): cosmetic win on `/history/hof`. Needs `lref_master.hofID` → bbref crosswalk + `/api/hof/plaque/{bbref}.png` route + UI rewiring.
+
+These are tracked in BACKLOG.md as deferred items. They don't unblock new analytical capabilities; they elevate the IA visually.
+
+**Implementation pin**: post-Slice-5 row counts (verified on Building the Green Monster):
+- f_player_season_advanced_batting still 244,183 rows total
+- Of those, ~172k now have non-null wOBA (was ~88k pre-Slice-5; +84k newly resolved in pre-2026 MiLB)
+- Imported view (`_lg_constants_advanced_imported`) row count: 1,069 (was 155 MLB-only — now includes 11 MiLB leagues × 60-124 yrs each)
+
+**Cross-references**: D26 (L_REF layer), D27 (per-save freeze), D20 (MLB pre-save baselines — now superseded by Slice 4), D22 (park factors — now superseded by Slice 3).
+
+**Out of scope**:
+
+- Reverse-engineering OOTP's `(LA, EV) → LSA` classifier so we can use `lref_xiso_table` for OOTP-empirical barrel/SS/HH definitions. Defer until UX needs xISO specifically.
+- RE24 / WPA / LI columns on `f_pa_event` from `lref_re288_table` + `lref_wpa_table` + `lref_li_table`. Pure additive work, ~half-day, would unblock high-leverage / clutch leaderboards. Tracked in BACKLOG as a future analytical slice.
+- Pitcher-side handedness park factor application (currently uses Overall — needs (pitcher_throws, league-year) opposing-batter mix model).
