@@ -6,12 +6,37 @@
 
 ---
 
-## ✅ L_REF reference layer (D26 + D27) — analytical layer SHIPPED 2026-05-14
+## ✅ L_REF reference layer (D26 + D27) — analytical + cosmetic layer SHIPPED across D29 + D30
 
-**Status as of 2026-05-14 EOD**: 5 of 10 slices fully shipped (1 / 2 / 3 / 4 /
-5), 1 partial (6 data layer), 4 deferred-or-skipped (7 / 8 / 9 / 10). The
-analytical / data-quality wins are complete; remaining work is cosmetic
-or deferred for scope.
+**Status as of 2026-05-15**: 9 of 10 slices fully shipped (1 / 2 / 3 / 4 / 5
+analytical via D29; 6-frontend / 8 / 9 cosmetic via D30 — see "Capability wave"
+section below). Slice 7 skipped (lref_master can't replace Chadwick — see
+findings inline). Slice 10 partially blocked (brand colors not in install
+folder per audit). The L_REF investment is essentially complete.
+
+## ✅ Capability wave (D30) — leverage stack + real assets — SHIPPED 2026-05-15
+
+**Status**: 4 of 4 slices shipped in one session. Pre-D30 the platform was
+*trustworthy* (post-D29 L_REF rollout); post-D30 it's *visibly more capable*
+on the modern save too:
+
+- **Slice A** ✅ Leverage stack (WPA / LI / RE24 / Clutch) — new
+  `f_player_season_leverage_*` tables (32,767 + 32,338 rows). Wire-up to
+  player page Advanced columns + leaderboards (6 new stats) + 4 dictionary
+  entries. Eldridge 2029 WPA +5.81 / RE24 +49.4. Commit `dec326d`.
+- **Slice B** ✅ Real team logos via `/api/photos/teams/{team_id}.png` +
+  `<TeamLogo>` component. Wired into 5 surfaces. Commit `fe41688`.
+- **Slice C** ✅ Spray chart geometry sources OOTP-canonical 7-segment data
+  via `/api/parks` adapter. Commit `1cd365b`.
+- **Slice D** ✅ Real HoF plaques via `/api/photos/hof/{bbref_id}.png` +
+  manifest endpoint + bbref_id resolution on `HofPlayer`. Plaque gallery
+  on `/history/hof`. Commit `d5bbfaf`.
+
+**Remaining D30-adjacent deferrals** (low priority): multi-year batter LI
++ multi-year WPA via `lref_li_table` / `lref_wpa_table` per-PA lookup;
+inline plaque thumbnails per inductee row (needs Pillow downsample); full
+7-segment outline rendering on the spray chart (vs the 5-point spline we
+adapt to today).
 
 **What this means in practice**: pre-save advanced stats (wOBA / wRC+ / OPS+ /
 FIP / ERA+) for any player-season — MLB or MiLB, real-history or save-era —
@@ -139,9 +164,23 @@ now that L_REF is in place):
       table, we'd need to reverse-engineer OOTP's `(LA, EV) → LSA`
       mapping. Defer until UX needs xISO specifically — `xSLG - xBA`
       already provides an equivalent contact-quality signal.
-- [ ] **RE24 + WPA + LI columns on `f_pa_event`** from `lref_re288_table`
-      + `lref_wpa_table` + `lref_li_table`. Unblocks high-leverage /
-      clutch leaderboards. Pure additive work — no schema migration.
+- [x] **RE24 + WPA + LI columns** ✅ **SHIPPED 2026-05-15 (D30 Slice A)**
+      as new fact tables `f_player_season_leverage_batting` (32,767 rows) +
+      `_pitching` (32,338) at the same grain as `_advanced_*`. WPA + LI
+      from L0 game-event tables (current-year only — see caveats below);
+      RE24 multi-year from `lref_re288_table` joined to `f_pa_event` via
+      window-function after-state. Wired to player Advanced columns +
+      leaderboards (6 new stats) + 4 dictionary entries.
+
+      Caveats / future work tracked separately:
+      - **Multi-year batter LI** — needs decoding of `lref_li_table`'s
+        5-column variable-width score-diff format (col06-col14, AWAY rows
+        wider than HOME rows). Per-PA LI lookup at f_pa_event grain unlocks
+        batter LI + Clutch and 2026-2028 LI for pitchers.
+      - **Multi-year WPA** — would require persisting per-PA win-prob
+        lookup against `lref_wpa_table` instead of summing L0's per-game
+        column (which only ships current year). Same shape as the batter LI
+        slice.
 - [ ] **Barrel/SS/HH redefinition** — current Statcast cohort uses
       Statcast-standard EV+LA bands. Could swap to OOTP-empirical
       barrel definition once LSA is reverse-engineered (xiso_table
@@ -221,12 +260,25 @@ deferred backlog item where pre-2026 MiLB player-seasons rendered `—`.
       all 240 modern parks with 7-segment geometry + LH/RH split
       factors. Files: `src/diamond/api/schemas/parks.py`,
       `src/diamond/api/routes/parks.py`.
-- [ ] **Frontend swap** (Slice 6 v2 — remaining): refactor
-      `web/components/StadiumSprayChart.tsx` to fetch from `/api/parks`
-      instead of importing from `web/lib/stadiums.ts`. Add 7-segment
-      outline rendering (currently 5 anchor points). Delete
-      `web/lib/stadiums.ts`. Touches the renderer's geometry model
-      deeply — defer until viz polish pass.
+- [x] **Frontend swap** ✅ **SHIPPED 2026-05-15 (D30 Slice C)** —
+      `StadiumSprayChart` accepts a `parksApi` prop carrying
+      `/api/parks` data; adapter (`stadiumFromApi`) maps the
+      7-segment OOTP geometry to the renderer's existing 5-point
+      spline (LL→lf_line, LCF→lcf, CF→cf, RCF→rcf, RL→rf_line).
+      Hand-coded `web/lib/stadiums.ts` retained as fallback for
+      missing parks + cosmetic feature flair (Green Monster, ivy,
+      splash hits, etc. — those stay hand-coded since they're
+      not in OOTP's data model). Player page fetches /api/parks
+      in parallel with player+glossary+batted-balls+save.
+      Verified Fenway: API LL=310 / LCF=379 / CF=390 / RCF=383 /
+      RL=302 + walls 37/9/3 — corrects the dead-CF wall (9 OOTP
+      vs 17 hand-coded — 17 was the LCF triangle, not dead-CF).
+
+- [ ] **Full 7-segment renderer** (future) — render 7-anchor
+      outline instead of 5 (LL + LF + LCF + CF + RCF + RF + RL).
+      Adds power-alley bumps + matches the OOTP visual exactly.
+      Touches the Catmull-Rom spline math. Deferred — current
+      5-point view is visually accurate to within 1-3 ft.
 
 ### Slice 7 — OOTP↔Lahman crosswalk swap ⏸ **SKIPPED — partial value, deferred**
 
@@ -248,25 +300,58 @@ mlb_id-keyed paths. Slice 7's framing in the original D26 backlog was
 overstated. Closing as skipped; revisit if a future slice needs the
 bio enrichment.
 
-### Slice 8 — real team logos rendering ⏸ deferred
+### Slice 8 — real team logos rendering ✅ **SHIPPED 2026-05-15 (D30 Slice B)**
 
-- [ ] `/api/logos/{abbr}` route serves `<ootp>/logos/<filename>.oi` with
-      `Content-Type: image/png` (`.oi` files are PNGs, magic-bytes confirmed).
-- [ ] Logo filename map — likely a static dict extending `src/diamond/mlb_teams.py`.
-      Per-era variants for historical pages.
-- [ ] Replace `font-mono BOS` chips across standings / leaderboards / roster /
-      cockpit with a `<TeamLogo abbr={abbr}>` `<img>` component.
-- [ ] PlayerAvatar / current-team chip on player page header gets the logo.
+- [x] `/api/photos/teams/{team_id}.png?size=N` route streams the
+      pre-rendered PNG from `<save>/news/html/images/team_logos/`
+      (resolved via `teams.logo_file_name`). Snaps the size param to
+      OOTP's nearest pre-rendered variant (16/25/40/50/110/full); falls
+      back to full-size if the requested variant doesn't exist.
+- [x] No filename map needed — OOTP's `teams.logo_file_name` column
+      points directly at the right file. Per-era variants out of
+      scope (modern logos only).
+- [x] New `<TeamLogo teamId={...} abbr={...} size={...} />` component
+      (`web/components/TeamLogo.tsx`) with abbr-pill fallback on 404 /
+      network failure. Wired into:
+      - cockpit standings strip
+      - cockpit spotlight cards (`CockpitSpotlightCard.team_id` added)
+      - league standings page rows
+      - movements ledger (`<MoveArrow>` puts logos on either side of
+        the from→to arrow, handling all 4 direction shapes)
+      - leaderboards team column
+      - player page bio header
 
-### Slice 9 — real HoF plaques on `/history/hof`:
+- [ ] **Roster page logo column** (future) — current roster groups by
+      level only (not per-team), so this is a smaller win. Punted.
 
-- [ ] Read `<ootp>/hof/index.json`, JOIN to `lref_master` on `bbref` to get
-      OOTP `playerid`s, surface plaque text + photo URL on inductee cards.
-- [ ] `/api/hof/plaque/{bbref}.png` route serves `<ootp>/hof/{bbref}.png` for
-      the 8 PNGs on disk; falls through to PlayerAvatar's initials placeholder
-      for the other 11 referenced inductees (lazy-load from OOTP CDN deferred).
-- [ ] Drop in plaque description text ("Inducted 1974 / Starting Pitcher /
-      'Whitey'") below the photo on the inductee card.
+### Slice 9 — real HoF plaques on `/history/hof` ✅ **SHIPPED 2026-05-15 (D30 Slice D)**
+
+- [x] `GET /api/photos/hof/{bbref_id}.png` streams from install `hof/`
+      folder (NOT save folder — install ships ~8 marquee plaques).
+      Strict bbref_id allowlist (`[a-z0-9.]{1,12}` — covers Lahman's
+      `.` placeholder for double-initial pads like `sabatc.01`).
+- [x] `GET /api/photos/hof` manifest endpoint enumerates the bbref_ids
+      that actually have a PNG on disk, joined to OOTP's `index.json`
+      metadata (name + induction line). Frontend uses this to render
+      only gallery slots that will load — skips 192 of 200 inductees
+      that would 404-spam.
+- [x] `HofPlayer.bbref_id` resolved via name + birth-year-disambiguated
+      JOIN against `history_lahman_people` (NOT lref_master — that
+      lacks `bbrefMLBid` per Slice 7's findings). Resolves for hundreds
+      of real-life HoFers (Cabrera, Pujols, Cano) even though only 8
+      plaque PNGs ship — sets up future plaque additions to Just Work.
+- [x] Frontend gallery: `/history/hof` (inductees view) gets a
+      horizontal-scroll plaque gallery above the inductees table.
+      Each thumbnail (140×180 px, lazy-loaded) shows player name +
+      induction line; clicking deep-links to `/player/{id}` when
+      resolvable, else opens the PNG in a new tab.
+- [x] Verified: 7 of 8 plaques deep-link to active save inductees
+      (Griffey Jr is the outlier — only Sr is in this save's data;
+      gallery still renders the plaque, link opens PNG directly).
+
+- [ ] **Inline thumbnail per inductee row** (future) — would require
+      server-side downsampling (each plaque is 5-8 MB at full res; 285
+      rows × 5 MB = 1.4 GB cache). Pillow dep needed. Deferred.
 
 ### Slice 10 — schema doc fold + per-team brand colors ⏸ partially blocked
 

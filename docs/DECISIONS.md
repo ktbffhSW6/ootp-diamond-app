@@ -802,5 +802,65 @@ These are tracked in BACKLOG.md as deferred items. They don't unblock new analyt
 **Out of scope**:
 
 - Reverse-engineering OOTP's `(LA, EV) → LSA` classifier so we can use `lref_xiso_table` for OOTP-empirical barrel/SS/HH definitions. Defer until UX needs xISO specifically.
-- RE24 / WPA / LI columns on `f_pa_event` from `lref_re288_table` + `lref_wpa_table` + `lref_li_table`. Pure additive work, ~half-day, would unblock high-leverage / clutch leaderboards. Tracked in BACKLOG as a future analytical slice.
+- RE24 / WPA / LI columns on `f_pa_event` from `lref_re288_table` + `lref_wpa_table` + `lref_li_table`. Pure additive work, ~half-day, would unblock high-leverage / clutch leaderboards. **NOTE: shipped as D30 Slice A on 2026-05-15.**
 - Pitcher-side handedness park factor application (currently uses Overall — needs (pitcher_throws, league-year) opposing-batter mix model).
+
+
+## D30 — Capability wave: leverage stack + real assets + canonical geometry
+
+*2026-05-15*
+
+**Decision**: Following D29's L_REF rollout (data trust + completeness), ship a focused **capability + polish** wave: leverage stack (WPA / LI / RE24 / Clutch), real OOTP team logos, OOTP-canonical spray-chart geometry, real HoF plaques. Four slices, one session.
+
+**Why now**: Post-D29 the platform was *trustworthy* (every reference value OOTP-canonical, frozen with the save) but not visibly more capable than the day before. Users browsing 1972 PCL leaderboards or comparing in-game UI to ours noticed the trust improvement; users browsing the modern save did not. The next high-leverage move is therefore visible new capability — surfaces that wouldn't exist without OOTP's per-PA + per-game leverage values, the install-folder image assets, and the L_REF park geometry.
+
+**Slice A — leverage stack** (`l3_leverage.py`, ~370 LOC):
+
+- Two new fact tables `f_player_season_leverage_batting` (32,767 rows) + `_pitching` (32,338) at the same (player, year, league, level) grain as `f_player_season_advanced_*`.
+- **WPA** sourced from L0 game-event tables (`players_game_batting_event.wpa`, `players_game_pitching_event.wpa`) — OOTP supplies per-game-per-player and we sum to season. Coverage caveat: L0 game-events are **current-year-only** in the dump (OOTP overwrites on rollover); so WPA fills only 2029 rows in this save. Multi-year WPA would require persisting per-PA win-probability computation against `lref_wpa_table` — additive future slice.
+- **LI** for pitchers from L0; empirically decoded that OOTP's per-game `li` is the SUM of leverage across PAs faced, not the per-PA average. Season Tango LI = SUM(li) / SUM(bf), verified against league avg ≈1.05 (Tango spec 1.0), top closers Martinez 2.41 / Edwin Díaz 2.35 (real-MLB 1.7-2.0+), starters Gilbert 0.88 / Skubal 0.97 (real-MLB 0.85-1.10). Batter LI deferred — the L0 batter event has no LI column; would need to derive from `lref_li_table` (variable-width score-diff columns to decode).
+- **RE24** computed per-PA from `f_pa_event` joined to `lref_re288_table` (24-row × 12-count grid UNPIVOTed to long form). Per-PA contribution = `RE_after - RE_before + rbi` (where RE_after comes from a `LEAD()` over game_id+inning+batter_team_id ordered by pa_in_game_seq, NULL → 0 for inning-end). Multi-year — fills 2026-2029 across both batter and pitcher sides (~7,200-7,800 player-seasons per year). Pitcher RE24-against = `-SUM(RE24 keyed on pitcher_id)`.
+- **Clutch** = WPA / LI per Tango. Pitcher-only for v1 (depends on LI); guards against LI < 0.10 (mop-up only).
+
+Wire-up: `PlayerAdvancedBattingRow` / `PlayerAdvancedPitchingRow` schemas gain leverage fields; `/api/players/{id}` LEFT JOINs the leverage tables; leaderboards catalog gains 6 entries (WPA, RE24 batter side; WPA_pit, LI, Clutch, RE24_pit pitcher side); 4 dictionary entries with KaTeX formulas. PlayerStatsTab shows signed display for WPA / RE24 / Clutch (`+5.81 WPA`).
+
+Verified: Eldridge 2029 WPA +5.81 / RE24 +49.4 (top in MLB); Crochet RE24-against trajectory 21.8 → 28.8 → 17.3 → 8.3 across 2026-2029 (declining quality, matches FIP trajectory); Yesavage 2029 Clutch +3.61 (Cy-tier).
+
+**Slice B — real OOTP team logos** (5 surfaces):
+
+- `GET /api/photos/teams/{team_id}.png?size=N` reads `teams.logo_file_name` from the warehouse, snaps the size param to OOTP's nearest pre-rendered variant (16/25/40/50/110/full), streams from `<save>/news/html/images/team_logos/`. Same revalidation pattern as the player headshot route (D24). Strict filename allowlist + integer team_id validation = no traversal vector. Falls back to full-size if requested variant doesn't exist.
+- New `<TeamLogo teamId={...} abbr={...} size={...} />` component with abbr-pill fallback on 404 / network failure. Sizes xs/sm/md/lg/xl forwarding the px to the `?size=N` query param so we hit the closest pre-rendered variant on disk (smaller payload, no client-side downscale).
+- Wired into: cockpit standings strip, cockpit spotlight cards (`CockpitSpotlightCard` schema gains `team_id`), league standings rows, movements ledger (`<MoveArrow>` puts logos on either side of the from→to arrow, handling all 4 direction shapes), leaderboards team column, player page bio header.
+
+**Slice C — spray chart sources OOTP-canonical 7-segment geometry**:
+
+- `StadiumSprayChart` accepts a `parksApi` prop carrying `/api/parks` (240 parks from `lref_pt_ballparks`). Adapter `stadiumFromApi` converts 7-segment OOTP geometry to the renderer's 5-point spline (LL→lf_line, LCF→lcf, CF→cf, RCF→rcf, RL→rf_line) + matching wall heights.
+- Hand-coded `web/lib/stadiums.ts` remains as fallback for missing parks + cosmetic feature flair (Green Monster / ivy / splash hits / etc. — those stay hand-coded since they're cosmetic). Picker dropdown populates from the merged catalog.
+- `getParks()` exported in `lib/api.ts`; player page fetches in parallel with player + glossary + batted-balls + save. Tolerant of failure.
+- Verified Fenway: API returns LL=310 / LCF=379 / CF=390 / RCF=383 / RL=302 + walls 37/9/3 — matches the existing hand-coded distances within 1-3 ft and corrects the dead-CF wall (9 OOTP-canonical vs 17 hand-coded — 17 was the LCF triangle, not dead-CF).
+
+**Slice D — real HoF plaques on /history/hof**:
+
+OOTP ships ~8 marquee Cooperstown plaque PNGs in `<install>/hof/` (Bagwell, Carter, Ford, Gibson, Griffey Jr, Kaline, Sandberg, Ozzie Smith), each 5-8 MB at full resolution. Three pieces:
+
+1. `GET /api/photos/hof/{bbref_id}.png` streams from the install folder (NOT the save) with the same revalidation pattern. Strict bbref_id allowlist (`[a-z0-9.]{1,12}` — covers Lahman's `.` placeholder for double-initial pads like `sabatc.01`).
+2. `GET /api/photos/hof` manifest enumerates the bbref_ids that actually have a PNG on disk, joined to OOTP's `index.json` metadata (name + induction line). The frontend uses this to render only the gallery slots that will load — skips 192 of 200 inductees that would 404-spam.
+3. `HofPlayer` schema gains `bbref_id` field, populated via name + birth-year-disambiguated JOIN against `history_lahman_people`. Resolves for hundreds of real-life HoFers (Cabrera, Pujols, Cano, ...) even though only 8 plaques ship — sets up future plaque additions to Just Work without schema changes.
+
+Frontend: `/history/hof` (inductees view) gets a horizontal-scroll plaque gallery above the table. Each thumbnail (140×180 px, lazy-loaded) shows player name + induction line; clicking deep-links to `/player/{id}` when resolvable, else opens the PNG in a new tab. 7 of 8 plaques deep-link in our save (Griffey Jr is the outlier — only Sr is in this save's data).
+
+**Bbref id format note**: Lahman's bbref convention uses `.` as a placeholder for double-initial pads (`sabatc.01` for CC Sabathia). Our regex allows it. Path traversal still blocked because `/` and `\` are excluded — the worst input that matches the regex is something like `..somefile`, which becomes `..somefile.png` after string concat — a literal filename in the `hof/` directory, not a parent traversal.
+
+**What this wave doesn't change**:
+- Modern save advanced stats — no calculation path was modified, only surfaces added. Existing wOBA / wRC+ / OPS+ / FIP / WAR values invariant.
+- Pre-D29 trust improvements — those landed in Slices 1-5 of D29.
+- Cosmetic CB-mode coverage — verdict glyphs still use green/amber/rose.
+
+**Cross-references**: D24 (revalidation-based image cache pattern, applied to team logos + plaques), D26 (L_REF layer source), D27 (per-save freeze — plaques and logos read from install folder so they're not "frozen" but they're also not save-data; OOTP doesn't patch logo files mid-save), D29 (parks API and `lref_re288_table` are L_REF assets this wave consumes).
+
+**Out of scope** (deferred to BACKLOG.md):
+- Multi-year batter LI from `lref_li_table` (5-column variable-width score-diff format needs decoding pass).
+- Multi-year WPA from `lref_wpa_table` (would require persisting a per-PA win-probability calc independent of L0 game-event aggregation).
+- Pitcher-side handedness in park-factor application (still uses Overall; needs (pitcher_throws, league-year) opposing-batter mix model).
+- xISO classifier via `lref_xiso_table` 6-zone LSA mapping.
+- Inline plaque thumbnails per inductee row (each plaque is 5-8 MB; the gallery approach keeps initial-render bandwidth manageable).
