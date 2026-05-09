@@ -43,6 +43,13 @@ from diamond.api.schemas.draft import (
 from diamond.api.schemas.glossary import GlossaryEntry, GlossaryListResponse
 from diamond.api.schemas.health import HealthResponse
 from diamond.api.schemas.hof import HofPlayer, HofResponse
+from diamond.api.schemas.leaderboards import (
+    LeaderboardOption,
+    LeaderboardOptionsResponse,
+    LeaderboardResponse,
+    LeaderboardRow,
+    LeaderboardStatSpec,
+)
 from diamond.api.schemas.movements import (
     MovementBattingStats,
     MovementPitchingStats,
@@ -124,6 +131,11 @@ __all__ = [
     "HealthResponse",
     "HofPlayer",
     "HofResponse",
+    "LeaderboardOption",
+    "LeaderboardOptionsResponse",
+    "LeaderboardResponse",
+    "LeaderboardRow",
+    "LeaderboardStatSpec",
     "MovementBattingStats",
     "MovementPitchingStats",
     "MovementRow",

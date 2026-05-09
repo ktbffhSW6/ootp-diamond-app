@@ -22,6 +22,8 @@ import type {
   GlossaryListResponse,
   HealthResponse,
   HofResponse,
+  LeaderboardOptionsResponse,
+  LeaderboardResponse,
   MovementsResponse,
   PlayerResponse,
   PressureResponse,
@@ -223,6 +225,34 @@ export async function getPressure(args: {
 // live on /league, /pressure, /movements per their own pickers.
 export async function getCockpit(): Promise<CockpitResponse> {
   return fetchJson<CockpitResponse>("/api/cockpit");
+}
+
+// Custom leaderboard payloads. `options` returns the supported-stats
+// list for the picker dropdown; `query` returns one ranked top-N for
+// a single (stat, year, level, league) combination. The frontend can
+// re-sort/filter the rows client-side via TanStack Table without a
+// refetch — the row set is fixed once fetched.
+export async function getLeaderboardOptions(): Promise<LeaderboardOptionsResponse> {
+  return fetchJson<LeaderboardOptionsResponse>("/api/leaderboards/options");
+}
+
+export async function getLeaderboard(args: {
+  stat: string;
+  year?: number;
+  levelId?: number;
+  leagueId?: number;
+  paMin?: number;
+  limit?: number;
+}): Promise<LeaderboardResponse> {
+  const params: string[] = [`stat=${encodeURIComponent(args.stat)}`];
+  if (args.year !== undefined) params.push(`year=${args.year}`);
+  if (args.levelId !== undefined) params.push(`level_id=${args.levelId}`);
+  if (args.leagueId !== undefined) params.push(`league_id=${args.leagueId}`);
+  if (args.paMin !== undefined) params.push(`pa_min=${args.paMin}`);
+  if (args.limit !== undefined) params.push(`limit=${args.limit}`);
+  return fetchJson<LeaderboardResponse>(
+    `/api/leaderboards?${params.join("&")}`,
+  );
 }
 
 // Compare payload — slim card data for ≤4 players, side-by-side.

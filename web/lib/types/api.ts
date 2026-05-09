@@ -463,6 +463,81 @@ export interface HofResponse {
   candidates_count: number;
 }
 /**
+ * An entry in the stat picker — one of the supported leaderboard stats.
+ *
+ * The frontend uses this to build a grouped dropdown ("Batting / Pitching
+ * / Statcast"). `qualifier_label` ("PA" / "IP" / "BIP") tells the picker
+ * UI what the default minimum gates against.
+ */
+export interface LeaderboardOption {
+  id: string;
+  label: string;
+  discipline: string;
+  direction: string;
+  decimals: number;
+  default_min: number;
+  qualifier_label: string;
+}
+/**
+ * All supported leaderboard stats — used to build the picker.
+ */
+export interface LeaderboardOptionsResponse {
+  options: LeaderboardOption[];
+}
+/**
+ * A single leaderboard request's payload.
+ *
+ * Echoes the resolved stat spec + filters so the frontend doesn't
+ * have to re-derive labels / direction from the URL alone. `rows`
+ * is already pre-sorted by the requested direction.
+ */
+export interface LeaderboardResponse {
+  stat: LeaderboardStatSpec;
+  year: number | null;
+  level_id: number | null;
+  league_id: number | null;
+  pa_min: number;
+  qualifier_label: string;
+  rows: LeaderboardRow[];
+}
+/**
+ * Description of the requested stat — echoed in the response.
+ *
+ * `discipline` is "batting" / "pitching" / "statcast_b" / "statcast_p"
+ * so the frontend can render appropriate column headers (PA vs IP vs
+ * BIP qualifier). `direction` is "desc" (higher is better — HR, OPS+,
+ * bWAR) or "asc" (lower is better — ERA, FIP, SIERA).
+ */
+export interface LeaderboardStatSpec {
+  id: string;
+  label: string;
+  discipline: string;
+  direction: string;
+  decimals: number;
+}
+/**
+ * One row in the leaderboard.
+ *
+ * `value` is the headline stat (formatted to `stat.decimals` on the
+ * frontend). `qualifier_value` is the PA / outs / BIP threshold the
+ * row passed (rendered as a secondary column for context). `team_abbr`
+ * is the dominant-team abbreviation at this level — null for players
+ * whose dominant team isn't in the active save's `teams` reference
+ * table (e.g., defunct historical franchises pre-2026).
+ */
+export interface LeaderboardRow {
+  rank: number;
+  player_id: number;
+  player_name: string;
+  team_id: number | null;
+  team_abbr: string | null;
+  league_id: number | null;
+  level_id: number | null;
+  year: number | null;
+  value: number | null;
+  qualifier_value: number;
+}
+/**
  * Headline batting line shown in the before / after columns.
  *
  * ``ops_plus`` is the verdict driver (already park-adjusted, league-

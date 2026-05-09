@@ -21,9 +21,10 @@ export default function ExplorePage() {
         },
         {
           title: "Custom leaderboards",
-          status: "soon",
+          status: "live",
+          href: "/explore/leaderboards",
           blurb:
-            "Fangraphs-style sortable + filterable. Filter strip across year / level / age / min-PA / position / scope; columns drawn from the data dictionary; save-to-URL.",
+            "Fangraphs-style sortable + filterable. Pick a stat (32 supported across batting / pitching / Statcast); set year + level + min-qualifier. Server returns top-N by natural direction; TanStack Table re-sorts client-side.",
         },
         {
           title: "Distributions",
