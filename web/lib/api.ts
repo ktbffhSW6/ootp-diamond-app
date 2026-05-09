@@ -35,6 +35,8 @@ import type {
   PressureResponse,
   RecordsResponse,
   RosterResponse,
+  SaveConfigResponse,
+  SaveConfigUpdate,
   SaveResponse,
   SavesListResponse,
   StandingsResponse,
@@ -361,6 +363,32 @@ export async function setActiveSave(saveName: string): Promise<SavesListResponse
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ save_name: saveName }),
   });
+}
+
+// Per-save config (D3 v2 — the wizard endpoints). Reads / writes
+// ~/.diamond/save_configs.toml. The 30-team picker catalog comes
+// back on every GET so the dropdown renders without a separate
+// fetch. Setting the active save's config refreshes the in-memory
+// SaveConfig server-side so org-scoped pages reflect the new
+// audit_team_id immediately.
+export async function getSaveConfig(saveName: string): Promise<SaveConfigResponse> {
+  return fetchJson<SaveConfigResponse>(
+    `/api/saves/${encodeURIComponent(saveName)}/config`,
+  );
+}
+
+export async function setSaveConfig(
+  saveName: string,
+  body: SaveConfigUpdate,
+): Promise<SaveConfigResponse> {
+  return fetchJson<SaveConfigResponse>(
+    `/api/saves/${encodeURIComponent(saveName)}/config`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
 }
 
 // Trigger a one-click shutdown of both dev servers (Next.js :3000 and

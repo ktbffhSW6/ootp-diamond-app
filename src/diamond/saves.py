@@ -1,31 +1,59 @@
-"""Save discovery + active-save persistence (D3 v2 / setup wizard).
+"""Save discovery + active-save persistence + per-save config (D3).
 
-Lists OOTP saves under ``OOTP_SAVED_GAMES`` and persists the user's
-chosen active save to ``~/.diamond/active_save.toml`` so the next
-launch resumes against the same warehouse.
+Lists OOTP saves under ``OOTP_SAVED_GAMES``, persists the user's
+chosen active save to ``~/.diamond/active_save.toml``, and stores
+**per-save scope config** (audit_team_id + league_ids) in
+``~/.diamond/save_configs.toml`` so each save's "your team" identity
++ league scope follows it across switches.
 
-v1 scope:
-- Save discovery is a directory scan — every ``*.lg`` folder under
-  the OOTP saves root is a candidate. We expose `has_warehouse`
-  (whether ``diamond/diamond.duckdb`` exists in the save) so the UI
-  can disambiguate "imported but not yet ingested" saves.
-- Persistent choice is a single string (the save_name including the
-  ``.lg`` suffix). League-scope tuple stays hardcoded in
-  ``BUILDING_THE_GREEN_MONSTER`` for now — switching scope across
-  different team org-trees is v2.1.
-- We do NOT mutate ``OOTP_SAVED_GAMES`` itself in v1 — relocating the
-  saves root is a future setting (the D3 wizard mentions it for
-  cross-machine portability, but v1 users all have the default path).
+Layout:
+
+  ~/.diamond/active_save.toml      — single-string pointer to the
+                                     currently-active save's folder
+                                     name. Single source of truth
+                                     for "which save is Diamond
+                                     looking at right now."
+
+  ~/.diamond/save_configs.toml     — per-save scope. Each `[saves."<name>"]`
+                                     section holds:
+                                       audit_team_id        (int)
+                                       reference_scope_enabled (bool)
+                                       league_ids           (int[])
+                                     Saves not listed here fall back
+                                     to ``DEFAULT_LEAGUE_IDS`` +
+                                     ``audit_team_id = None`` (which
+                                     the API surfaces as "needs
+                                     configure" so the wizard prompts
+                                     the user).
+
+Convention: save_name always includes the `.lg` suffix (matches
+``SaveConfig.save_name`` and the directory name). audit_team_id is
+the OOTP team_id for the user's MLB team — for the standard MLB
+scope the 30 IDs are stable across saves (1=ARI, 2=ATL, ..., 30=WSH).
 """
 
 from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from diamond.config import OOTP_SAVED_GAMES
+
+
+# Standard MLB org-tree league_ids (matches BUILDING_THE_GREEN_MONSTER's
+# tuple). New saves get this as the default scope; v2.2 will let the
+# user customize per-save (different scoped leagues for non-MLB sims).
+DEFAULT_LEAGUE_IDS: tuple[int, ...] = (
+    203,                                # MLB
+    204, 205,                           # AAA: IL, PCL
+    206, 207, 208,                      # AA: EL, SL, TL
+    209, 210, 211, 212, 213, 252,       # A+/A: NWL, SAL, MWL, CAL, CAR, FSL
+    217, 218,                           # Complex: ACL, FCL
+    234,                                # International rookie: DSL
+    70,                                 # AFL
+)
 
 
 @dataclass(frozen=True)
@@ -42,6 +70,38 @@ class SaveSummary:
     path: str
     has_warehouse: bool
     last_modified: float | None  # epoch seconds
+
+
+@dataclass(frozen=True)
+class PersistedSaveConfig:
+    """One save's scope + identity, persisted to save_configs.toml.
+
+    `audit_team_id` is the user's MLB team — the org-scoped pages
+    (cockpit, roster, movements, pressure) all read from this. None
+    means the save has never been configured; the UI surfaces this
+    as "needs configure" so the wizard runs before activation.
+
+    `reference_scope_enabled` is the D13 flag that expands
+    `_scoped_players` to include any player with ≥1 MLB appearance.
+    Off by default; the user toggles it via the configure form or
+    the existing CLI flag.
+
+    `league_ids` defaults to ``DEFAULT_LEAGUE_IDS`` (standard MLB
+    org tree); v2.2 will let the user customize.
+    """
+
+    audit_team_id: int | None = None
+    reference_scope_enabled: bool = False
+    league_ids: tuple[int, ...] = DEFAULT_LEAGUE_IDS
+
+    @property
+    def is_configured(self) -> bool:
+        """True iff the save has at least an audit_team_id set.
+
+        Org-scoped pages can't render meaningfully without one;
+        the API gates activation on this.
+        """
+        return self.audit_team_id is not None
 
 
 def list_saves() -> list[SaveSummary]:
@@ -74,14 +134,27 @@ def list_saves() -> list[SaveSummary]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Active-save persistence
+# ~/.diamond resolution
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _active_save_path() -> Path:
+def _diamond_dir() -> Path:
     base = Path(os.path.expanduser("~")) / ".diamond"
     base.mkdir(parents=True, exist_ok=True)
-    return base / "active_save.toml"
+    return base
+
+
+def _active_save_path() -> Path:
+    return _diamond_dir() / "active_save.toml"
+
+
+def _save_configs_path() -> Path:
+    return _diamond_dir() / "save_configs.toml"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Active-save persistence (single string)
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def load_active_save_name() -> str | None:
@@ -112,3 +185,144 @@ def save_active_save_name(name: str) -> None:
         f'save_name = "{name}"\n'
     )
     _active_save_path().write_text(body, encoding="utf-8")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-save config persistence
+#
+# Single TOML file with one section per save. Defensive against:
+# - missing file → returns defaults / None
+# - malformed TOML → returns defaults / None (no crash)
+# - missing fields per save → fall back per-field
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _load_all_configs_raw() -> dict[str, dict]:
+    """Read the entire save_configs.toml, returning the [saves] table."""
+    path = _save_configs_path()
+    if not path.exists():
+        return {}
+    try:
+        with path.open("rb") as f:
+            data = tomllib.load(f)
+    except tomllib.TOMLDecodeError:
+        return {}
+    saves = data.get("saves", {})
+    return saves if isinstance(saves, dict) else {}
+
+
+def load_save_config(save_name: str) -> PersistedSaveConfig:
+    """Read one save's config, returning defaults if not configured.
+
+    Always returns a valid ``PersistedSaveConfig`` — the
+    ``is_configured`` predicate is the way to ask whether the user
+    has actually run through the setup wizard.
+    """
+    raw_all = _load_all_configs_raw()
+    raw = raw_all.get(save_name, {}) if isinstance(raw_all, dict) else {}
+
+    audit_team_id_raw = raw.get("audit_team_id")
+    audit_team_id = (
+        int(audit_team_id_raw)
+        if isinstance(audit_team_id_raw, int) and audit_team_id_raw > 0
+        else None
+    )
+    reference_scope_enabled = bool(raw.get("reference_scope_enabled", False))
+
+    league_ids_raw = raw.get("league_ids")
+    if isinstance(league_ids_raw, list) and all(
+        isinstance(x, int) for x in league_ids_raw
+    ):
+        league_ids = tuple(league_ids_raw)
+    else:
+        league_ids = DEFAULT_LEAGUE_IDS
+
+    return PersistedSaveConfig(
+        audit_team_id=audit_team_id,
+        reference_scope_enabled=reference_scope_enabled,
+        league_ids=league_ids,
+    )
+
+
+def bootstrap_legacy_default_config() -> None:
+    """One-time migration for the pre-D3-v2 hardcoded default save.
+
+    Before per-save config existed, all saves shared the
+    ``BUILDING_THE_GREEN_MONSTER`` constants (audit_team_id=4 +
+    league_ids tuple + reference_scope_enabled). After v2.1 the
+    is_configured gate refuses to activate a save that has no
+    persisted config — which would lock the Sox user out of their
+    own save on first launch with the new code. This function
+    persists the legacy values to ``save_configs.toml`` if and only
+    if no config exists for that save name yet, so the upgrade is
+    seamless for the existing user.
+
+    Idempotent: subsequent calls are no-ops because the second-time
+    config exists.
+    """
+    from diamond.config import BUILDING_THE_GREEN_MONSTER
+
+    legacy_name = BUILDING_THE_GREEN_MONSTER.save_name
+    raw_all = _load_all_configs_raw()
+    if legacy_name in raw_all:
+        return
+    save_save_config(
+        legacy_name,
+        PersistedSaveConfig(
+            audit_team_id=BUILDING_THE_GREEN_MONSTER.audit_team_id,
+            reference_scope_enabled=BUILDING_THE_GREEN_MONSTER.reference_scope_enabled,
+            league_ids=BUILDING_THE_GREEN_MONSTER.league_ids,
+        ),
+    )
+
+
+def save_save_config(save_name: str, config: PersistedSaveConfig) -> None:
+    """Write one save's config to ``save_configs.toml`` (preserving others).
+
+    Loads the full file, replaces just this save's section, and
+    rewrites. Atomic-enough for a single-user local app — the
+    sub-millisecond write window doesn't realistically race with
+    anything.
+    """
+    if not save_name.endswith(".lg"):
+        raise ValueError(f"Save name should end with '.lg' — got {save_name!r}")
+
+    all_raw = _load_all_configs_raw()
+    if not isinstance(all_raw, dict):
+        all_raw = {}
+
+    all_raw[save_name] = {
+        "audit_team_id": config.audit_team_id,
+        "reference_scope_enabled": config.reference_scope_enabled,
+        "league_ids": list(config.league_ids),
+    }
+
+    # Hand-roll TOML serialization (stdlib doesn't ship a writer; tomli-w
+    # would work but this stays dep-free). Quoted keys handle the `.lg`
+    # dots in save names; lists of ints render as `[a, b, c]`.
+    lines: list[str] = [
+        "# Diamond per-save scope config (D3 v2). One section per save under",
+        "# ~/.diamond/save_configs.toml. Edit via the /settings/save Configure",
+        "# form, or hand-edit here — Diamond reloads on every API request.",
+        "",
+    ]
+    for name in sorted(all_raw):
+        cfg = all_raw[name]
+        if not isinstance(cfg, dict):
+            continue
+        lines.append(f'[saves."{name}"]')
+        if cfg.get("audit_team_id") is not None:
+            lines.append(f"audit_team_id = {int(cfg['audit_team_id'])}")
+        else:
+            # Comment-out unconfigured saves so the file stays parseable
+            # and the absence is visible to a human reader.
+            lines.append("# audit_team_id = (not set — run the configure wizard)")
+        lines.append(
+            f"reference_scope_enabled = "
+            f"{'true' if cfg.get('reference_scope_enabled') else 'false'}"
+        )
+        lg = cfg.get("league_ids", list(DEFAULT_LEAGUE_IDS))
+        if isinstance(lg, list) and lg:
+            lines.append(f"league_ids = [{', '.join(str(int(i)) for i in lg)}]")
+        lines.append("")
+    _save_configs_path().write_text("\n".join(lines), encoding="utf-8")

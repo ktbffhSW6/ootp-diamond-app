@@ -685,6 +685,19 @@ export interface LeaderboardRow {
   qualifier_value: number;
 }
 /**
+ * One option in the team-picker dropdown.
+ *
+ * Mirrors ``mlb_teams.MlbTeam`` — surfaces enough to render
+ * `BOS · Red Sox · Boston · AL East` lines without per-row lookups.
+ */
+export interface MlbTeamOption {
+  team_id: number;
+  abbr: string;
+  name: string;
+  city: string;
+  division: string;
+}
+/**
  * Headline batting line shown in the before / after columns.
  *
  * ``ops_plus`` is the verdict driver (already park-adjusted, league-
@@ -1556,6 +1569,39 @@ export interface RosterResponse {
   groups: RosterLevelGroup[];
 }
 /**
+ * One save's persisted scope + identity, plus pickable options.
+ *
+ * `audit_team_id` is None when the save has never been configured —
+ * the UI surfaces this as "needs configure." `audit_team` resolves
+ * the id to a friendly tuple when set; null otherwise.
+ * `mlb_teams_options` is the static 30-team catalog for the picker.
+ * `suggested_team` is a smart-default suggestion derived from
+ * peeking at the save's warehouse (e.g., the team_id with the
+ * most recent ingest activity); null when no warehouse / no signal.
+ */
+export interface SaveConfigResponse {
+  save_name: string;
+  is_configured: boolean;
+  audit_team_id: number | null;
+  audit_team: MlbTeamOption | null;
+  reference_scope_enabled: boolean;
+  league_ids: number[];
+  mlb_team_options: MlbTeamOption[];
+  suggested_team: MlbTeamOption | null;
+}
+/**
+ * POST body for /api/saves/{name}/config.
+ *
+ * `audit_team_id` is required (the wizard's primary purpose).
+ * `reference_scope_enabled` and `league_ids` default to whatever's
+ * already persisted; pass them only when overriding.
+ */
+export interface SaveConfigUpdate {
+  audit_team_id: number;
+  reference_scope_enabled?: boolean | null;
+  league_ids?: number[] | null;
+}
+/**
  * Active-save identity + ingest health + scope counts.
  */
 export interface SaveResponse {
@@ -1578,7 +1624,9 @@ export interface SaveResponse {
  * ``.lg`` suffix). `has_warehouse` is true iff the save's
  * ``diamond/diamond.duckdb`` exists — drives the picker's
  * "ingest first" hint. `last_modified` is epoch seconds, may be null
- * on permission errors.
+ * on permission errors. `is_configured` is true iff the save has a
+ * persisted ``audit_team_id`` (i.e., the user has run the configure
+ * wizard at least once).
  */
 export interface SaveSummaryDto {
   name: string;
@@ -1586,6 +1634,7 @@ export interface SaveSummaryDto {
   has_warehouse: boolean;
   last_modified: number | null;
   is_active: boolean;
+  is_configured: boolean;
 }
 /**
  * All saves under the configured OOTP saves root.

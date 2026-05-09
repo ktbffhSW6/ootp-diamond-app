@@ -28,25 +28,63 @@ import threading
 
 import duckdb
 
-from dataclasses import replace
-
 from diamond.config import BUILDING_THE_GREEN_MONSTER, SaveConfig
-from diamond.saves import load_active_save_name
+from diamond.saves import (
+    DEFAULT_LEAGUE_IDS,
+    bootstrap_legacy_default_config,
+    load_active_save_name,
+    load_save_config,
+)
 from diamond.schema.build import open_warehouse_db
 
 
+# One-time migration on module import — the legacy Sox save gets its
+# hardcoded audit_team_id + league_ids tuple persisted to
+# ~/.diamond/save_configs.toml so the v2.1 is_configured gate doesn't
+# lock the existing user out of their own save.
+bootstrap_legacy_default_config()
+
+
+def build_save_config(save_name: str) -> SaveConfig:
+    """Construct a live ``SaveConfig`` from the persisted per-save config.
+
+    Layered defaults (D3 v2):
+      1. ``~/.diamond/save_configs.toml`` per-save section if present —
+         supplies audit_team_id + reference_scope_enabled + league_ids.
+      2. If a save has no config (never been through the wizard),
+         league_ids defaults to ``DEFAULT_LEAGUE_IDS`` and audit_team_id
+         is copied from ``BUILDING_THE_GREEN_MONSTER`` as a safety net.
+         The API surfaces "needs configure" so the wizard runs first
+         in normal flow, but the safety net keeps CLI invocations from
+         crashing on a freshly-seen save.
+    """
+    persisted = load_save_config(save_name)
+    audit_team_id = (
+        persisted.audit_team_id
+        if persisted.audit_team_id is not None
+        else BUILDING_THE_GREEN_MONSTER.audit_team_id
+    )
+    return SaveConfig(
+        save_name=save_name,
+        league_ids=persisted.league_ids or DEFAULT_LEAGUE_IDS,
+        audit_team_id=audit_team_id,
+        reference_scope_enabled=persisted.reference_scope_enabled,
+    )
+
+
 def _resolve_initial_save() -> SaveConfig:
-    """Pick the initial active save.
+    """Pick the initial active save at process start.
 
     Reads ``~/.diamond/active_save.toml`` if present; otherwise falls
-    back to ``BUILDING_THE_GREEN_MONSTER``. League-scope + audit_team_id
-    stay copied from the default config — switching the scope tuple
-    across different team org-trees is v2.1.
+    back to ``BUILDING_THE_GREEN_MONSTER`` (the legacy default). When a
+    persisted save name is found, the SaveConfig is built from that
+    save's own per-save config — so audit_team_id + league_ids reflect
+    the persisted choice, not the Sox-default fallback.
     """
     persisted = load_active_save_name()
-    if not persisted or persisted == BUILDING_THE_GREEN_MONSTER.save_name:
+    if not persisted:
         return BUILDING_THE_GREEN_MONSTER
-    return replace(BUILDING_THE_GREEN_MONSTER, save_name=persisted)
+    return build_save_config(persisted)
 
 
 # Module-level singletons, lazily initialized on first request.

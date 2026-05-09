@@ -137,6 +137,17 @@ def ingest(
         "historical legends). Persists in `_diamond_settings`. "
         "Omit to use the previously-persisted value (defaults False).",
     ),
+    save: str = typer.Option(
+        None,
+        "--save",
+        help=(
+            "Save folder name (with the '.lg' suffix, e.g. 'The Fathers.lg'). "
+            "Defaults to the persisted active save from "
+            "~/.diamond/active_save.toml, or 'Building the Green Monster.lg' "
+            "if none is set. Per-save scope (audit_team_id + league_ids) "
+            "loads from ~/.diamond/save_configs.toml when present."
+        ),
+    ),
 ) -> None:
     """Ingest OOTP dumps into the warehouse and rebuild L1+L2.
 
@@ -151,13 +162,35 @@ def ingest(
         diamond ingest --all                      # walk every dump folder in order
         diamond ingest --rebuild-only             # rebuild L1+L2 from current L0
         diamond ingest --rebuild-only --reference-scope   # turn D13 on, rebuild
+        diamond ingest --all --save "The Fathers.lg"      # build a different save
     """
     from dataclasses import replace
     from diamond.schema.build import (
         get_reference_scope_enabled, set_reference_scope_enabled,
     )
+    from diamond.saves import list_saves, load_active_save_name
+    from diamond.api.warehouse import build_save_config
 
-    save = BUILDING_THE_GREEN_MONSTER
+    # Resolve which save to operate on. Precedence: --save flag >
+    # ~/.diamond/active_save.toml > BUILDING_THE_GREEN_MONSTER.
+    requested_save_name = save or load_active_save_name()
+    if requested_save_name is None:
+        save_config = BUILDING_THE_GREEN_MONSTER
+    else:
+        # Validate the save exists under the OOTP saves root before we
+        # try to open a warehouse against a typo'd path.
+        if not requested_save_name.endswith(".lg"):
+            requested_save_name = requested_save_name + ".lg"
+        available = {s.name for s in list_saves()}
+        if requested_save_name not in available:
+            _console.print(
+                f"[red]Save '{requested_save_name}' not found.[/red] "
+                f"Available: {sorted(available)}"
+            )
+            raise typer.Exit(2)
+        save_config = build_save_config(requested_save_name)
+
+    save = save_config  # alias for the rest of the function which expects `save`
 
     # Argument validation: exactly one of {dump, --all, --rebuild-only}
     modes = sum([dump is not None, all_dumps, rebuild_only])

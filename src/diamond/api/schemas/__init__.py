@@ -108,6 +108,9 @@ from diamond.api.schemas.roster import (
 from diamond.api.schemas.save import SaveResponse
 from diamond.api.schemas.saves import (
     ActiveSaveUpdate,
+    MlbTeamOption,
+    SaveConfigResponse,
+    SaveConfigUpdate,
     SavesListResponse,
     SaveSummaryDto,
 )
@@ -196,6 +199,9 @@ __all__ = [
     "RosterResponse",
     "RosterTeamRef",
     "ActiveSaveUpdate",
+    "MlbTeamOption",
+    "SaveConfigResponse",
+    "SaveConfigUpdate",
     "SaveResponse",
     "SavesListResponse",
     "SaveSummaryDto",
