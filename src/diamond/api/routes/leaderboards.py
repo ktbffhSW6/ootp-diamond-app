@@ -211,10 +211,18 @@ def _build_query(
     league_filter = "AND league_id = ?" if league_id is not None else ""
     league_args: list[object] = [league_id] if league_id is not None else []
 
+    # `split_id` only exists on the counting tables (f_player_season_batting /
+    # _pitching). The advanced + Statcast tables are already filtered to
+    # split_id=1 at L3 build time, and don't carry the column. Gate the
+    # filter on the source table.
+    base_split_filter = (
+        "AND split_id = 1" if spec.table in (_BAT, _PIT) else ""
+    )
+
     # Dominant team — most-PA (batting) or most-outs (pitching) at this level.
-    # Statcast tables are pre-aggregated per (player, year, league, level)
-    # but we still use the underlying counting table as the dominant-team
-    # source so the team column is consistent with the player's actual stints.
+    # Always sourced from the counting tables (which DO have split_id), so
+    # team_abbr stays consistent with the player's actual stints regardless
+    # of which advanced/Statcast table provided the headline value.
     dominant_source = _PIT if spec.discipline.startswith("pitching") else _BAT
     dominant_qualifier = "outs" if spec.discipline.startswith("pitching") else "pa"
 
@@ -225,7 +233,8 @@ def _build_query(
             {spec.value_expr}     AS value,
             {spec.qualifier_expr} AS qualifier_value
         FROM {spec.table}
-        WHERE year = ? AND level_id = ? AND split_id = 1
+        WHERE year = ? AND level_id = ?
+              {base_split_filter}
               {league_filter}
         GROUP BY player_id, year, league_id, level_id
         HAVING {spec.qualifier_expr} >= ?
