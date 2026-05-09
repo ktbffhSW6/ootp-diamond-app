@@ -259,23 +259,35 @@ export default async function PlayerPage({ params }: Props) {
           retirees, FAs). */}
       {player.contract && <PlayerContractCard contract={player.contract} />}
 
-      {/* Tab strip — only Stats is wired in v1; others are placeholders.
-          Sticky-position lands when we add scrollable per-tab content. */}
-      <nav className="flex gap-1 border-b border-border text-sm">
+      {/* Tab strip — only Stats is wired in v1. Charts cross-link to
+          /explore/spray and /explore/ev-la for batters; the link drops
+          if the player has no MLB BIP data. Other labels stay
+          placeholders. */}
+      <nav className="flex flex-wrap items-center gap-1 border-b border-border text-sm">
         <span className="border-b-2 border-content-primary px-3 py-1.5 font-semibold text-content-primary">
           Stats
         </span>
-        {["Charts", "Game log", "Comparisons", "Scouting", "Contract"].map(
-          (label) => (
-            <span
-              key={label}
-              className="cursor-not-allowed px-3 py-1.5 text-content-muted"
-              title="Coming soon"
-            >
-              {label}
-            </span>
-          ),
-        )}
+        <Link
+          href={`/explore/spray?player=${player.bio.player_id}`}
+          className="px-3 py-1.5 text-content-secondary hover:text-content-primary"
+        >
+          Spray ↗
+        </Link>
+        <Link
+          href={`/explore/ev-la?player=${player.bio.player_id}`}
+          className="px-3 py-1.5 text-content-secondary hover:text-content-primary"
+        >
+          EV / LA ↗
+        </Link>
+        {["Game log", "Comparisons", "Scouting", "Contract"].map((label) => (
+          <span
+            key={label}
+            className="cursor-not-allowed px-3 py-1.5 text-content-muted"
+            title="Coming soon"
+          >
+            {label}
+          </span>
+        ))}
       </nav>
 
       <PlayerStatsTab player={player} glossary={glossary} />

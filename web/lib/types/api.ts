@@ -83,6 +83,43 @@ export interface AwardsResponse {
   total_in_source: number;
 }
 /**
+ * One ball-in-play event for a single batter.
+ *
+ * `hit_xy` is OOTP's batter-relative spray code (0-130 covers the
+ * field arc; 0 = pull-side foul line, 65 = center, 130 = oppo
+ * foul line; 130-255 are mostly out-of-play codes that we cap on
+ * the frontend). `result` is the AtBatResult enum (4=GO, 5=FO,
+ * 6=1B, 7=2B, 8=3B, 9=HR — only BIP outcomes shown here).
+ *
+ * `exit_velo` is in mph (OOTP scale runs ~5 mph below real Statcast).
+ * `launch_angle` is in degrees (-90 to +90 — negative = chopper,
+ * positive = fly ball). Both can be null for events where the
+ * Statcast simulator didn't fire (very rare in modern saves).
+ */
+export interface BattedBallEvent {
+  hit_xy: number | null;
+  hit_loc: number | null;
+  exit_velo: number | null;
+  launch_angle: number | null;
+  result: number;
+}
+/**
+ * Single (player, year, level) batted-ball event list.
+ *
+ * `rows` only includes BIP events (`bip_flag = 1`) — strikeouts,
+ * walks, HBP are filtered server-side since they have no spray /
+ * EV / LA to plot. `bip_count` is for sanity-checking the cohort
+ * threshold (Statcast cohort tables use BIP ≥ 30 minimum).
+ */
+export interface BattedBallsResponse {
+  player_id: number;
+  player_name: string;
+  year: number;
+  level_id: number;
+  bip_count: number;
+  rows: BattedBallEvent[];
+}
+/**
  * Slimmed-down ledger row for the recent-moves strip.
  */
 export interface CockpitMovementRow {

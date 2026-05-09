@@ -34,15 +34,17 @@ export default function ExplorePage() {
         },
         {
           title: "Spray charts",
-          status: "soon",
+          status: "live",
+          href: "/explore/spray",
           blurb:
-            "Savant-style field overlay from at-bat events (hit_xy / hit_loc). Filter by handedness, count, zone.",
+            "Polar fan + horizontal stacked bar of hit_xy distribution, segmented by outcome (1B / 2B / 3B / HR / out). Batter-relative — pull side flips with handedness. Demo deep-links surfaced when no player selected.",
         },
         {
           title: "EV / LA scatter",
-          status: "soon",
+          status: "live",
+          href: "/explore/ev-la",
           blurb:
-            "Exit velocity × launch angle scatter with barrel-zone overlay. Pull in any player or cohort.",
+            "Exit velocity × launch angle scatter with sweet-spot + barrel-zone overlays. Calibrated for OOTP's ~5 mph EV offset (barrel floor = 93 mph instead of real Statcast's 98). Per-player view.",
         },
         {
           title: "Chart builder",

@@ -15,6 +15,7 @@
 
 import type {
   AwardsResponse,
+  BattedBallsResponse,
   CockpitResponse,
   CompareResponse,
   DraftClassResponse,
@@ -252,6 +253,24 @@ export async function getLeaderboard(args: {
   if (args.limit !== undefined) params.push(`limit=${args.limit}`);
   return fetchJson<LeaderboardResponse>(
     `/api/leaderboards?${params.join("&")}`,
+  );
+}
+
+// Per-player BIP events (spray chart + EV-LA scatter source). One
+// (year, level) combo per request; year defaults to the latest year
+// with BIP data for this player at the requested level. Returns
+// hit_xy / exit_velo / launch_angle / result for every ball-in-play.
+export async function getBattedBalls(args: {
+  playerId: number;
+  year?: number;
+  levelId?: number;
+}): Promise<BattedBallsResponse> {
+  const params: string[] = [];
+  if (args.year !== undefined) params.push(`year=${args.year}`);
+  if (args.levelId !== undefined) params.push(`level_id=${args.levelId}`);
+  const qs = params.length === 0 ? "" : `?${params.join("&")}`;
+  return fetchJson<BattedBallsResponse>(
+    `/api/players/${args.playerId}/batted_balls${qs}`,
   );
 }
 
