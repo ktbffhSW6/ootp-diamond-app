@@ -372,6 +372,10 @@ def _fetch_advanced_batting(
         "SELECT COUNT(*) > 0 FROM information_schema.tables "
         "WHERE table_name = 'f_player_season_xstats_batting'"
     ).fetchone()[0]
+    has_leverage = con.execute(
+        "SELECT COUNT(*) > 0 FROM information_schema.tables "
+        "WHERE table_name = 'f_player_season_leverage_batting'"
+    ).fetchone()[0]
     xstats_select = (
         "x.bip_xstat, x.xwoba_bip, x.xba_bip, x.xslg_bip"
         if has_xstats else "NULL AS bip_xstat, NULL AS xwoba_bip, NULL AS xba_bip, NULL AS xslg_bip"
@@ -382,6 +386,16 @@ def _fetch_advanced_batting(
         "AND x.league_id = f.league_id AND x.level_id = f.level_id"
         if has_xstats else ""
     )
+    lev_select = (
+        "lv.wpa, lv.re24"
+        if has_leverage else "NULL AS wpa, NULL AS re24"
+    )
+    lev_join = (
+        "LEFT JOIN f_player_season_leverage_batting lv "
+        "ON lv.player_id = f.player_id AND lv.year = f.year "
+        "AND lv.league_id = f.league_id AND lv.level_id = f.level_id"
+        if has_leverage else ""
+    )
     rows = con.execute(
         f"""
         SELECT
@@ -391,11 +405,13 @@ def _fetch_advanced_batting(
             CAST(f.pa AS BIGINT) AS pa,
             f.woba, f.wraa, f.wrc, f.wrc_plus, f.ops_plus, f.o_war, f.b_war,
             f.park_avg,
-            {xstats_select}
+            {xstats_select},
+            {lev_select}
         FROM f_player_season_advanced_batting f
         LEFT JOIN leagues         l  ON l.league_id  = f.league_id
         LEFT JOIN players_current pl ON pl.player_id = f.player_id
         {xstats_join}
+        {lev_join}
         WHERE f.player_id = ?
         ORDER BY f.year, f.level_id, f.league_id
         """,
@@ -405,7 +421,8 @@ def _fetch_advanced_batting(
     for r in rows:
         (year, league_id, level_id, league_abbr, age, pa,
          woba, wraa, wrc, wrc_plus, ops_plus, o_war, b_war, park_avg,
-         bip_xstat, xwoba_bip, xba_bip, xslg_bip) = r
+         bip_xstat, xwoba_bip, xba_bip, xslg_bip,
+         wpa, re24) = r
         out.append(PlayerAdvancedBattingRow(
             year=int(year),
             age=int(age) if age is not None else None,
@@ -426,6 +443,8 @@ def _fetch_advanced_batting(
             xwoba_bip=float(xwoba_bip) if xwoba_bip is not None else None,
             xba_bip=float(xba_bip) if xba_bip is not None else None,
             xslg_bip=float(xslg_bip) if xslg_bip is not None else None,
+            wpa=float(wpa) if wpa is not None else None,
+            re24=float(re24) if re24 is not None else None,
         ))
     return out
 
@@ -442,6 +461,10 @@ def _fetch_advanced_pitching(
         "SELECT COUNT(*) > 0 FROM information_schema.tables "
         "WHERE table_name = 'f_player_season_xstats_pitching'"
     ).fetchone()[0]
+    has_leverage = con.execute(
+        "SELECT COUNT(*) > 0 FROM information_schema.tables "
+        "WHERE table_name = 'f_player_season_leverage_pitching'"
+    ).fetchone()[0]
     xstats_select = (
         "x.bip_xstat, x.xwoba_bip, x.xba_bip, x.xslg_bip"
         if has_xstats else "NULL AS bip_xstat, NULL AS xwoba_bip, NULL AS xba_bip, NULL AS xslg_bip"
@@ -452,6 +475,16 @@ def _fetch_advanced_pitching(
         "AND x.league_id = f.league_id AND x.level_id = f.level_id"
         if has_xstats else ""
     )
+    lev_select = (
+        "lv.wpa, lv.li, lv.re24, lv.clutch"
+        if has_leverage else "NULL AS wpa, NULL AS li, NULL AS re24, NULL AS clutch"
+    )
+    lev_join = (
+        "LEFT JOIN f_player_season_leverage_pitching lv "
+        "ON lv.player_id = f.player_id AND lv.year = f.year "
+        "AND lv.league_id = f.league_id AND lv.level_id = f.level_id"
+        if has_leverage else ""
+    )
     rows = con.execute(
         f"""
         SELECT
@@ -461,11 +494,13 @@ def _fetch_advanced_pitching(
             CAST(f.outs AS BIGINT) AS outs,
             f.ip_display, f.fip, f.era_plus, f.pit_war, f.p_war, f.p_ra9_war,
             f.park_avg,
-            {xstats_select}
+            {xstats_select},
+            {lev_select}
         FROM f_player_season_advanced_pitching f
         LEFT JOIN leagues         l  ON l.league_id  = f.league_id
         LEFT JOIN players_current pl ON pl.player_id = f.player_id
         {xstats_join}
+        {lev_join}
         WHERE f.player_id = ?
         ORDER BY f.year, f.level_id, f.league_id
         """,
@@ -475,7 +510,8 @@ def _fetch_advanced_pitching(
     for r in rows:
         (year, league_id, level_id, league_abbr, age, outs,
          ip_display, fip, era_plus, pit_war, p_war, p_ra9_war, park_avg,
-         bip_xstat, xwoba_bip, xba_bip, xslg_bip) = r
+         bip_xstat, xwoba_bip, xba_bip, xslg_bip,
+         wpa, li, re24, clutch) = r
         out.append(PlayerAdvancedPitchingRow(
             year=int(year),
             age=int(age) if age is not None else None,
@@ -495,6 +531,10 @@ def _fetch_advanced_pitching(
             xwoba_bip=float(xwoba_bip) if xwoba_bip is not None else None,
             xba_bip=float(xba_bip) if xba_bip is not None else None,
             xslg_bip=float(xslg_bip) if xslg_bip is not None else None,
+            wpa=float(wpa) if wpa is not None else None,
+            li=float(li) if li is not None else None,
+            re24=float(re24) if re24 is not None else None,
+            clutch=float(clutch) if clutch is not None else None,
         ))
     return out
 

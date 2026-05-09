@@ -1762,4 +1762,13 @@ def build_l3(
     from diamond.schema.l3_advanced import build_l3_advanced
     rows.update(build_l3_advanced(con, verbose=verbose))
 
+    # Leverage / context-stat tables — WPA / LI / RE24 / Clutch per
+    # (player, year, league, level). WPA + LI come from L0 game logs
+    # directly (OOTP-canonical); RE24 is computed per-PA from
+    # `lref_re288_table` joined to `f_pa_event` with a LEAD-derived
+    # after-state. See l3_leverage.py for the source split + scaling
+    # convention (OOTP LI is ~10× Tango).
+    from diamond.schema.l3_leverage import build_l3_leverage
+    rows.update(build_l3_leverage(con, verbose=verbose))
+
     return rows

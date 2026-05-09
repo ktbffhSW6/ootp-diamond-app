@@ -898,6 +898,8 @@ export interface PlayerAdvancedBattingRow {
   xwoba_bip?: number | null;
   xba_bip?: number | null;
   xslg_bip?: number | null;
+  wpa?: number | null;
+  re24?: number | null;
 }
 /**
  * Per-(year, league_id, level_id) advanced pitching stats.
@@ -931,6 +933,10 @@ export interface PlayerAdvancedPitchingRow {
   xwoba_bip?: number | null;
   xba_bip?: number | null;
   xslg_bip?: number | null;
+  wpa?: number | null;
+  li?: number | null;
+  re24?: number | null;
+  clutch?: number | null;
 }
 /**
  * A year's worth of batting — one or more stints + optional TOT row.

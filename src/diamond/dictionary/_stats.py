@@ -1247,6 +1247,144 @@ _ENTRIES: list[Stat] = [
     ),
 
     # ─────────────────────────────────────────────────────────────────
+    # Leverage / context — WPA, LI, RE24, Clutch
+    # Per Slice A (D26+D27): WPA + LI come straight from L0 game logs
+    # (OOTP supplies them per game-per-player); RE24 is computed per-PA
+    # from `lref_re288_table` joined to `f_pa_event` with a window-
+    # function-derived after-state. See `src/diamond/schema/l3_leverage.py`.
+    # ─────────────────────────────────────────────────────────────────
+
+    Stat(
+        id="WPA",
+        display_name="Win Probability Added",
+        short_label="WPA",
+        category="advanced",
+        formula_tex=r"\mathrm{WPA} = \sum_{\mathrm{PA}} \big(WP_{\mathrm{after}} - WP_{\mathrm{before}}\big)",
+        formula_plain="WPA = sum over PAs of (win_prob_after - win_prob_before)",
+        description=(
+            "The change in your team's win probability that you produced, "
+            "summed across all PAs in the season. A walkoff hit adds "
+            "0.40-0.50 in a single play; a meaningless 9th-inning solo "
+            "HR in a blowout adds essentially zero."
+        ),
+        units="wins",
+        typical_range="MVP-tier batter: 5+; ace closer: 3-5; replacement: ~0; "
+                      "bad season: -2 to -4",
+        interpretation="Higher = added more wins via situational performance. "
+                       "Pairs with WAR — WAR rewards production, WPA rewards "
+                       "*timing* of production.",
+        caveats=(
+            "Context-dependent — a high-WAR hitter on a bad team can post "
+            "modest WPA because every situation is low-leverage. Use "
+            "Clutch (WPA / LI) to factor out exposure."
+        ),
+        source="players_game_batting_event.wpa / players_game_pitching_event.wpa",
+        formula_source="OOTP per-game (Tango framework)",
+        related=("LI", "Clutch", "RE24", "bWAR"),
+        refs={"Fangraphs": f"{_FG}/misc/wpa/", "Bref": f"{_BR}/Win_Probability_Added"},
+    ),
+
+    Stat(
+        id="LI",
+        display_name="Leverage Index",
+        short_label="LI",
+        category="advanced",
+        formula_tex=r"\mathrm{LI} = \dfrac{\sum li}{\sum BF}",
+        formula_plain="LI = total leverage exposure / total batters faced",
+        description=(
+            "Average leverage of the situations a pitcher worked in, "
+            "weighted by PAs. Tango-scaled: 1.0 = league-average leverage. "
+            "Closers entering tied 9th-inning spots see LI = 3.0+; "
+            "starters in middle innings see LI ≈ 0.95-1.10."
+        ),
+        units="index (1.0 = lg avg)",
+        typical_range="Top closer: 1.7-2.4; setup: 1.2-1.6; starter: 0.9-1.1; "
+                      "low-leverage long relief: 0.5-0.8",
+        interpretation="Higher = pitched in tighter spots. Pairs with WPA "
+                       "to compute Clutch.",
+        caveats=(
+            "Pitcher-only in v1 — batter LI requires per-PA derivation "
+            "from `lref_li_table` which isn't yet wired. OOTP's per-game "
+            "`li` field is the SUM of leverage across PAs faced, not the "
+            "average; we divide by SUM(BF) to recover the per-PA average."
+        ),
+        source="players_game_pitching_event.li / SUM(bf)",
+        formula_source="Tango (LI = avg leverage of PAs)",
+        related=("WPA", "Clutch", "RE24"),
+        refs={"Fangraphs": f"{_FG}/misc/li/", "Bref": f"{_BR}/Leverage_Index"},
+    ),
+
+    Stat(
+        id="RE24",
+        display_name="Run Expectancy 24",
+        short_label="RE24",
+        category="advanced",
+        formula_tex=(
+            r"\mathrm{RE24} = \sum_{\mathrm{PA}} "
+            r"\big(RE_{\mathrm{after}} - RE_{\mathrm{before}} + r\big)"
+        ),
+        formula_plain=(
+            "RE24 = sum over PAs of (RE_after - RE_before + runs_during_pa); "
+            "RE values from the 24-state base/out lookup grid"
+        ),
+        description=(
+            "The total runs you added (or cost your team) above what was "
+            "expected given the base/out state at the start of each PA. "
+            "Uses OOTP's canonical RE288 grid from L_REF — the same numbers "
+            "the in-game sim engine uses."
+        ),
+        units="runs",
+        typical_range="Star bat: 30-60 runs; MVP-tier: 60+; replacement: ~0; "
+                      "pitcher RE24 against (negated): top SP -25 to -40",
+        interpretation="Higher (batter) = more runs created above expectation. "
+                       "Lower (pitcher RE24-against) = more runs prevented.",
+        caveats=(
+            "Counts the *delta in run expectancy* on each play — it's "
+            "agnostic to leverage (a 2-run HR in a blowout counts equally). "
+            "Pair with WPA for context-aware view. Approximates "
+            "runs_during_pa with `rbi` (excludes WP/error runs but those "
+            "are noise)."
+        ),
+        source="lref_re288_table joined to f_pa_event with LEAD-derived after-state",
+        formula_source="Tango (24-state RE matrix)",
+        related=("WPA", "wRAA", "LI"),
+        refs={"Fangraphs": f"{_FG}/misc/re24/", "Bref": f"{_BR}/Run_Expectancy_Matrix"},
+    ),
+
+    Stat(
+        id="Clutch",
+        display_name="Clutch (WPA / LI)",
+        short_label="Clutch",
+        category="advanced",
+        formula_tex=r"\mathrm{Clutch} = \dfrac{\mathrm{WPA}}{\mathrm{LI}}",
+        formula_plain="Clutch = WPA / LI per Tango — context-adjusted WPA",
+        description=(
+            "WPA divided by average leverage. Answers: did this player "
+            "step up MORE in higher-leverage spots than their context "
+            "exposure would predict? Positive = stepped up; negative = "
+            "produced more in low-leverage situations."
+        ),
+        units="adjusted wins",
+        typical_range="Strong clutch year: +2 to +4; rough clutch year: "
+                      "-2 to -4; ±1 is basically noise",
+        interpretation=(
+            "Positive doesn't necessarily mean the player IS clutch — "
+            "the historical persistence of clutch performance is weak "
+            "(Fangraphs/Tango research). Read it as 'did they overperform "
+            "their leverage exposure THIS year' rather than a skill claim."
+        ),
+        caveats=(
+            "Pitcher-only in v1 (depends on LI). Highly variable year-to-"
+            "year — don't extrapolate. Suppressed when LI < 0.10 (mop-up "
+            "appearances) since the ratio explodes."
+        ),
+        source="diamond.schema.l3_leverage (WPA / LI)",
+        formula_source="Tango (Fangraphs Clutch convention)",
+        related=("WPA", "LI", "RE24"),
+        refs={"Fangraphs": f"{_FG}/misc/clutch/"},
+    ),
+
+    # ─────────────────────────────────────────────────────────────────
     # Statcast — exit velocity, barrel, hard-hit
     # ─────────────────────────────────────────────────────────────────
 

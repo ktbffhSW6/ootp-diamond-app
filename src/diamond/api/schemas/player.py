@@ -339,6 +339,11 @@ class PlayerAdvancedBattingRow(BaseModel):
     xwoba_bip: float | None = None    # AVG(xwoba_pa) over BIP — OOTP canonical
     xba_bip: float | None = None      # AVG(xba_pa)
     xslg_bip: float | None = None     # AVG(xslg_pa)
+    # Leverage stack (Slice A): WPA from L0 game logs (OOTP-supplied);
+    # RE24 from `lref_re288_table` joined to `f_pa_event` per-PA.
+    # Batter LI / Clutch are pitcher-only for v1 — see l3_leverage.py.
+    wpa: float | None = None          # Win Probability Added — sum across season
+    re24: float | None = None         # Run Expectancy 24 — sum across season
 
 
 class PlayerAdvancedPitchingRow(BaseModel):
@@ -375,6 +380,15 @@ class PlayerAdvancedPitchingRow(BaseModel):
     xwoba_bip: float | None = None
     xba_bip: float | None = None
     xslg_bip: float | None = None
+    # Leverage stack (Slice A): WPA + LI + RE24-against + Clutch.
+    # OOTP supplies per-game WPA and per-game LI sums directly; RE24-
+    # against = -SUM(per-PA RE24) keyed on pitcher_id (lower is better).
+    # Clutch = WPA / LI per Tango (positive = stepped up in higher-
+    # leverage spots). NULL for pitchers with li ≤ 0.10 (mop-up only).
+    wpa: float | None = None
+    li: float | None = None           # PA-weighted average leverage (Tango scale)
+    re24: float | None = None         # SUM(RE24 against) — lower is better
+    clutch: float | None = None       # WPA / LI
 
 
 class PlayerRosterStatus(BaseModel):

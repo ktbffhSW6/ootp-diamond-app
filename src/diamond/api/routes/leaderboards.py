@@ -91,6 +91,8 @@ _SBAT = "f_player_season_statcast_batting"
 _SPIT = "f_player_season_statcast_pitching"
 _XBAT = "f_player_season_xstats_batting"
 _XPIT = "f_player_season_xstats_pitching"
+_LBAT = "f_player_season_leverage_batting"
+_LPIT = "f_player_season_leverage_pitching"
 
 
 # Whitelist — only stats listed here are leaderboardable. Adding a new
@@ -172,6 +174,16 @@ LEADERBOARD_STATS: dict[str, StatSpec] = {
     "xwOBA":     StatSpec("xwOBA",     "xwOBA", "statcast_b", _XBAT, "MAX(xwoba_bip)", "MAX(bip_xstat)", "BIP", 30, "desc", 3),
     "xBA":       StatSpec("xBA",       "xBA",   "statcast_b", _XBAT, "MAX(xba_bip)",   "MAX(bip_xstat)", "BIP", 30, "desc", 3),
     "xSLG":      StatSpec("xSLG",      "xSLG",  "statcast_b", _XBAT, "MAX(xslg_bip)",  "MAX(bip_xstat)", "BIP", 30, "desc", 3),
+    # ── Leverage (Slice A — WPA from L0, RE24 from lref_re288_table) ──
+    # Batter side: WPA + RE24. Pitcher side: WPA + LI + RE24-against + Clutch.
+    # Leverage tables are at (player, year, league, level) grain; one row
+    # per player → MAX(...) collapses to the scalar value just like advanced.
+    "WPA":       StatSpec("WPA",       "WPA",       "batting",  _LBAT, "MAX(wpa)",    "MAX(pa)", "PA", 100, "desc", 2),
+    "RE24":      StatSpec("RE24",      "RE24",      "batting",  _LBAT, "MAX(re24)",   "MAX(pa)", "PA", 100, "desc", 1),
+    "WPA_pit":   StatSpec("WPA_pit",   "WPA",       "pitching", _LPIT, "MAX(wpa)",    "MAX(bf)", "PA", 200, "desc", 2),
+    "LI":        StatSpec("LI",        "LI",        "pitching", _LPIT, "MAX(li)",     "MAX(bf)", "PA", 100, "desc", 3),
+    "Clutch":    StatSpec("Clutch",    "Clutch",    "pitching", _LPIT, "MAX(clutch)", "MAX(bf)", "PA", 200, "desc", 2),
+    "RE24_pit":  StatSpec("RE24_pit",  "RE24-vs",   "pitching", _LPIT, "MAX(re24)",   "MAX(bf)", "PA", 200, "desc", 1),
 }
 
 

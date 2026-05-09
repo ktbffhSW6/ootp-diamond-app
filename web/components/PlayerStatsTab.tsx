@@ -84,6 +84,11 @@ const ADV_BATTING_COLUMNS: Array<[keyof PlayerAdvancedBattingRow, string]> = [
   ["ops_plus", "OPS_plus"],
   ["o_war", "oWAR"],
   ["b_war", "bWAR"],
+  // Leverage stack (Slice A) — context-aware companions to wRC+/WAR.
+  // WPA = sum of per-PA win-prob delta (OOTP-supplied per game).
+  // RE24 = sum of per-PA run-expectancy delta (lref_re288_table).
+  ["wpa", "WPA"],
+  ["re24", "RE24"],
 ];
 
 // Advanced pitching: pWAR (OOTP-canonical, IE-A-tier) + custom pit_WAR
@@ -100,6 +105,14 @@ const ADV_PITCHING_COLUMNS: Array<[keyof PlayerAdvancedPitchingRow, string]> = [
   ["pit_war", "pit_WAR"],
   ["p_war", "pWAR"],
   ["p_ra9_war", "RA9_WAR"],
+  // Leverage stack (Slice A) — WPA + LI + RE24-against + Clutch.
+  // LI is PA-weighted avg leverage (Tango: 1.0 = lg avg; closers 1.7+).
+  // RE24 here is RE24-against (lower = better; pre-negated at L3).
+  // Clutch = WPA / LI per Tango — overperformance vs leverage exposure.
+  ["wpa", "WPA"],
+  ["li", "LI"],
+  ["re24", "RE24"],
+  ["clutch", "Clutch"],
 ];
 
 // Fielding columns. The schema is keyed by (year, position, team), so
@@ -177,7 +190,15 @@ const ONE_DP_FIELDS = new Set([
   "o_war", "b_war",
   "pit_war", "p_war", "p_ra9_war",
   "wraa", "wrc",
+  // Leverage runs (RE24 / WPA) — wins/runs scale, one decimal feels
+  // right alongside WAR.
+  "re24",
 ]);
+// Two-decimal: WPA / Clutch (per-game ±0.05 typical, sums to single
+// digits across season).
+const TWO_DP_LEVERAGE_FIELDS = new Set(["wpa", "clutch"]);
+// Three-decimal: LI (Tango scale 0.0-3.0+; standard precision).
+const THREE_DP_LEVERAGE_FIELDS = new Set(["li"]);
 
 // Heat-scale field routing. Maps an Advanced-column field name to the
 // scale function that should color the cell. Per heatscale.ts:
@@ -209,10 +230,24 @@ function formatCell(field: string, value: unknown): string {
   if (TWO_DP_FIELDS.has(field)) {
     return value.toFixed(2);
   }
+  if (TWO_DP_LEVERAGE_FIELDS.has(field)) {
+    // WPA / Clutch — explicit + sign for non-zero so positive seasons
+    // read as such immediately ("+5.81 WPA" vs "5.81 WPA").
+    const s = value.toFixed(2);
+    return value > 0 ? `+${s}` : s;
+  }
+  if (THREE_DP_LEVERAGE_FIELDS.has(field)) {
+    return value.toFixed(3);
+  }
   if (IP_FIELDS.has(field)) {
     return value.toFixed(1);
   }
   if (ONE_DP_FIELDS.has(field)) {
+    if (field === "re24") {
+      // RE24 is signed; show sign for visual cue.
+      const s = value.toFixed(1);
+      return value > 0 ? `+${s}` : s;
+    }
     return value.toFixed(1);
   }
   // Counting stats: integer display.
