@@ -525,3 +525,119 @@ The viz triggers from D21 (WebGL cohorts, JSON-spec authoring, multi-view linkin
 - *Recharts* — rejected. React-native is appealing but it's slower than Plot on >5K points and doesn't compose cleanly with custom SVG annotations.
 - *uPlot* — rejected. Tiny and fast but limited to time-series shapes; we need scatter + stacked bar.
 - *Continue hand-rolling* — rejected for scatter. EV-LA scatter with proper axis ticks + zone overlays + tooltips would be ~400 LOC of custom SVG; Plot ships it in ~95.
+
+## D24 — Photo cache: revalidation-based, no artificial TTL
+
+**Date**: 2026-05-13
+**Decision**: `/api/photos/players/{id}.png` carries `ETag` (mtime-size pair) + `Last-Modified` headers and explicit `Cache-Control: no-cache` (RFC 7234 "always revalidate"). Browsers cache photo bodies indefinitely AND auto-refresh the moment OOTP rewrites a file — revalidation is a tiny ~500-byte 304 when unchanged, full 200 with new bytes when the file's mtime changes. 404s carry no cache header (local stat is microseconds; the regen we just ran shouldn't be invisible for an hour).
+
+**Why**:
+
+The previous `max-age=86400, immutable` was a defensive guard against "what if photos change," but the trade was wrong: after a user runs OOTP's bulk regenerate-pictures, the browser kept serving stale cached bytes (or blank-initials for newly-cached photos) for 24 hours despite Diamond's API instantly seeing the new files on disk. Revalidation via ETag/IMS gives "cache forever AND auto-refresh on file change" — the right pattern for a local-first single-user app where the disk is right there to ask. RFC 7232 §6 has ETag winning over If-Modified-Since when both arrive.
+
+**Cost**: per-photo conditional GET on every page load. On localhost ~1ms each × 40 photos on a roster page = ~40ms total — invisible. If we ever ship a hosted variant, revisit (might use `max-age=300` with the same handlers so the network cost is amortized).
+
+**Implementation note**: FastAPI's `FileResponse` doesn't auto-handle If-Modified-Since; the route reads `request.headers.get("if-none-match")` + `if-modified-since`, returns `Response(status_code=304, headers={...})` on match.
+
+## D25 — LSEG-Workspace density refactor (full-width, responsive charts, terminal aesthetic)
+
+**Date**: 2026-05-13
+**Decision**: Diamond's UI shifts from a centered-blog-post aesthetic (max-w-6xl, text-3xl headers, generous py-8 padding) to a Bloomberg-terminal aesthetic (full-width, compact 36px sticky header, text-xl font-semibold page headers in a category·title·context line, text-sm body default, responsive Plot charts via `useElementWidth`). Reference: LSEG Workspace screenshots in `docs/ui_examples/`.
+
+**Why**:
+
+User feedback: "doesn't feel sleek or professional," "charts are smooshed," "lots of scrolling." The audit found three concrete causes:
+
+1. `<main className="max-w-6xl">` wasted ~770px on a 1920+ monitor. Bloomberg/FanGraphs/Savant/LSEG all use generous horizontal real estate.
+2. Plot charts had hardcoded `width: 720` / `width: 800` — sat in the middle of wide containers, didn't fill panels.
+3. `text-3xl font-bold` page headers + `space-y-8` outer spacing gave a "marketing site" feel instead of "terminal".
+
+The shift addresses each in one pass: layout opens to viewport-wide with `px-3 sm:px-4 lg:px-6` gutters; Plot charts ride a ResizeObserver-backed hook (`web/lib/useElementWidth.ts`) that re-renders on container resize; page headers across 9 main pages collapse to LSEG-uniform `[10px UPPERCASE CATEGORY] [Title · context]` plus a single text-xs metadata line.
+
+**What stayed**:
+
+- Existing CSS-variable theme system (D18) — the wide-layout shift is orthogonal to color tokens
+- Existing component-level rounded-md + border tokens — sharp-corner pass deferred to a follow-up
+- Settings pages keep `max-w-3xl` inner containers (form readability)
+- StadiumSprayChart caps at 720px max-width (a 500×480 viewBox at full container width on a 1920 panel would balloon to 1500+px tall)
+
+**Side benefits**:
+
+- Default `text-sm` body raised global density without per-component changes
+- Sticky header (`sticky top-0 backdrop-blur`) keeps nav visible while scrolling long pages
+- Cockpit spotlight grid bumps to `2xl:grid-cols-6` so the 6 cards fit in one row on ultrawide
+
+**Wave 2 candidates** (not shipped in D25 itself; tracked as follow-ons):
+- Sharp-corner pass (drop most `rounded-lg` to `rounded-sm` / `rounded-none`)
+- Cockpit multi-pane: standings + pressure + recent-moves into a 3-col grid at 2xl
+- Player page two-column at xl+ (bio sidebar left, tab content right) — saves ~400px of vertical scroll
+- Table density: rows ~32px → ~24-26px
+
+## D26 — L_REF reference layer from OOTP parent-folder data
+
+**Date**: 2026-05-13
+**Decision**: Diamond gains a new ingest layer **`L_REF`** (reference / read-only canon) sitting alongside L0-L3. L_REF reads from the OOTP parent folder `<docs>/Out of the Park Developments/OOTP Baseball 27/` — ~500MB of static reference data shared across saves — into `lref_*` tables in each save's warehouse. Re-ingested only when OOTP version bumps; treated as read-only canon (Diamond never writes back to the parent folder).
+
+**Why**:
+
+We spent the early phases reverse-engineering OOTP from its CSV dumps + Lahman/BREF backfills, missing that the engine ships with comprehensive reference data right alongside the executable. Inventory of the parent folder (run 2026-05-13 evening):
+
+- **`database/pt_ballparks.txt`** (240 rows) — current MLB+minors park dimensions (7-segment outfield: LL/LF/LCF/CF/RCF/RF/RL distances + heights), plus LH/RH split park factors per stat (BA/2B/3B/HR). Authoritative replacement for our hand-coded `web/lib/stadiums.ts`.
+- **`database/era_ballparks.txt`** (3,105 rows × 155 years 1871-2025) — historical park dimensions + park factors per (year, team), with full LH/RH splits. Replaces D22's Lahman BPF/PPF (single-number 100-relative) with full-fidelity dataset including pre-1920 dead-ball-era parks.
+- **`database/era_stats.txt`** (82 cols) — historical league-average stats per season (BA/OBP/SLG/OPS/ERA/K%/BB%/fielding splits/GB/FB ratios). More OOTP-environment-accurate than Lahman aggregates.
+- **`stats/Master.csv`** (24,747 rows × 68 cols) — `playerid` (OOTP) ↔ `lahmanID` ↔ `BBrefMiLBid` ↔ `retroID` ↔ `holtzID` crosswalk + draft pitch arsenal + position experience + scouting ratings. Replaces our Chadwick Register lookup.
+- **`stats/MiLBMaster.csv`** (29MB) — minor-league master, vastly richer than Lahman MiLB. Solves the v2.2 backlog item "minor-league pre-save baselines stay null".
+- **`stats/Teams.csv`** + **`historical_database.odb`** (122MB) + **`historical_minor_database.odb`** (274MB) — additional historical data we may unpack.
+- **`logos/`** (1,829 files) — every team logo with per-era variants. **`.oi` files are PNGs** — magic bytes `89 50 4E 47` confirmed. Per-era Sox logos: 1908-1923, 1924-1960, 1961-1969, 1970-1975, 1976-2008, current.
+- **`ballcaps/`** (343), **`jerseys/`**, **`pants/`**, **`socks/`** — full uniform asset set.
+- **`database/db_structure_complete_ootp21_*.txt`** (csv / mysql / access variants) — canonical OOTP schema docs. **We've been reverse-engineering CSV columns; this is the official source of truth.**
+- **`database/team_nick_names.xml`** + **`names.xml`** + **`schools.xml`** + **`world_default.xml`** — name/nickname/school/geography generators.
+
+**How L_REF works**:
+
+```
+L_REF (D26)  ←  read once from <ootp_root>/database/ + <ootp_root>/stats/
+  lref_pt_ballparks      240 rows
+  lref_era_ballparks     3,105 rows × 155 years
+  lref_era_stats         82-col league avgs per year
+  lref_era_stats_minors  separate; minors by era
+  lref_master            24,747 OOTP↔Lahman crosswalk
+  lref_milb_master       large MiLB master
+  lref_teams_history     from Teams.csv
+```
+
+L_REF is per-save (lives in each save's `diamond.duckdb`) but the underlying data is global — so it's the same content in every save, just locally available for JOINs. Re-ingest when OOTP version bumps (rare); skip when unchanged via mtime check. CTAS pattern stays the same as L0; CSV format means `read_csv_auto` works directly.
+
+**Replacements / upgrades enabled**:
+
+1. **Ballpark geometry** — drop `web/lib/stadiums.ts` hand-coded entries; pull from `lref_pt_ballparks` via API. Adds wall heights for ALL 7 segments (we had 3) and per-park type / surface (open / retractable / fixed dome).
+2. **D22 v2 era-aware park factors** — `_park_factor_resolved` view reads from `lref_era_ballparks` instead of `history_lahman_teams`. Per-(year, team) authoritative dimensions + LH/RH split factors → handedness-aware OPS+/ERA+ matching OOTP's engine.
+3. **OOTP↔Lahman crosswalk** — replace the Chadwick-based `history_player_id_map` with `lref_master`. Simpler, authoritative, with more ID columns (BBrefMiLBid for minors).
+4. **MiLB pre-save baselines** — `lref_milb_master` + `lref_era_stats_minors` replaces "Lahman has spotty MiLB coverage" with comprehensive OOTP-shaped data.
+5. **Real team logos rendering** — `/api/logos/{abbr}` route serves `.oi` files (PNGs internally; just set `Content-Type: image/png`). Per-era variants enable historical pages (a 1922 Babe Ruth page can show the era-correct Yankees logo).
+6. **Schema docs** — fold `db_structure_complete_ootp21_*.txt` content into `DATA_NOTES.md` so we stop reverse-engineering column meanings.
+
+**Why now**:
+
+Two motivations: (1) the hand-coded approximations are starting to show — the user noticed unrealistic park-effect outliers, photos visible-but-stale, stadium overlays use rounded-up Wikipedia numbers. L_REF replaces every approximation with OOTP's source-of-truth. (2) The L0-L3 architecture has been "warehouse from one save's dumps" — correct for save-state data. L_REF is the missing layer for cross-save canonical reference data. Adding it now (before more features pile on top of the approximations) keeps the refactor scope bounded.
+
+**Architectural commitments**:
+
+- L_REF tables prefixed `lref_*` (alongside `l0_`, `l1_`, etc.) so the layer is visible in `SHOW TABLES`.
+- L_REF is read-only from Diamond's perspective. The OOTP parent folder is canonical user data; we never write into it.
+- L_REF ingest is idempotent + skipped-when-unchanged (mtime check on the source files).
+- Joins from L1+/L2+/L3 to L_REF go through views, never inlined into builders. Easier to swap data sources later.
+- L_REF docs the OOTP parent-folder layout in `docs/DATA_NOTES.md` so we don't re-discover this in future OOTP versions.
+
+**Alternatives considered**:
+
+- *Just statically embed the data in TypeScript / Python files* — rejected. We did this for `web/lib/stadiums.ts` (30 parks, hand-coded from Wikipedia) and it's already drifting from OOTP truth. L_REF's database-table approach scales to 240 + 3,105 + 24,747 + ... rows without hand-curation.
+- *Re-ingest L_REF every L0 build* — rejected. Source files only change on OOTP version bumps; mtime check is sufficient.
+- *Single shared L_REF DuckDB at `~/.diamond/lref.duckdb`* — rejected for v1. Cross-database JOINs from per-save L0/L1/L2/L3 to a separate file complicate every query. Pay the small storage cost (likely <100MB after ingest) for the simpler in-warehouse JOIN model.
+- *Skip L_REF entirely and keep approximations* — rejected. The user's reaction to seeing the parent folder ("there's a goldmine") + the alignment opportunities (era-aware park factors, real logos, official schema docs) make this clearly worth doing.
+
+**Out-of-scope for L_REF v1**:
+
+- Parsing the binary `.odb` files (`historical_database.odb`, `historical_lineups.odb`). Format is OOTP-internal; if we ever need the data, it's also in the CSV exports.
+- Writing to OOTP — Diamond stays read-only relative to the parent folder.
+- Watching for live updates while OOTP is running — L_REF is per-launch, not continuous.

@@ -6,6 +6,98 @@
 
 ---
 
+## 🔜 Next major work — L_REF reference layer (D26)
+
+**Highest-priority next-up as of 2026-05-13 evening.** New ingest layer reads from
+the OOTP parent folder (`<docs>/Out of the Park Developments/OOTP Baseball 27/`)
+into `lref_*` tables shared across saves. See DECISIONS.md D26 for full
+rationale; DATA_NOTES.md "OOTP installation layout" section catalogs the
+source files.
+
+Slice 1 — L_REF ingest layer (~90 min):
+
+- [ ] `src/diamond/schema/l_ref.py` — new ingest module. CTAS for:
+      - `lref_pt_ballparks` (240 rows) ← `database/pt_ballparks.txt`
+      - `lref_era_ballparks` (3,105 rows × 155 years) ← `database/era_ballparks.txt`
+      - `lref_era_stats` ← `database/era_stats.txt`
+      - `lref_era_stats_minors` ← `database/era_stats_minors.txt`
+      - `lref_master` ← `stats/Master.csv` (24,747-row OOTP↔Lahman crosswalk)
+      - `lref_milb_master` ← `stats/MiLBMaster.csv`
+      - `lref_teams_history` ← `stats/Teams.csv`
+- [ ] Mtime-based skip logic — only re-ingest when source file mtime changed.
+      Stored in `_diamond_ingests` with synthetic `dump_name` like `lref_<file>`.
+- [ ] CLI: `diamond ingest --lref` flag (or runs automatically on every ingest;
+      decide based on cost — should be ~5-10s for 6 CSV reads).
+- [ ] Wire into `build_warehouse` orchestrator alongside L0.
+
+Slice 2 — ballpark integration:
+
+- [ ] `/api/parks` route reads from `lref_pt_ballparks`, returns full 7-segment
+      geometry + LH/RH split factors per park.
+- [ ] Update `web/components/StadiumSprayChart.tsx` to fetch from API instead
+      of hand-coded `web/lib/stadiums.ts`. Delete `web/lib/stadiums.ts`.
+- [ ] Add 7-segment outline rendering (we currently use 5 anchor points).
+
+Slice 3 — D22 v2 era-aware park factors with handedness splits:
+
+- [ ] Update `_park_factor_resolved` view to read from `lref_era_ballparks`
+      (replaces `history_lahman_teams` join).
+- [ ] Extend `f_player_season_advanced_batting` builder to read LH/RH splits
+      and apply to OPS+/wRC+ via blending using player.bats.
+- [ ] Verify Bonds 2001 / Pujols 2003 / Trout 2018 numbers match BBR more
+      tightly than D22 v1.
+
+Slice 4 — OOTP↔Lahman crosswalk swap:
+
+- [ ] Replace `history_player_id_map` Chadwick lookup with `lref_master` JOINs
+      in `history.py` and the records / awards / hof endpoints.
+- [ ] Delete the Chadwick fetcher code if everything routes through lref_master.
+
+Slice 5 — real team logos rendering:
+
+- [ ] `/api/logos/{abbr}` route serves `<ootp>/logos/<filename>.oi` with
+      `Content-Type: image/png` (`.oi` files are PNGs, magic-bytes confirmed).
+- [ ] Logo filename map — likely a static dict extending `src/diamond/mlb_teams.py`.
+      Per-era variants for historical pages.
+- [ ] Replace `font-mono BOS` chips across standings / leaderboards / roster /
+      cockpit with a `<TeamLogo abbr={abbr}>` `<img>` component.
+- [ ] PlayerAvatar / current-team chip on player page header gets the logo.
+
+Slice 6 — schema doc fold:
+
+- [ ] Read `database/db_structure_complete_ootp21_csv.txt` and fold canonical
+      column meanings into `docs/DATA_NOTES.md` + `docs/SCHEMA.md`. Stop
+      reverse-engineering.
+
+Slice 7 — MiLB pre-save baselines (clears v2.2 backlog item):
+
+- [ ] Use `lref_milb_master` + `lref_era_stats_minors` to extend
+      `_lg_constants_advanced_imported` with minor-league rows. OOTP-imported
+      pre-2026 minor-league player-seasons get advanced stats instead of `—`.
+
+---
+
+## Wave-2 UI polish (D25 follow-ons)
+
+The LSEG density refactor (D25, 2026-05-13) shipped the structural shifts.
+These are the visual polish follow-ons:
+
+- [ ] **Sharp-corner pass** — drop most `rounded-lg` to `rounded-sm` /
+      `rounded-none` for full LSEG utilitarian feel.
+- [ ] **Cockpit multi-pane** at 2xl — push standings + pressure + recent-moves
+      into a 3-column grid instead of stacking.
+- [ ] **Player page two-column** at xl+ — bio sidebar on left, tab content on
+      right. Saves ~400px of vertical scroll.
+- [ ] **Table density** — bump rows from ~32px to ~24-26px, smaller column
+      headers (matches LSEG dense-table aesthetic in the Market Monitor /
+      Economic Monitor screenshots).
+- [ ] **Sub-tab pattern** on `/league` and `/history` — inline secondary tabs
+      (Standings | Leaderboards | Compare | Awards) instead of separate routes.
+- [ ] **Color-blind mode v2** — extend `cb` theme to swap verdict / badge
+      palettes (currently chrome-only).
+
+---
+
 ## Schema & Ingest phase (current — Phase 2)
 
 Audit-first gate (Decision D10) lifted 2026-05-04. ~270 of ~360 IE columns

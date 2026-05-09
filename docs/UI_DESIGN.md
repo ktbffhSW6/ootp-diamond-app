@@ -458,7 +458,15 @@ feature lands in the right tab from day one.
 29. ✅ **Setup wizard v1** — done 2026-05-13. `/settings/save` lives. `GET /api/saves` enumerates `*.lg` directories under the OOTP saves root with `has_warehouse` flag + `is_active` flag; `POST /api/saves/active` switches active save (validates name exists, persists to `~/.diamond/active_save.toml`, swaps in-memory warehouse singleton). UI cards per save with Active / Needs ingest badges.
 
    **Setup wizard v2.1 (2026-05-13 evening):** per-save scope is now persisted. `~/.diamond/save_configs.toml` stores `audit_team_id` + `reference_scope_enabled` + `league_ids` per save; `_resolve_initial_save()` and `build_save_config()` read it to construct the live SaveConfig. New endpoints `GET /api/saves/{name}/config` + `POST /api/saves/{name}/config` drive an inline Configure form on each save card — division-grouped 30-team dropdown for the audit_team_id pick + a reference-scope toggle. `POST /api/saves/active` now refuses (409) to activate a save that hasn't been configured (the gate prevents Sox-data-on-Padres-save confusion). `diamond ingest` gets a `--save NAME` flag so each save's warehouse can be built independently from the CLI. Legacy "Building the Green Monster.lg" gets a one-time bootstrap on first import so existing users don't hit the is_configured gate. Static `mlb_teams.py` catalog (30 entries: ARI/ATL/.../WSH with team_id 1-30 + city + division) backs the picker.
-30. **Sync triggers + tracked-save management** — same time as the wizard.
+30. ✅ **Auto-ingest + in-app refresh (2026-05-13 evening)** — `dev.bat` chains `diamond ingest --all` between kill-stale and uvicorn so OOTP-side dumps land before the API binds. New endpoints `GET /api/admin/dump-status` (lock-free read; counts pending dumps via read-only DuckDB connection) + `POST /api/admin/ingest` (acquires warehouse lock, runs `build_warehouse(force=False, rebuild=True)`, releases). Header gets `RefreshButton.tsx` — polls dump-status every 60s, badge when pending, click triggers synchronous ingest. Plus `diamond status` CLI for terminal introspection.
+
+31. ✅ **Photo cache D24 (2026-05-13 evening)** — `/api/photos/players/{id}.png` flipped from `max-age=86400, immutable` to ETag + Last-Modified revalidation with `Cache-Control: no-cache`. Newly-rendered face PNGs appear instantly when OOTP regenerates instead of after a 24h browser cache. 404s drop their cache header entirely.
+
+32. ✅ **LSEG-Workspace density refactor D25 (2026-05-13 evening)** — full-width layout (drops `max-w-6xl`); compact 36px sticky header with backdrop-blur; `useElementWidth` hook drives responsive Plot charts (EvLaScatter + ChartBuilder fill containers, StadiumSprayChart caps at 720px); page-headers across 9 main pages collapsed from `text-3xl space-y-8` → LSEG-uniform `[CATEGORY] [Title · context]` pattern with `space-y-4`; default body `text-sm`; settings pages keep narrow `max-w-3xl` form containers. Reference shots in `docs/ui_examples/`.
+
+33. **L_REF reference layer D26 (next major work, 2026-05-13 evening finding)** — new ingest module reading from `<docs>/Out of the Park Developments/OOTP Baseball 27/`: authoritative ballpark dimensions (`pt_ballparks.txt` 240 rows + `era_ballparks.txt` 3,105 rows × 155 years), era league averages (`era_stats.txt`), OOTP↔Lahman crosswalk (`stats/Master.csv` 24,747 rows), MiLB master (29MB), 1,829 logos with per-era variants (`.oi` files are PNGs, magic bytes confirmed), 343 ballcaps. Replaces `web/lib/stadiums.ts`, upgrades D22 to era-aware LH/RH-split park factors, swaps Chadwick crosswalk, enables real-team-logo rendering everywhere. See BACKLOG.md for slice breakdown.
+
+**Sync triggers + tracked-save management** — folded into the auto-ingest item (30) above.
 
 Items 27 and 21 may swap order depending on energy — AI overlay is genuinely
 useful even before cockpit anomaly flags need it. Items 11–16 are the
@@ -525,6 +533,9 @@ Architectural decisions extracted from this design:
 - [D14 — AI overlay architecture](DECISIONS.md#d14-ai-overlay-architecture-keyring-pluggable-providers-four-tier-use-levels)
 - [D22 — Historical park factors backfill](DECISIONS.md#d22--historical-park-factors-backfill-lahman-bpfppf-for-2019-mlb-seasons)
 - [D23 — Chart stack: Observable Plot for cohort viz](DECISIONS.md#d23--chart-stack-observable-plot-for-cohort-viz-defer-vega-lite--webgl-until-json-spec-authoring-lands)
+- [D24 — Photo cache: revalidation-based, no artificial TTL](DECISIONS.md#d24--photo-cache-revalidation-based-no-artificial-ttl)
+- [D25 — LSEG-Workspace density refactor](DECISIONS.md#d25--lseg-workspace-density-refactor-full-width-responsive-charts-terminal-aesthetic)
+- [D26 — L_REF reference layer from OOTP parent-folder data](DECISIONS.md#d26--l_ref-reference-layer-from-ootp-parent-folder-data)
 - [D15 — Stat dictionary as single source of truth](DECISIONS.md#d15-stat-dictionary-as-single-source-of-truth)
 - [D16 — Tech stack: FastAPI + Next.js](DECISIONS.md#d16-tech-stack-fastapi--nextjs-app-router-pydantic-derived-ts-types)
 - [D17 — Information architecture: five-tab scope+purpose nav](DECISIONS.md#d17-information-architecture-five-tab-scopepurpose-nav)

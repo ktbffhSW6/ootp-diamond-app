@@ -4,7 +4,18 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-13 (in-game year 2029→2030) — **Phase 3: five-slice marathon + IA shuffle.** Five slices today (Custom leaderboards + Spray/EV-LA charts + Historical park factors D22 + AI overlay D14 + Setup wizard D3 v2), plus an end-of-day **IA reshuffle**: `/explore` is now JUST the **Chart Builder** workshop (Plot.dot scatter / Plot.rectY histogram of any X/Y/color from the 32-stat catalog; cross-table joins handled transparently). Per-player charts (spray, EV-LA) moved **inline on the player page**; league-wide tools (leaderboards, compare) moved to `/league/*`. Permanent 308 redirects keep all old URLs working. Pre-2020 OPS+/ERA+ now use Lahman BPF/PPF via a 30-row OOTP↔Lahman franchID crosswalk (Bonds 2001 OPS+ 257→267 vs BBR 259, Pujols 2003 189→193 vs BBR 189, Trout 2018 198→201 vs BBR 198, Coors 1995 BPF 1.29). Custom leaderboards at `/explore/leaderboards` with TanStack Table + 32 stats across batting / pitching / Statcast, URL-driven picker, heat-scale on plus-stat / WAR columns. Spray chart at `/explore/spray` (polar fan SVG + Plot.barX stacked bar) and EV-LA scatter at `/explore/ev-la` (Plot.dot scatter with sweet-spot + barrel zone overlays calibrated for OOTP's ~5 mph offset) — D23 commits to Observable Plot for cohort viz. AI overlay at `/settings/ai` with keyring-backed Anthropic + OpenAI adapters via httpx (no SDK deps), "Summarize career" button on the player page. Setup wizard at `/settings/save` with save discovery + active-save switcher persisted to `~/.diamond/active_save.toml`. Settings landing at `/settings` linked from the header (⚙ icon).
+**Last updated**: 2026-05-13 (evening, in-game year 2029→2030) — **Phase 3: marathon day + LSEG density refactor + L_REF architectural finding.** Today shipped:
+
+1. **Five major UI slices in the morning** (Custom leaderboards / Spray + EV-LA charts / Historical park factors D22 / AI overlay D14 / Setup wizard D3 v2)
+2. **IA shuffle**: `/explore` is now the Chart Builder workshop only; per-player charts moved inline to player page; league-wide tools moved to `/league/*`. Permanent 308 redirects keep old URLs working.
+3. **Setup wizard v2.1**: per-save scope (audit_team_id + league_ids + reference_scope) persisted to `~/.diamond/save_configs.toml`; division-grouped 30-team picker UI; `diamond ingest --save NAME` flag; legacy-default bootstrap migration.
+4. **Auto-ingest at launch**: `dev.bat` chains `diamond ingest --all` before uvicorn binds. Plus an in-app `↻ Refresh` button (`RefreshButton.tsx`) — polls `GET /api/admin/dump-status` every 60s, badge when pending dumps detected, click triggers synchronous `POST /api/admin/ingest`. Plus `diamond status` CLI for terminal introspection.
+5. **Photo cache (D24)**: ETag + Last-Modified revalidation with `Cache-Control: no-cache`. Newly-rendered face PNGs appear instantly when OOTP regenerates instead of after 24h browser cache. Verified: 2,038 → 18,564 player photos after user ran "FORCE UPDATE / GENERATE ALL PLAYER PICTURES" — 100% coverage on every active player including all newgens.
+6. **LSEG-Workspace density refactor (D25)**: full-width layout (drops `max-w-6xl`); compact sticky header with backdrop-blur; `useElementWidth` hook drives responsive Plot charts (EvLaScatter + ChartBuilder fill containers, StadiumSprayChart caps at 720px); page-headers across 9 main pages collapsed from `text-3xl space-y-8` → LSEG-uniform `[CATEGORY] [Title · context]` pattern with `space-y-4`.
+
+**Earlier today (2026-05-13 morning)**: Pre-2020 OPS+/ERA+ now use Lahman BPF/PPF via a 30-row OOTP↔Lahman franchID crosswalk (Bonds 2001 OPS+ 257→267 vs BBR 259, Pujols 2003 189→193 vs BBR 189, Trout 2018 198→201 vs BBR 198, Coors 1995 BPF 1.29). Custom leaderboards / Spray + EV-LA / Chart Builder / AI overlay / Setup wizard all live.
+
+**Major architectural finding (D26, end-of-evening)**: the OOTP parent folder `<docs>/Out of the Park Developments/OOTP Baseball 27/` contains ~500MB of static reference data we'd been ignoring — `database/pt_ballparks.txt` (240 parks, 7-segment dimensions + LH/RH split factors), `database/era_ballparks.txt` (3,105 historical park-seasons 1871-2025), `database/era_stats.txt` (82-col league averages per era), `stats/Master.csv` (24,747-row OOTP↔Lahman crosswalk replacing our Chadwick lookup), `stats/MiLBMaster.csv` (29MB minor-league master — solves the "no MiLB pre-save baselines" v2.2 backlog item), `database/db_structure_complete_ootp21_*.txt` (canonical schema docs we'd been reverse-engineering!), 1,829 logos in `logos/` (`.oi` files are PNGs — magic bytes confirmed) including per-era variants. **D26 commits to an `L_REF` reference layer** sitting alongside L0-L3 — slated as next major work.
 
 Earlier today (2026-05-12) — **Phase 3: History tab fully drained + Pressure board + Cockpit v2 + visual polish + Salary stream + Compare + Headshots.** Marathon push today: all five History stubs (Records / Awards / HoF / Streaks / Draft), the Pressure board, three visual primitives (heat-scale + Sparkline + CareerArc), real Cockpit dashboard at `/`, then three more — Salary stream on the player page (contract bar viz + options + no-trade), Compare under `/explore/compare` (4-up side-by-side career cards with WAR sparkline overlay), and PlayerAvatar headshots streaming OOTP-generated face PNGs across player page / cockpit / roster. Backed by `GET /api/records?scope=&discipline=&category=&era=` — UNIONs save data + Lahman 1871-2019 + BREF 2020-2025 + cross-source merged career rollups + Statcast 2015-2025 batted-ball quality. Three flat picker rows (Scope / Discipline / Era) + a Category strip dynamically populated from the available leaderboards in `f_record_player`. Source chips color-coded (emerald=save, indigo=lahman, sky=bref, violet=merged, amber=statcast); rows clickable through to `/player/<id>` when the underlying record carries an OOTP player_id, plain-text otherwise. Server re-ranks rows globally when era=all so duplicates between `save` (OOTP-imported) and `lahman` (real-life) sit adjacent — confirms the data integration story (Bonds 73 / 73, McGwire 70 / 70, etc.). Earlier today shipped the situational-splits stack (5 slices, 14 splits per year/level) + the **D20 pre-save MLB baselines maintenance pass** that drains `—` from advanced stats on every imported real-history player-season.
 
@@ -17,14 +28,25 @@ Earlier-today slices (situational stack) in order:
 4. **Bases + platoon splits** — added `bases_empty` / `bases_loaded` (off `base1/2/3`) and `vs_left` / `vs_right` (LEFT JOIN to `players_current` for handedness; switch-hitters resolve to opposite of pitcher's hand). Side-aware labels: batter card "vs LHP/RHP", pitcher card "vs LHB/RHB". Sanity invariant: `vs_left + vs_right = all` ✓.
 5. **Counts + spray splits** — added `first_pitch` / `two_strike` / `full_count` (count BEFORE the resolving pitch) and `pull` / `center` / `oppo` (BIP-only spray; UI skips color coding since denominators differ). Empirically verified `hit_xy` is **batter-relative**, not field-absolute (mean hit_xy on HRs ≈71 for both LHB and RHB — same pull-side band), corrected DATA_NOTES.
 
-**Next**: with the original "5 next steps" list fully drained, the v1 backlog is mostly UI nice-to-haves and v2-tier features:
-- **Distributions / cohort histograms** under Explore (any stat × any cohort).
-- **Chart builder** (UI_DESIGN.md §6) — JSON-spec authoring with X/Y/color/facet pickers; this is the trigger for adopting Vega-Lite alongside Plot.
-- **Cohorts** with set ops (∪ ∩ −) — first-class saved sets.
-- **AI overlay v1.1** — pricing fetcher, daily cap auto-degrade, smart-tier auto-runs, additional providers (Gemini / Ollama).
-- **Save setup wizard v2** — per-save league_ids + audit_team_id + reference-scope toggle (currently shared across saves).
-- **2020-2025 park factors** — backfill via FanGraphs / BREF scraper (D22 follow-on).
-- **Minor-league pre-save baselines** — Lahman has spotty minor-league coverage, would need OOTP↔real league_id crosswalk for IL/PCL/etc.
+**Next — L_REF reference layer (D26)** is the priority next-up. Roughly 90 minutes of work for the first slice; replaces or upgrades several existing approximations:
+
+1. **`L_REF` ingest layer** — new module under `src/diamond/schema/l_ref.py`. Reads from `<docs>/Out of the Park Developments/OOTP Baseball 27/` (read-only canon) into `lref_*` tables in the warehouse. Shared across saves; ingested once + updated when OOTP version bumps. Tables:
+   - `lref_pt_ballparks` (240 rows) — current MLB+minors park dimensions + LH/RH split factors
+   - `lref_era_ballparks` (3,105 rows × 155 years) — historical park dimensions + factors per (year, team)
+   - `lref_era_stats` (82-col league averages per era, 1871-2025)
+   - `lref_master` (OOTP↔Lahman crosswalk)
+   - `lref_milb_master` (minor-league master)
+2. **Replace `web/lib/stadiums.ts`** with parsed `pt_ballparks.txt` data — authoritative geometry + handedness splits for the Spray chart's stadium overlay.
+3. **D22 v2 — era-aware park factors with LH/RH splits**: extend `_park_factor_resolved` view to read from `lref_era_ballparks` instead of `history_lahman_teams`. Adds handedness dimension to OPS+/ERA+ formulas (matches OOTP's engine).
+4. **Replace Chadwick crosswalk** with `lref_master` JOINs — simpler + authoritative.
+5. **Real team logos rendering** — `/api/logos/{abbr}` route serving from `<ootp>/logos/`, swap `text-mono BOS` etc. for actual logo `<img>` everywhere (standings, leaderboards, roster, player headers, cockpit). Per-era logo variants for historical pages.
+
+Beyond L_REF, lower-priority backlog:
+- **Distributions / cohort histograms** under /explore (extends Chart Builder)
+- **Cohorts with set ops** (∪ ∩ −) — first-class saved sets
+- **AI overlay v1.1** — pricing fetcher, daily cap auto-degrade, smart-tier auto-runs, Gemini / Ollama adapters
+- **Per-save league_ids customization** in setup wizard (D3 v2.2)
+- **Color-blind mode v2** — extend cb theme to swap verdict / badge palettes
 
 ---
 

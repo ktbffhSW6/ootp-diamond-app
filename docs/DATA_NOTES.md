@@ -6,6 +6,117 @@
 
 ---
 
+## OOTP installation layout — `<docs>/Out of the Park Developments/OOTP Baseball 27/`
+
+(Discovered 2026-05-13 evening; D26 commits to ingesting much of this into `L_REF`.)
+
+The OOTP 27 user-documents root contains ~500MB of static reference data shared across all saves — we'd been ignoring it through Phases 1-3. **Treat as read-only canon; never write into the parent folder.**
+
+```
+<docs>/Out of the Park Developments/OOTP Baseball 27/
+├── database/                      ← canonical reference data
+│   ├── pt_ballparks.txt           240 rows: current MLB+MiLB park dimensions +
+│   │                              7-segment outfield (LL/LF/LCF/CF/RCF/RF/RL
+│   │                              distances + heights) + LH/RH split park
+│   │                              factors per stat (BA/2B/3B/HR). Authoritative.
+│   ├── era_ballparks.txt          3,105 rows × 155 years (1871-2025): historical
+│   │                              park dimensions + factors per (year, team, park)
+│   │                              with handedness splits. 944KB.
+│   ├── era_stats.txt              82-col historical league averages per season
+│   │                              (BA/OBP/SLG/OPS/ERA/K%/BB%/fielding splits/
+│   │                              GB:FB ratios/etc.). 112KB.
+│   ├── era_stats_minors.txt       Same shape for minor leagues. 996KB.
+│   ├── db_structure_complete_ootp21_csv.txt    Canonical OOTP CSV schema docs.
+│   ├── db_structure_complete_ootp21_mysql.txt  MySQL DDL form.
+│   ├── db_structure_complete_ootp21_access.txt MS Access form.
+│   ├── names.xml                  36MB — name generator data.
+│   ├── world_default.xml          24MB — geography (countries / states / cities).
+│   ├── schools.xml                11MB — colleges + high schools for draft.
+│   ├── team_nick_names.xml        Nickname generator for newgen franchises.
+│   ├── british_national_baseball_league.json  Sample alt-league config.
+│   ├── beard_frequency_default.txt
+│   ├── weather.txt
+│   └── nation_flags/              Country flag PNGs.
+│
+├── stats/                         ← historical reference data (Lahman-shape)
+│   ├── Master.csv                 24,747 rows × 68 cols — `playerid` (OOTP) ↔
+│   │                              `lahmanID` ↔ `BBrefMiLBid` ↔ `retroID` ↔
+│   │                              `holtzID` crosswalk + draft pitch arsenal +
+│   │                              position experience + scouting ratings.
+│   │                              REPLACES our Chadwick Register lookup. 6MB.
+│   ├── MiLBMaster.csv             29MB — minor-league master, vastly richer
+│   │                              than Lahman's MiLB coverage.
+│   ├── MiLBLeagues.csv            MiLB league reference.
+│   ├── MiLBTeams.csv              MiLB team reference.
+│   ├── Teams.csv                  Lahman-style historical teams with park
+│   │                              factors. 669KB.
+│   ├── EOSRosters.csv             End-of-season historical rosters.
+│   ├── ODRosters.csv              Opening-day historical rosters.
+│   ├── UniNumbers.csv             Historical uniform numbers.
+│   ├── SeriesPost.csv             Postseason series outcomes.
+│   ├── historical_database.odb    122MB binary historical DB. Format
+│   │                              proprietary; CSVs above are derived from it.
+│   ├── historical_minor_database.odb  274MB binary MiLB DB.
+│   ├── historical_lineups.odb     55MB binary lineups.
+│   ├── historical_transactions.odb  9.5MB binary transactions.
+│   ├── stats.odb / stats_player_teams.odb  smaller binary blobs.
+│
+├── facegen/                       ← face-composition library (per-player render)
+│   ├── skin_low/ skin_med/ skin_hi/         32 base portraits × 3 res
+│   ├── hair_low/ hair_med/ hair_hi/         25 hairstyles × 3 res
+│   ├── facial_hair_low/_med/_hi/            475 beard/mustache options × 3 res
+│   ├── background/                          9 ballpark backgrounds
+│   └── 3d/                                  baseball-cap 3D models (.egm/.fr3d)
+│
+├── fg_files/                      ← PhotoFit FaceGen files (~4,749 .fg files)
+│                                  for real-history players. Name-keyed
+│                                  (e.g., `aardsm001dav.fg` = David Aardsma's
+│                                  bbref-style slug). User/community-supplied
+│                                  for photo-realistic faces. Newgens never
+│                                  have a `.fg` file — they use procedural
+│                                  composition from `facegen/` parts.
+│
+├── logos/                         ← 1,829 team logos
+│                                  ⚠ `.oi` files are PNGs (magic bytes
+│                                  `89 50 4E 47` confirmed). Per-era variants:
+│                                  e.g., Sox have logos for 1908-1923, 1924-1960,
+│                                  1961-1969, 1970-1975, 1976-2008, current.
+│                                  `_small_50.oi` are downscaled. 547 .png +
+│                                  1,279 .oi.
+│
+├── ballcaps/                      ← 343 cap PNGs per franchise (incl. alternates)
+├── jerseys/ pants/ socks/         ← uniform asset sets
+├── ballparks/                     ← 3D models + textures (4 assets)
+├── backgrounds/ pictures/         ← UI assets
+├── colors/                        ← color palettes
+├── jersey_fonts/                  ← jersey number fonts
+├── logo_templates/                ← logo design templates
+├── photos/                        ← team / stadium photos
+├── ballparks/models/              ← .obj 3D ballpark models
+├── strategy_profiles/             ← AI strategy presets
+├── storylines/                    ← narrative templates
+├── schedules/                     ← schedule templates
+├── templates/                     ← HTML output templates (.tpl)
+├── help/                          ← help text
+├── sounds/                        ← game audio
+├── hof/                           ← Hall of Fame configs
+├── live_start/                    ← starting-condition presets
+├── quickstart_games/              ← preset save files
+├── in_game_news/                  ← news templates
+├── addons/                        ← user-installed add-ons
+├── backups/                       ← OOTP's own save backups
+├── debug/                         ← debug logs
+├── online_data/ online_scripts/   ← online sync data
+├── stats/                         ← historical reference (already covered above)
+├── misc/                          ← hints + recap text in 6 languages
+├── tables/                        ← per-user UI table layouts
+├── screenshots/                   ← OOTP's screenshot output
+├── saved_games/                   ← user saves (`.lg` folders, see below)
+└── ...
+```
+
+---
+
 ## Save folder layout
 
 ```

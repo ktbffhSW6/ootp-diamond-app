@@ -9,7 +9,7 @@
 
 ---
 
-## TL;DR — the five layers
+## TL;DR — the five layers (six counting `L_REF`, planned)
 
 | Layer | Purpose | Source | Built when | Lifecycle |
 |---|---|---|---|---|
@@ -18,11 +18,15 @@
 | **L2 — facts** | Star-shaped fact tables at well-defined grains (player-season, team-season, PA-event) | L1 | After L1 | Full rebuild — DROP/CREATE |
 | **L3 — derived** | Sabermetric stats, league constants, park factors, `player_movements`, awards rollups | L2 + L1 | After L2 | Full rebuild — DROP/CREATE |
 | **L4 — views** | User-facing query surface: standings, leaders, draft analyzer, HOF tracker, franchise rollups | L2 + L3 | Always-on (SQL views) | No materialization |
+| **L_REF — reference** *(planned, [D26](DECISIONS.md#d26--l_ref-reference-layer-from-ootp-parent-folder-data))* | OOTP-canonical reference data (ballpark dimensions, era stats, OOTP↔Lahman crosswalk, MiLB master) shared across all saves | OOTP parent folder `<docs>/Out of the Park Developments/OOTP Baseball 27/` (`database/*.txt`, `stats/*.csv`) | One-time + on OOTP version bump (mtime-skip) | Read-only canon — Diamond never writes to the parent folder |
 
-Each save gets one DuckDB at `<save>/diamond/diamond.duckdb` (D2). All five
-layers live inside it. L0 is the only layer that's a pure provenance archive
-— L1-L3 are deterministic functions of L0, so they can always be rebuilt
-from scratch.
+Each save gets one DuckDB at `<save>/diamond/diamond.duckdb` (D2). All layers
+live inside it. L0 is the only save-state-mutating layer (per-dump archive);
+L1-L3 are deterministic functions of L0; L_REF is a deterministic function
+of the OOTP installation. The data in L_REF is identical across every save
+on the same machine — duplicating it per warehouse is the deliberate
+trade for simpler in-warehouse JOINs (vs cross-database queries to a
+shared `~/.diamond/lref.duckdb`).
 
 ---
 
