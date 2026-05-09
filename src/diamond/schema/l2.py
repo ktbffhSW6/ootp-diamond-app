@@ -265,53 +265,134 @@ def _build_f_league_season(con: duckdb.DuckDBPyConnection) -> int:
 
 
 def _build_f_pa_event(con: duckdb.DuckDBPyConnection) -> int:
-    """PA-grain fact with dimensional flatten.
+    """Multi-year PA-grain fact, sourced from L0 with cross-dump dedup.
 
-    Joins at_bats_event to games_event to pull in year, league_id, level_id,
-    opp_team_id (the non-batter team in the game). Adds the derived flags
-    that today live in src/diamond/advanced/enriched.py — moving them to L2
-    so any consumer (advanced lib or future warehouse query) reads the same
-    flag definitions.
+    PK = (year, game_id, batter_id, pa_in_game_seq).
 
-    PK = (game_id, player_id, pa_in_game_seq) — same as L1 at_bats_event,
-    propagated through the join.
+    Why year is part of the PK: OOTP recycles ``game_id`` across seasons.
+    Empirically, the integer 10001 is one game in dumps 2026-08 →
+    2027-02 (67 PA rows), and a different game in dumps 2027-09 →
+    2028-02 (73 rows). Within a single season ``game_id`` is unique;
+    ``year`` (extracted from games.date) disambiguates the seasons.
+
+    Cross-dump dedup: OOTP overwrites ``players_at_bat_batting_stats.csv``
+    and ``games.csv`` at season rollover (Feb-Mar dump = spring training
+    only). L0 retains every previously-ingested dump's rows by
+    ``dump_date``, so historical seasons remain reachable; we just have
+    to dedup. For each (game_id, season_year) we pick the latest
+    ``dump_date`` that observed at-bats for it — that's the canonical
+    scope for the game's PA log.
+
+    Why this bypasses L1: ``at_bats_event`` and ``games_event`` are
+    intentionally single-dump (latest). Reconcile.py needs that for
+    per-dump comparison against IE roster CSVs. ``f_pa_event`` instead
+    reaches back into L0 directly so the analytical layer can ask
+    multi-year questions (situational splits, multi-year statcast
+    cohorts, etc.). The two layers serve different audiences.
+
+    Scope: filtered to scoped leagues via ``leagues`` (which is
+    scope-trimmed at L1 build).
     """
     con.execute("""
         CREATE OR REPLACE TABLE f_pa_event AS
+        WITH ab_year AS (
+            -- Pair each at-bat row with the games row from the SAME dump.
+            -- (Both CSVs reset together at rollover, so same-dump JOIN is
+            -- the only safe pairing.) Filter to scoped leagues here so
+            -- subsequent stages aggregate over a smaller set.
+            SELECT
+                ab.dump_date,
+                ab.game_id,
+                ab.player_id,
+                ab.opponent_player_id,
+                ab.team_id,
+                ab.inning, ab.outs,
+                ab.balls, ab.strikes,
+                ab.base1, ab.base2, ab.base3,
+                ab."Close",
+                ab.pinch, ab.run_diff, ab.spot,
+                ab.result, ab.sac,
+                ab.sb, ab.cs, ab.rbi, ab.r,
+                ab.hit_loc, ab.hit_xy,
+                ab.exit_velo, ab.launch_angle, ab.sprint_speed,
+                ab.file_seq,
+                EXTRACT(YEAR FROM TRY_CAST(g.date AS DATE)) AS season_year,
+                g.league_id,
+                g.home_team, g.away_team, g.game_type
+            FROM l0_players_at_bat_batting_stats ab
+            JOIN l0_games g
+                 ON g.game_id = ab.game_id
+                AND g.dump_date = ab.dump_date
+            WHERE g.league_id IN (SELECT league_id FROM leagues)
+        ),
+        canonical_dump AS (
+            -- For each (game_id, season_year), pick the latest dump_date
+            -- that observed it. After the Nov dump, the rows are stable;
+            -- early-spring dumps trim the prior year's data, so MAX always
+            -- gives us the fullest snapshot.
+            SELECT game_id, season_year,
+                   MAX(dump_date) AS canonical_dump_date
+            FROM ab_year
+            GROUP BY game_id, season_year
+        ),
+        canonical AS (
+            SELECT aby.*
+            FROM ab_year aby
+            JOIN canonical_dump cd
+                 ON cd.game_id            = aby.game_id
+                AND cd.season_year        = aby.season_year
+                AND cd.canonical_dump_date = aby.dump_date
+        ),
+        with_seq AS (
+            -- Synthesize pa_in_game_seq within each (year, game, batter)
+            -- group, ordered by file_seq (per OPEN-4 resolution — the
+            -- CSV's row order is chronological within each batter's
+            -- in-game PA list).
+            SELECT *,
+                ROW_NUMBER() OVER (
+                    PARTITION BY season_year, game_id, player_id
+                    ORDER BY file_seq
+                ) AS pa_in_game_seq
+            FROM canonical
+        )
         SELECT
-            ab.game_id,
-            ab.player_id              AS batter_id,
-            ab.opponent_player_id     AS pitcher_id,
-            ab.pa_in_game_seq,
-            ab.team_id                AS batter_team_id,
+            cab.game_id,
+            cab.player_id              AS batter_id,
+            cab.opponent_player_id     AS pitcher_id,
+            cab.pa_in_game_seq,
+            cab.team_id                AS batter_team_id,
             CASE
-                WHEN ab.team_id = g.home_team THEN g.away_team
-                ELSE g.home_team
+                WHEN cab.team_id = cab.home_team THEN cab.away_team
+                ELSE cab.home_team
             END                       AS opp_team_id,
-            EXTRACT(YEAR FROM TRY_CAST(g.date AS DATE)) AS year,
-            g.league_id,
+            cab.season_year            AS year,
+            cab.league_id,
             -- games.csv has no level_id column — derive via teams.level
             -- through the batter's team.
-            t.level                   AS level_id,
-            ab.inning, ab.outs,
-            ab.balls, ab.strikes,
-            ab.base1, ab.base2, ab.base3,
-            ab."Close"                AS close_flag,
-            ab.pinch, ab.run_diff, ab.spot,
-            ab.result, ab.sac,
-            ab.sb, ab.cs, ab.rbi, ab.r,
-            ab.hit_loc, ab.hit_xy,
-            ab.exit_velo, ab.launch_angle, ab.sprint_speed,
+            t.level                    AS level_id,
+            cab.inning, cab.outs,
+            cab.balls, cab.strikes,
+            cab.base1, cab.base2, cab.base3,
+            cab."Close"                AS close_flag,
+            cab.pinch, cab.run_diff, cab.spot,
+            cab.result, cab.sac,
+            cab.sb, cab.cs, cab.rbi, cab.r,
+            cab.hit_loc, cab.hit_xy,
+            cab.exit_velo, cab.launch_angle, cab.sprint_speed,
             -- Derived flags (consolidated from advanced/enriched.py):
-            (ab.result IN (4,5,6,7,8,9) AND ab.sac = 0) AS bip_flag,
-            ((ab.base2 > 0 OR ab.base3 > 0) AND ab.outs < 3) AS risp_flag,
-            (ab.inning >= 7 AND ab."Close" = 1) AS late_close_flag
-        FROM at_bats_event ab
-        JOIN games_event g ON g.game_id = ab.game_id
-        LEFT JOIN teams t  ON t.team_id = ab.team_id
+            (cab.result IN (4,5,6,7,8,9) AND cab.sac = 0) AS bip_flag,
+            ((cab.base2 > 0 OR cab.base3 > 0) AND cab.outs < 3) AS risp_flag,
+            (cab.inning >= 7 AND cab."Close" = 1) AS late_close_flag,
+            -- game_type carried through so consumers can filter to
+            -- regular season (game_type=0 per GameType.REGULAR_SEASON)
+            -- without re-joining games.
+            cab.game_type
+        FROM with_seq cab
+        LEFT JOIN teams t ON t.team_id = cab.team_id
     """)
     con.execute(
-        "ALTER TABLE f_pa_event ADD PRIMARY KEY (game_id, batter_id, pa_in_game_seq)"
+        "ALTER TABLE f_pa_event ADD PRIMARY KEY "
+        "(year, game_id, batter_id, pa_in_game_seq)"
     )
     return con.execute("SELECT COUNT(*) FROM f_pa_event").fetchone()[0]
 

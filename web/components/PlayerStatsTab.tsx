@@ -860,11 +860,10 @@ function PitchingCareerRow({
 // Situational batting (clutch / RISP splits)
 // ─────────────────────────────────────────────────────────────────────────
 //
-// One section per (year, level) tuple — but in this save the warehouse
-// only holds the latest year's PA log (`f_pa_event` is a single-season
-// table per OOTP), so 99% of players will have exactly one tuple here.
-// The grouping is still spelled out so the UI stays correct if a multi-
-// season log ever lands.
+// One block per (year, level) tuple, sorted year DESC + level (MLB first).
+// `f_pa_event` is multi-year now (L0 cross-dump dedup at L2 build time),
+// so a player with a 4-year career can show 4-16 blocks (more if they
+// bounced through MLB + AAA + AA in any year).
 //
 // Each tuple shows four rows: All / RISP / RISP, 2 out / Late & Close.
 // The "All" row is the parity baseline — its slash should match the
@@ -1086,10 +1085,9 @@ function SituationalBattingTable({
         inning or later with the tying run on base, at the plate, or on
         deck. OPS in a split row is colored emerald when it beats the
         &ldquo;All&rdquo; baseline by ≥25 points, rose when it lags by
-        ≥25; smaller gaps are noise on single-season samples.
-        Splits cover the most recent simulated season only — OOTP&apos;s
-        per-PA log is replaced each year on rollover, so prior-year
-        splits aren&apos;t available.
+        ≥25; smaller gaps are noise on small samples. Splits are
+        regular season only and cover every save year the warehouse
+        has ingested.
       </p>
     </section>
   );

@@ -515,11 +515,11 @@ class PlayerSituationalRow(BaseModel):
     Bref sense; ``late_close_flag`` (the strict 7th+ tying-run window) is
     the right analog and what we use here. See DATA_NOTES.
 
-    **Coverage limitation**: `f_pa_event` is OOTP's per-PA log for the
-    current season only — it gets replaced each year on rollover. So
-    ``situational_batting`` has rows only for the latest simulated year
-    (2029 in this save). Pre-2029 splits would require persisting each
-    season's at-bat dump separately; that's a future enhancement.
+    **Multi-year coverage**: ``f_pa_event`` is sourced from L0 with
+    cross-dump dedup (the L0 layer retains every previously-ingested
+    dump's rows by ``dump_date``, so historical seasons survive the OOTP
+    rollover that overwrites ``at_bats_event.csv``). Splits cover every
+    year the warehouse has ingested (2026-2029 in this save).
 
     Pitcher splits (same SQL, keyed on pitcher_id) are deferred to a
     follow-up — symmetric in shape but the verdict semantics ("did opp

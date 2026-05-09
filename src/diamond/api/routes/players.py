@@ -915,9 +915,9 @@ def _build_pitching_career(stints: list[dict[str, Any]]) -> PlayerCareerPitching
 # Situational batting (clutch / RISP splits) — backed by f_pa_event
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# `f_pa_event` is the per-PA log; we filter to regular season via a JOIN
-# to `games_event` (game_type=0 per `GameType.REGULAR_SEASON`). The
-# split layer is a 4-way UNION ALL within the SQL — once per split
+# `f_pa_event` is the multi-year per-PA log; we filter to regular season
+# via the carried `game_type` column (=0 per `GameType.REGULAR_SEASON`).
+# The split layer is a 4-way UNION ALL within the SQL — once per split
 # label — so the row-builder gets a flat tabular result.
 #
 # Splits:
@@ -930,6 +930,11 @@ def _build_pitching_career(stints: list[dict[str, Any]]) -> PlayerCareerPitching
 # OOTP's bare `close_flag` is intentionally unused as a split label: it
 # fires on ~80% of MLB PAs, far too permissive to mean "clutch." The
 # stricter `late_close_flag` is the right Bref analog.
+#
+# Multi-year coverage: `f_pa_event` is now sourced from L0 with cross-
+# dump dedup (l2.py), so historical seasons are queryable. The fetcher
+# returns one (year, level, split) row per actual sample; the UI groups
+# them year-by-year.
 
 # Display order for splits — matches the natural reading order on Bref.
 _SITUATIONAL_SPLIT_ORDER: dict[str, int] = {
@@ -958,9 +963,8 @@ WITH base AS (
         pa.result, pa.sac,
         pa.risp_flag, pa.late_close_flag, pa.outs
     FROM f_pa_event pa
-    JOIN games_event g USING (game_id)
     WHERE pa.batter_id = ?
-      AND g.game_type = 0   -- regular season; matches f_player_season_*
+      AND pa.game_type = 0  -- regular season; matches f_player_season_*
 ),
 splits AS (
     SELECT *, 'all' AS split FROM base

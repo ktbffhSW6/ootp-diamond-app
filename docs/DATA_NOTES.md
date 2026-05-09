@@ -36,7 +36,8 @@ saved_games/<save_name>.lg/
 
 | File family | Behavior | Implication |
 |---|---|---|
-| `players_at_bat_batting_stats.csv` | **Resets at season start (Feb-Mar dump).** `dump_2026_11` and `dump_2026_12` are byte-identical (95 MB). `dump_2027_03` is 3 MB (spring training only). | The Nov dump IS the canonical season at-bat snapshot. |
+| `players_at_bat_batting_stats.csv` | **Resets at season start (Feb-Mar dump).** `dump_2026_11` and `dump_2026_12` are byte-identical (95 MB). `dump_2027_03` is 3 MB (spring training only). Also: **`game_id` is recycled across seasons** — id 10001 is one game in 2026 dumps, a different game in 2027 dumps. | The Nov dump IS the canonical season at-bat snapshot. **History is recoverable**: L0 retains every previously ingested dump's rows by `dump_date`, so `f_pa_event` reaches back into L0 with cross-dump dedup keyed on (`game_id`, `season_year`) to assemble multi-year coverage. PK = (year, game_id, batter_id, pa_in_game_seq) with `year` carried for disambiguation. |
+| `games.csv` | Resets at season start, same as at-bats. `game_id` recycled across years. | Same multi-year recovery via L0; `f_pa_event` JOINs `l0_games` on (`game_id`, `dump_date`) to keep at-bat-row to game-row pairing within the same dump. |
 | `players_game_batting.csv` | Same reset pattern as at-bat | Same Nov-dump rule |
 | `players_career_*_stats.csv` | **Append-only across seasons** | Latest dump is authoritative |
 | `players_individual_batting_stats.csv` | **Append-only across seasons** (cumulative all-time matchup table: player × opponent_pitcher → ab/h/hr) | Latest dump is authoritative |

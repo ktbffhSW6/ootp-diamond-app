@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: clutch / RISP splits on player page shipped.** New "Situational batting" section on `/player/[id]` renders four rows per (year, level): All / RISP / RISP 2-out / Late & Close — slash + counting per row. Backed by a new `_fetch_situational_batting()` SQL helper that joins `f_pa_event` to `games_event` (game_type=0 = regular season) and UNIONs the four splits. OPS in a split row colors emerald when it beats the All baseline by ≥25 pts and rose when it lags by ≥25, so clutch / choke patterns read at a glance. Verified Devers 2029: All .777 → RISP .881 (clutch in scoring position) → RISP 2-out .689 (chokes) → Late & Close .685 (chokes). Mayer 2029: All .741 → Late & Close .752 (slight clutch). Pitchers correctly return zero-rows. **Coverage caveat**: `f_pa_event` carries one season at a time (OOTP replaces the per-PA log on rollover), so splits are 2029-only — documented in the schema + the UI footer. **Next: port a CLI history surface** (records / awards / hof / streaks) to the `/history` tab to drain that stub.
+**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: situational splits + multi-year `f_pa_event` shipped.** Two slices in one day. First: situational ("clutch / RISP") splits on the player page — All / RISP / RISP 2-out / Late & Close per (year, level), with OPS color-coded vs the All baseline. Second: closed the prior-year coverage gap by promoting `f_pa_event` to multi-year. The "OOTP replaces at_bats_event.csv on rollover" caveat we surfaced earlier was a **build-side limitation**, not a storage limitation — L0 retains every ingested dump's rows by `dump_date`. Rebuilt `f_pa_event` to read from L0 directly with cross-dump dedup keyed on (game_id, season_year), discovered along the way that **OOTP recycles `game_id` across seasons** (id 10001 is a 2026 game in 2026 dumps, a different game in 2027 dumps) so promoted PK to (year, game_id, batter_id, pa_in_game_seq). Result: `f_pa_event` 877k → 5,132,283 rows; downstream `f_player_season_statcast_*` covers all 4 years (3,305 → 20,800 batting rows; 3,692 → 21,513 pitching rows); `f_record_player` 1,840 → 4,550. Devers situational now spans 2026/2027/2028/2029 (incl. 2028 AAA rehab stint); Mayer's career arc 2026 .602 → 2027 .770 → 2028 .764 (Late & Close 1.034!) → 2029 .741 reads at a glance. **Next: port a CLI history surface** (records / awards / hof / streaks) to the `/history` tab.
 
 ---
 
@@ -559,11 +559,6 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
       H=124 / HR=27 / BB=96 / K=158 — exact match against
       `f_player_season_batting` (split_id=1). Mayer 2029 All matches
       similarly (PA=582 / AB=529 / H=139 / HR=13 / BB=47 / K=116).
-    - **Coverage caveat**: OOTP replaces `at_bats_event.csv` each
-      season on rollover, so f_pa_event holds the latest year only.
-      Pre-2029 splits would require persisting each season's at-bat
-      dump separately. UI footer explains this.
-
     Verified: Devers 2029 RISP .881 (emerald — clutch) / RISP 2-out
     .689 (rose — choked w/ 2 outs) / Late & Close .685 (rose).
     Mayer 2029 Late & Close .752 (emerald — slight clutch in tying-
@@ -573,12 +568,54 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
     - Pitcher splits (same SQL keyed on `pitcher_id`) — symmetric
       shape; lands when there's pull for "vs me with RISP" view.
     - Bases empty / vs LHP / vs RHP — could mirror the same pattern.
-    - Multi-year rollups — blocked by single-season at-bat log.
 
-20. **Port a CLI history surface** *(next slice)* — drain the
+20. ✅ **Multi-year `f_pa_event` via L0 cross-dump dedup** — done
+    2026-05-12. The earlier "single-season only" caveat was build-
+    side, not storage-side: L0 retains every ingested dump's rows by
+    `dump_date`. Rebuilt `_build_f_pa_event` (`schema/l2.py`) to read
+    from L0 directly with cross-dump dedup. Two structural surprises
+    surfaced:
+    - **`game_id` is recycled across seasons** in OOTP. Empirically
+      the integer 10001 is one game in dumps 2026-08 → 2027-02 (67
+      PAs) and a different game in dumps 2027-09 → 2028-02 (73 PAs).
+      Solution: include `year` in the canonical key. PK changed from
+      `(game_id, batter_id, pa_in_game_seq)` to
+      `(year, game_id, batter_id, pa_in_game_seq)`.
+    - **`games.csv` resets together with at-bats** at rollover. The
+      JOIN to `l0_games` requires `dump_date` matching to keep
+      same-dump pairing for the year extraction.
+
+    Dedup rule: for each `(game_id, season_year)`, pick the latest
+    `dump_date` that observed at-bats for it (post-Nov dumps are
+    stable; early-spring dumps trim the prior year's data). The
+    `pa_in_game_seq` is then synthesized within that scope by
+    file-seq order (per OPEN-4 resolution).
+
+    `f_pa_event` carries `game_type` directly now so the situational
+    fetcher no longer needs a JOIN to `games_event`. L1 `at_bats_event`
+    + `games_event` stay single-dump (audit reconcile depends on per-
+    dump comparison).
+
+    Row-count impact:
+    - `f_pa_event`: 877,363 → **5,132,283** (4 years).
+    - `f_player_season_statcast_batting`: 3,305 → **20,800**.
+    - `f_player_season_statcast_pitching`: 3,692 → **21,513**.
+    - `f_record_player`: 1,840 → **4,550**.
+
+    Verified: Devers situational now shows 2026 / 2027 / 2028 (incl.
+    AAA rehab stint) / 2029. Mayer's full 4-year arc visible — 2026
+    rookie struggle (.602 OPS) → 2027 breakout (.770, RISP 2-out
+    .970) → 2028 peak (.764, Late & Close **1.034**) → 2029
+    regression (.741). Smoke + typecheck + HTTP fetch all clean.
+
+    UI footer + schema docstring + situational fetcher comment
+    updated to reflect "every save year ingested" rather than
+    "current season only."
+
+21. **Port a CLI history surface** *(next slice)* — drain the
     `/history` stub with one of `records / awards / hof / streaks`.
     All four surfaces exist as L3 facts already; UI work only.
-21. Then the rest of the UI_DESIGN.md ladder (pressure board, salary
+22. Then the rest of the UI_DESIGN.md ladder (pressure board, salary
     stream, compare under Explore, etc.).
 
 **Open audit carry-forwards** (non-blocking, picked up opportunistically):
