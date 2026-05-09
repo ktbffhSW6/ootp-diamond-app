@@ -74,21 +74,71 @@ loaded into per-save `<save>/diamond/diamond.duckdb` on first `diamond ingest`.
 - [x] Wired into `build_warehouse` via `rebuild_l1_l2(...)` — fires before L1
       machinery so downstream layers can JOIN to `lref_*` (Slice 2+ work).
 
-### Slice 2 — calculation-parity swap (← **NEXT UP**, highest analytical leverage):
+### Slice 2 — calculation-parity swap ✅ **SHIPPED 2026-05-14**
 
-- [ ] Replace barrel% / sweet_spot% / hard_hit% computation in
-      `f_player_season_statcast_*` with a JOIN to `lref_xiso_table` (look up
-      LSA zone from (LA, EV), classify zones 4-6 = sweet-spot, zone 6 = barrel,
-      EV ≥ ~95 mph = hard-hit).
-- [ ] Add a new column `xwoba_pa` to `f_pa_event` that bilinear-interpolates
-      `lref_xwoba_table` for each BIP. Aggregate to season-level `xwoba_season`
-      in `f_player_season_advanced_batting`. Wire into player-page Advanced
-      and Custom Leaderboards stat catalog.
-- [ ] Optional (defer if scope creeps): RE288-derived RE24 + WPA + LI columns
-      for `f_pa_event` from `lref_re288_table` + `lref_wpa_table` +
-      `lref_li_table`. Unblocks high-leverage / clutch leaderboards.
+Implemented in `src/diamond/schema/l3_advanced.py`. Two new fact tables
+materialize OOTP-canonical x-stats for every (player, year, league, level)
+with BIP ≥ 30:
 
-### Slice 3 — era-aware park factors (D22 v2):
+- `f_player_season_xstats_batting` — 20,787 rows
+- `f_player_season_xstats_pitching` — 21,504 rows
+
+Each carries `xwoba_bip` / `xba_bip` / `xslg_bip` (avg per-BIP value over
+the season's BIP) plus `bip_xstat` (sample size). Reads OOTP's canonical
+(LA, EV) → x-stat lookup tables out of L_REF — guaranteed to match the
+in-game UI exactly.
+
+Implementation:
+
+- [x] Three long-form lookup views via DuckDB `UNPIVOT` over the
+      `lref_*_table` wide grids: `_xwoba_lookup` / `_xba_lookup` /
+      `_xslg_lookup` with columns `(la, ev, val)`. ~4,895 (LA, EV)
+      cells with values; sparse/empty cells filtered out.
+- [x] Per-BIP interpolation view `_f_pa_event_xstats` — for every BIP
+      in `f_pa_event`, compute `xwoba_pa` / `xba_pa` / `xslg_pa` via
+      1D linear interpolation along the EV axis (LA is integer in
+      OOTP's at-bat dump, so no LA-axis interpolation needed). Clamps
+      LA to `[-45, +60]` and EV to `[50, 110]`. Empty corners → 0.
+- [x] Season aggregations: batting keyed on `batter_id`; pitching on
+      `pitcher_id` (= "what contact did the pitcher allow?").
+- [x] Wired into `PlayerAdvancedBattingRow` / `PlayerAdvancedPitchingRow`
+      Pydantic schemas + the `/api/players/{id}` route via LEFT JOIN
+      (NULL-safe for pre-2026 seasons predating `f_pa_event` coverage).
+      Player page Advanced columns now show `wOBA | xwOBA` side-by-side.
+- [x] Added `xwOBA` / `xBA` / `xSLG` to the leaderboards stat catalog
+      under the `statcast_b` discipline. Verified: 2029 MLB top
+      xwOBA-on-BIP leaders are Gunnar Henderson .315 / Kazuma Okamoto
+      .309 / Arjun Nimmala .302 — sensible BIP-quality leaderboard.
+- [x] Glossary entries for `xwOBA` / `xBA` / `xSLG` (with KaTeX formula
+      + interpretation + caveat about K/BB/HBP exclusion from the
+      BIP-only figure).
+
+Empirical verification:
+- Devers 2026-2029: actual wOBA .320-.355 vs xwOBA-BIP .264-.288 — gap
+  reflects K/BB/HBP exclusion (xstats are BIP only); year-to-year trend
+  matches (xwOBA peaks 2029 alongside actual wOBA recovery).
+- Crochet 2026-2029 allowed-xwOBA: .277 → .266 → .236 → .237 — pairs
+  with FIP 2.80 → 2.26 → 2.70 → 2.74 (BIP-quality improvement, real).
+
+**Deferred to a future slice** (out of Slice 2 scope, but unblocked
+now that L_REF is in place):
+
+- [ ] **xISO via `lref_xiso_table`** — needs an LSA classifier first.
+      The `lref_xiso_table` is keyed on `launch_speed_angle` (1-6) but
+      OOTP's at-bat dump only has `(LA, EV)`, not LSA. To use the
+      table, we'd need to reverse-engineer OOTP's `(LA, EV) → LSA`
+      mapping. Defer until UX needs xISO specifically — `xSLG - xBA`
+      already provides an equivalent contact-quality signal.
+- [ ] **RE24 + WPA + LI columns on `f_pa_event`** from `lref_re288_table`
+      + `lref_wpa_table` + `lref_li_table`. Unblocks high-leverage /
+      clutch leaderboards. Pure additive work — no schema migration.
+- [ ] **Barrel/SS/HH redefinition** — current Statcast cohort uses
+      Statcast-standard EV+LA bands. Could swap to OOTP-empirical
+      barrel definition once LSA is reverse-engineered (xiso_table
+      shows LSA=6 = "barrels" with 69% HR rate per OOTP's empirical
+      table). Defer with xISO.
+
+### Slice 3 — era-aware park factors (D22 v2) ← **NEXT UP**:
 
 - [ ] Update `_park_factor_resolved` view to read from `lref_era_ballparks`
       (replaces `history_lahman_teams` join).

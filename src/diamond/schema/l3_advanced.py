@@ -876,6 +876,177 @@ def _build_f_player_season_statcast_pitching(con: duckdb.DuckDBPyConnection) -> 
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# X-stats — bilinear-interpolated xwOBA / xBA / xSLG per BIP from L_REF
+# (Slice 2, D26+D27)
+#
+# Reads OOTP's canonical (LA, EV) → x-stat lookup tables out of L_REF
+# (`lref_xwoba_table` / `lref_xba_table` / `lref_xslg_table`) instead of
+# computing xwOBA from scratch. Each table is a 106 × 61 grid:
+#
+#   rows:    launch_angle from -45° to +60° (1° steps)
+#   cols:    exit_velocity from 50 to 110 mph (1 mph steps)
+#   cell:    OOTP-canonical x-stat value, or blank for sparse cells
+#
+# Per-BIP bilinear interpolation: clamp (LA, EV) to grid range, find the
+# four corner cells, weighted-average by fractional distances. Empty
+# corners contribute 0 (xwOBA on a never-observed combo is essentially 0).
+#
+# We don't go through `launch_speed_angle` (LSA) — OOTP's at-bat dump
+# carries (LA, EV) but not LSA, so the (LA, EV) → x-stat tables are
+# directly usable. The `lref_xiso_table` is keyed on LSA and stays
+# untouched here; reverse-engineering LSA classification from (LA, EV)
+# is a future slice (per BACKLOG).
+#
+# Output schema (`f_player_season_xstats_batting` / `_pitching`):
+#   player_id, year, league_id, level_id,
+#   bip_xstat,    BIP count with valid (LA, EV) for lookup
+#   xwoba_bip,    AVG(xwoba_pa) over those BIP
+#   xba_bip,      AVG(xba_pa)
+#   xslg_bip,     AVG(xslg_pa)
+#
+# Quality threshold: BIP ≥ 30 (matches the Statcast cohort tables).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# UNPIVOT a wide xstat grid into long form (la, ev, value).
+# `lref_xwoba_table` schema: la_adj VARCHAR, '50'..'110' VARCHAR (one column
+# per EV value, all stored as varchar via L_REF's all_varchar=true).
+def _xstat_long_view_sql(view_name: str, source_table: str) -> str:
+    return f"""
+        CREATE OR REPLACE VIEW {view_name} AS
+        WITH long AS (
+            UNPIVOT {source_table}
+            ON COLUMNS(* EXCLUDE (la_adj))
+            INTO
+                NAME ev_str
+                VALUE val_str
+        )
+        SELECT
+            CAST(la_adj AS INTEGER)   AS la,
+            CAST(ev_str AS INTEGER)   AS ev,
+            TRY_CAST(val_str AS DOUBLE) AS val
+        FROM long
+        WHERE val_str IS NOT NULL
+          AND val_str != ''
+          AND TRY_CAST(val_str AS DOUBLE) IS NOT NULL
+    """
+
+
+# Build the per-BIP xstat lookup view: every BIP row in `f_pa_event` gets
+# bilinear-interpolated xwoba_pa / xba_pa / xslg_pa. Out-of-grid LA or EV
+# clamps to the grid edge; empty corners contribute 0 to the weighted
+# average (rare combos with insufficient OOTP data are essentially zero).
+_F_PA_EVENT_XSTATS_SQL = """
+    CREATE OR REPLACE VIEW _f_pa_event_xstats AS
+    WITH bip AS (
+        SELECT
+            game_id, year, batter_id, pitcher_id, pa_in_game_seq,
+            league_id, level_id,
+            -- Clamp LA and EV to the grid range so out-of-range BIPs
+            -- still get a (conservative) lookup. Numbers outside the
+            -- table are dominated by ground-grounders and pop-ups
+            -- where xwoba is essentially 0 anyway.
+            GREATEST(-45, LEAST(60,  launch_angle))            AS la_clamp,
+            GREATEST(50,  LEAST(110, exit_velo))               AS ev_clamp,
+            FLOOR(GREATEST(50, LEAST(110, exit_velo)))::INT    AS ev_floor,
+            CEIL(GREATEST(50,  LEAST(110, exit_velo)))::INT    AS ev_ceil
+        FROM f_pa_event
+        WHERE bip_flag = 1 AND exit_velo > 0 AND launch_angle IS NOT NULL
+    )
+    SELECT
+        b.game_id, b.year, b.batter_id, b.pitcher_id, b.pa_in_game_seq,
+        b.league_id, b.level_id,
+        -- Linear interpolation along EV (LA is integer in OOTP's at-bat
+        -- log so no LA-axis interpolation needed). Empty corners → 0.
+        COALESCE(xwf.val, 0) * (b.ev_ceil - b.ev_clamp)
+            + COALESCE(xwc.val, COALESCE(xwf.val, 0)) * (b.ev_clamp - b.ev_floor)
+                AS xwoba_pa,
+        COALESCE(xbf.val, 0) * (b.ev_ceil - b.ev_clamp)
+            + COALESCE(xbc.val, COALESCE(xbf.val, 0)) * (b.ev_clamp - b.ev_floor)
+                AS xba_pa,
+        COALESCE(xsf.val, 0) * (b.ev_ceil - b.ev_clamp)
+            + COALESCE(xsc.val, COALESCE(xsf.val, 0)) * (b.ev_clamp - b.ev_floor)
+                AS xslg_pa
+    FROM bip b
+    LEFT JOIN _xwoba_lookup xwf ON xwf.la = b.la_clamp AND xwf.ev = b.ev_floor
+    LEFT JOIN _xwoba_lookup xwc ON xwc.la = b.la_clamp AND xwc.ev = b.ev_ceil
+    LEFT JOIN _xba_lookup   xbf ON xbf.la = b.la_clamp AND xbf.ev = b.ev_floor
+    LEFT JOIN _xba_lookup   xbc ON xbc.la = b.la_clamp AND xbc.ev = b.ev_ceil
+    LEFT JOIN _xslg_lookup  xsf ON xsf.la = b.la_clamp AND xsf.ev = b.ev_floor
+    LEFT JOIN _xslg_lookup  xsc ON xsc.la = b.la_clamp AND xsc.ev = b.ev_ceil
+"""
+
+
+def _build_f_player_season_xstats_batting(con: duckdb.DuckDBPyConnection) -> int:
+    """Per-(batter, year, league, level) bilinear-interpolated xwOBA / xBA / xSLG.
+
+    Reads OOTP's canonical (LA, EV) → x-stat tables out of L_REF. Each
+    BIP gets per-PA expected values; aggregate to season as a simple mean.
+    Pairs with the existing Statcast cohort table — together they answer
+    "what kind of contact?" (max_ev / hh%) AND "what should that contact
+    have produced?" (xwOBA).
+    """
+    sql = """
+        CREATE OR REPLACE TABLE f_player_season_xstats_batting AS
+        WITH agg AS (
+            SELECT
+                batter_id        AS player_id,
+                year, league_id, level_id,
+                COUNT(*)                                AS bip_xstat,
+                ROUND(AVG(xwoba_pa), 4)                 AS xwoba_bip,
+                ROUND(AVG(xba_pa),   4)                 AS xba_bip,
+                ROUND(AVG(xslg_pa),  4)                 AS xslg_bip
+            FROM _f_pa_event_xstats
+            GROUP BY batter_id, year, league_id, level_id
+        )
+        SELECT * FROM agg
+        WHERE bip_xstat >= 30
+    """
+    con.execute(sql)
+    con.execute("""
+        ALTER TABLE f_player_season_xstats_batting
+        ADD PRIMARY KEY (player_id, year, league_id, level_id)
+    """)
+    return con.execute(
+        "SELECT COUNT(*) FROM f_player_season_xstats_batting"
+    ).fetchone()[0]
+
+
+def _build_f_player_season_xstats_pitching(con: duckdb.DuckDBPyConnection) -> int:
+    """Per-(pitcher, year, league, level) allowed-contact xwOBA / xBA / xSLG.
+
+    Same shape as the batting table but keyed on `pitcher_id`. "What
+    quality of contact did this pitcher allow, on average?" — pairs
+    with FIP / SIERA on the pitcher advanced view.
+    """
+    sql = """
+        CREATE OR REPLACE TABLE f_player_season_xstats_pitching AS
+        WITH agg AS (
+            SELECT
+                pitcher_id       AS player_id,
+                year, league_id, level_id,
+                COUNT(*)                                AS bip_xstat,
+                ROUND(AVG(xwoba_pa), 4)                 AS xwoba_bip,
+                ROUND(AVG(xba_pa),   4)                 AS xba_bip,
+                ROUND(AVG(xslg_pa),  4)                 AS xslg_bip
+            FROM _f_pa_event_xstats
+            WHERE pitcher_id IS NOT NULL
+            GROUP BY pitcher_id, year, league_id, level_id
+        )
+        SELECT * FROM agg
+        WHERE bip_xstat >= 30
+    """
+    con.execute(sql)
+    con.execute("""
+        ALTER TABLE f_player_season_xstats_pitching
+        ADD PRIMARY KEY (player_id, year, league_id, level_id)
+    """)
+    return con.execute(
+        "SELECT COUNT(*) FROM f_player_season_xstats_pitching"
+    ).fetchone()[0]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Public entry point — registered into the L3 builder list
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -957,6 +1128,31 @@ def build_l3_advanced(
                 "backfill pre-2020 park factors[/dim]"
             )
 
+    # 1c. Register the L_REF-backed x-stat lookup views (Slice 2, D26+D27).
+    #     Soft-skip if L_REF hasn't been ingested yet — pre-Slice-1 saves
+    #     would hard-fail on the UNPIVOT against a missing table. Once L_REF
+    #     freezes on first ingest, these views become permanent.
+    lref_loaded = con.execute(
+        """
+        SELECT COUNT(*) >= 3 FROM information_schema.tables
+        WHERE table_name IN ('lref_xwoba_table','lref_xba_table','lref_xslg_table')
+        """
+    ).fetchone()[0]
+    if lref_loaded:
+        con.execute(_xstat_long_view_sql("_xwoba_lookup", "lref_xwoba_table"))
+        con.execute(_xstat_long_view_sql("_xba_lookup",   "lref_xba_table"))
+        con.execute(_xstat_long_view_sql("_xslg_lookup",  "lref_xslg_table"))
+        con.execute(_F_PA_EVENT_XSTATS_SQL)
+        if verbose:
+            console.print(
+                "  [green]✓[/green] _xwoba_lookup / _xba_lookup / _xslg_lookup "
+                "(views) [dim]L_REF (LA, EV) → x-stat grids, long-form[/dim]"
+            )
+            console.print(
+                "  [green]✓[/green] _f_pa_event_xstats (view) "
+                "[dim]bilinear-interpolated xwoba_pa / xba_pa / xslg_pa per BIP[/dim]"
+            )
+
     # 2. Per-player advanced facts.
     builders = [
         ("f_player_season_advanced_batting",  _build_f_player_season_advanced_batting),
@@ -964,6 +1160,11 @@ def build_l3_advanced(
         ("f_player_season_statcast_batting",  _build_f_player_season_statcast_batting),
         ("f_player_season_statcast_pitching", _build_f_player_season_statcast_pitching),
     ]
+    if lref_loaded:
+        builders.extend([
+            ("f_player_season_xstats_batting",   _build_f_player_season_xstats_batting),
+            ("f_player_season_xstats_pitching",  _build_f_player_season_xstats_pitching),
+        ])
     for name, fn in builders:
         n = fn(con)
         rows[name] = n

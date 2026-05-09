@@ -365,18 +365,37 @@ def _fetch_advanced_batting(
     one row per (player, year, league_id, level_id), with park factor
     and league constants resolved at build time.
     """
+    # LEFT JOIN xstats so seasons predating f_pa_event coverage (pre-2026)
+    # still surface their advanced stats with NULL xstats. The xstats table
+    # may not exist on pre-Slice-2 warehouses; guard with a check.
+    has_xstats = con.execute(
+        "SELECT COUNT(*) > 0 FROM information_schema.tables "
+        "WHERE table_name = 'f_player_season_xstats_batting'"
+    ).fetchone()[0]
+    xstats_select = (
+        "x.bip_xstat, x.xwoba_bip, x.xba_bip, x.xslg_bip"
+        if has_xstats else "NULL AS bip_xstat, NULL AS xwoba_bip, NULL AS xba_bip, NULL AS xslg_bip"
+    )
+    xstats_join = (
+        "LEFT JOIN f_player_season_xstats_batting x "
+        "ON x.player_id = f.player_id AND x.year = f.year "
+        "AND x.league_id = f.league_id AND x.level_id = f.level_id"
+        if has_xstats else ""
+    )
     rows = con.execute(
-        """
+        f"""
         SELECT
             f.year, f.league_id, f.level_id,
             l.abbr            AS league_abbr,
             (f.year - EXTRACT(YEAR FROM pl.date_of_birth))::INTEGER AS age,
             CAST(f.pa AS BIGINT) AS pa,
             f.woba, f.wraa, f.wrc, f.wrc_plus, f.ops_plus, f.o_war, f.b_war,
-            f.park_avg
+            f.park_avg,
+            {xstats_select}
         FROM f_player_season_advanced_batting f
         LEFT JOIN leagues         l  ON l.league_id  = f.league_id
         LEFT JOIN players_current pl ON pl.player_id = f.player_id
+        {xstats_join}
         WHERE f.player_id = ?
         ORDER BY f.year, f.level_id, f.league_id
         """,
@@ -385,7 +404,8 @@ def _fetch_advanced_batting(
     out: list[PlayerAdvancedBattingRow] = []
     for r in rows:
         (year, league_id, level_id, league_abbr, age, pa,
-         woba, wraa, wrc, wrc_plus, ops_plus, o_war, b_war, park_avg) = r
+         woba, wraa, wrc, wrc_plus, ops_plus, o_war, b_war, park_avg,
+         bip_xstat, xwoba_bip, xba_bip, xslg_bip) = r
         out.append(PlayerAdvancedBattingRow(
             year=int(year),
             age=int(age) if age is not None else None,
@@ -402,6 +422,10 @@ def _fetch_advanced_batting(
             o_war=float(o_war) if o_war is not None else None,
             b_war=float(b_war) if b_war is not None else None,
             park_avg=float(park_avg) if park_avg is not None else None,
+            bip_xstat=int(bip_xstat) if bip_xstat is not None else None,
+            xwoba_bip=float(xwoba_bip) if xwoba_bip is not None else None,
+            xba_bip=float(xba_bip) if xba_bip is not None else None,
+            xslg_bip=float(xslg_bip) if xslg_bip is not None else None,
         ))
     return out
 
@@ -414,18 +438,34 @@ def _fetch_advanced_pitching(
     Filtered server-side to outs >= 30 (10 IP) by the L3 builder, so
     short-cup-of-coffee pitcher seasons don't surface here.
     """
+    has_xstats = con.execute(
+        "SELECT COUNT(*) > 0 FROM information_schema.tables "
+        "WHERE table_name = 'f_player_season_xstats_pitching'"
+    ).fetchone()[0]
+    xstats_select = (
+        "x.bip_xstat, x.xwoba_bip, x.xba_bip, x.xslg_bip"
+        if has_xstats else "NULL AS bip_xstat, NULL AS xwoba_bip, NULL AS xba_bip, NULL AS xslg_bip"
+    )
+    xstats_join = (
+        "LEFT JOIN f_player_season_xstats_pitching x "
+        "ON x.player_id = f.player_id AND x.year = f.year "
+        "AND x.league_id = f.league_id AND x.level_id = f.level_id"
+        if has_xstats else ""
+    )
     rows = con.execute(
-        """
+        f"""
         SELECT
             f.year, f.league_id, f.level_id,
             l.abbr            AS league_abbr,
             (f.year - EXTRACT(YEAR FROM pl.date_of_birth))::INTEGER AS age,
             CAST(f.outs AS BIGINT) AS outs,
             f.ip_display, f.fip, f.era_plus, f.pit_war, f.p_war, f.p_ra9_war,
-            f.park_avg
+            f.park_avg,
+            {xstats_select}
         FROM f_player_season_advanced_pitching f
         LEFT JOIN leagues         l  ON l.league_id  = f.league_id
         LEFT JOIN players_current pl ON pl.player_id = f.player_id
+        {xstats_join}
         WHERE f.player_id = ?
         ORDER BY f.year, f.level_id, f.league_id
         """,
@@ -434,7 +474,8 @@ def _fetch_advanced_pitching(
     out: list[PlayerAdvancedPitchingRow] = []
     for r in rows:
         (year, league_id, level_id, league_abbr, age, outs,
-         ip_display, fip, era_plus, pit_war, p_war, p_ra9_war, park_avg) = r
+         ip_display, fip, era_plus, pit_war, p_war, p_ra9_war, park_avg,
+         bip_xstat, xwoba_bip, xba_bip, xslg_bip) = r
         out.append(PlayerAdvancedPitchingRow(
             year=int(year),
             age=int(age) if age is not None else None,
@@ -450,6 +491,10 @@ def _fetch_advanced_pitching(
             p_war=float(p_war) if p_war is not None else None,
             p_ra9_war=float(p_ra9_war) if p_ra9_war is not None else None,
             park_avg=float(park_avg) if park_avg is not None else None,
+            bip_xstat=int(bip_xstat) if bip_xstat is not None else None,
+            xwoba_bip=float(xwoba_bip) if xwoba_bip is not None else None,
+            xba_bip=float(xba_bip) if xba_bip is not None else None,
+            xslg_bip=float(xslg_bip) if xslg_bip is not None else None,
         ))
     return out
 

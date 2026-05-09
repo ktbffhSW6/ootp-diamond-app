@@ -89,6 +89,8 @@ _ABAT = "f_player_season_advanced_batting"
 _APIT = "f_player_season_advanced_pitching"
 _SBAT = "f_player_season_statcast_batting"
 _SPIT = "f_player_season_statcast_pitching"
+_XBAT = "f_player_season_xstats_batting"
+_XPIT = "f_player_season_xstats_pitching"
 
 
 # Whitelist — only stats listed here are leaderboardable. Adding a new
@@ -166,6 +168,10 @@ LEADERBOARD_STATS: dict[str, StatSpec] = {
     "BARREL_PCT":     StatSpec("BARREL_PCT",     "Barrel%", "statcast_b", _SBAT, "MAX(barrel_pct)",     "MAX(bip)", "BIP", 30, "desc", 1),
     "HARD_HIT_PCT":   StatSpec("HARD_HIT_PCT",   "HardHit%","statcast_b", _SBAT, "MAX(hard_hit_pct)",   "MAX(bip)", "BIP", 30, "desc", 1),
     "SWEET_SPOT_PCT": StatSpec("SWEET_SPOT_PCT", "Sweet%",  "statcast_b", _SBAT, "MAX(sweet_spot_pct)", "MAX(bip)", "BIP", 30, "desc", 1),
+    # ── X-stats (Slice 2 — L_REF (LA, EV) → x-stat grids) ────────────
+    "xwOBA":     StatSpec("xwOBA",     "xwOBA", "statcast_b", _XBAT, "MAX(xwoba_bip)", "MAX(bip_xstat)", "BIP", 30, "desc", 3),
+    "xBA":       StatSpec("xBA",       "xBA",   "statcast_b", _XBAT, "MAX(xba_bip)",   "MAX(bip_xstat)", "BIP", 30, "desc", 3),
+    "xSLG":      StatSpec("xSLG",      "xSLG",  "statcast_b", _XBAT, "MAX(xslg_bip)",  "MAX(bip_xstat)", "BIP", 30, "desc", 3),
 }
 
 

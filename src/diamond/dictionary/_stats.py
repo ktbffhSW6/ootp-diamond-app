@@ -494,6 +494,108 @@ _ENTRIES: list[Stat] = [
     ),
 
     Stat(
+        id="xwOBA",
+        display_name="Expected Weighted On-Base Average (BIP)",
+        short_label="xwOBA",
+        category="advanced",
+        formula_tex=(
+            r"\mathrm{xwOBA}_{BIP} = \dfrac{1}{|BIP|}\sum_{\text{BIP}} "
+            r"\mathrm{xwOBA}(\text{LA}, \text{EV})"
+        ),
+        formula_plain=(
+            "xwOBA(BIP) = mean over all balls-in-play of OOTP's "
+            "(launch_angle, exit_velocity) → xwOBA grid, bilinear-"
+            "interpolated. Sourced from L_REF (lref_xwoba_table)."
+        ),
+        description=(
+            "Expected wOBA on balls-in-play — what OOTP's own engine "
+            "considers a fair outcome value for the contact this player "
+            "made (or allowed). Uses OOTP's canonical (LA, EV) → xwOBA "
+            "lookup table that the engine itself uses at sim time, so "
+            "values match the in-game UI exactly. Compare to actual "
+            "wOBA: large positive gap = unlucky (BIP quality > outcome); "
+            "negative gap = lucky outcome > BIP quality."
+        ),
+        units="rate (matches wOBA scale)",
+        typical_range="MLB hitters: .280-.380 on BIP; pitchers (allowed): same scale, lower better",
+        interpretation=(
+            "For batters: higher = better contact. For pitchers: lower = "
+            "better contact suppression. Compare to actual wOBA for "
+            "luck signals; persistent gap = BABIP regression candidate."
+        ),
+        caveats=(
+            "Includes BIP only — non-contact events (K, BB, HBP) aren't "
+            "in the xwOBA-BIP figure but are in actual wOBA. So actual "
+            "wOBA and xwOBA-BIP aren't directly comparable on equal "
+            "footing for high-K hitters; treat the gap as a qualitative "
+            "signal, not a precise differential. Min 30 BIP at level."
+        ),
+        source="f_player_season_xstats_batting / _pitching (l3_advanced.py)",
+        formula_source="OOTP misc/xwoba_table.txt (L_REF, frozen at first ingest)",
+        related=("wOBA", "xBA", "xSLG", "BABIP"),
+        refs={"Statcast xwOBA": "https://baseballsavant.mlb.com/csv-docs"},
+    ),
+
+    Stat(
+        id="xBA",
+        display_name="Expected Batting Average (BIP)",
+        short_label="xBA",
+        category="advanced",
+        formula_tex=(
+            r"\mathrm{xBA}_{BIP} = \dfrac{1}{|BIP|}\sum_{\text{BIP}} "
+            r"\mathrm{xBA}(\text{LA}, \text{EV})"
+        ),
+        formula_plain=(
+            "xBA(BIP) = mean over all balls-in-play of OOTP's "
+            "(launch_angle, exit_velocity) → xBA grid, bilinear-"
+            "interpolated. Sourced from L_REF (lref_xba_table)."
+        ),
+        description=(
+            "Expected batting average on balls-in-play. Uses OOTP's "
+            "canonical (LA, EV) → xBA lookup table. Pairs with xwOBA "
+            "and xSLG to triangulate contact quality."
+        ),
+        units="rate (matches AVG scale)",
+        typical_range="Around league BABIP — .280-.330 for healthy MLB hitters",
+        interpretation="Higher = better expected hit conversion. Gap vs actual AVG = luck signal.",
+        caveats="BIP only; ignores K/BB/HBP. Min 30 BIP at level.",
+        source="f_player_season_xstats_batting / _pitching (l3_advanced.py)",
+        formula_source="OOTP misc/xba_table.txt (L_REF, frozen at first ingest)",
+        related=("AVG", "xwOBA", "xSLG", "BABIP"),
+        refs={"Statcast xBA": "https://baseballsavant.mlb.com/csv-docs"},
+    ),
+
+    Stat(
+        id="xSLG",
+        display_name="Expected Slugging (BIP)",
+        short_label="xSLG",
+        category="advanced",
+        formula_tex=(
+            r"\mathrm{xSLG}_{BIP} = \dfrac{1}{|BIP|}\sum_{\text{BIP}} "
+            r"\mathrm{xSLG}(\text{LA}, \text{EV})"
+        ),
+        formula_plain=(
+            "xSLG(BIP) = mean over all balls-in-play of OOTP's "
+            "(launch_angle, exit_velocity) → xSLG grid, bilinear-"
+            "interpolated. Sourced from L_REF (lref_xslg_table)."
+        ),
+        description=(
+            "Expected slugging on balls-in-play — total bases per BIP "
+            "based on OOTP's canonical (LA, EV) lookup table. xSLG - "
+            "xBA approximates xISO."
+        ),
+        units="rate (matches SLG scale)",
+        typical_range="MLB hitters on BIP: .400-.600+ for power bats",
+        interpretation="Higher = more expected total bases per BIP. "
+                       "Gap vs actual SLG = luck/park signal.",
+        caveats="BIP only; ignores K/BB/HBP. Min 30 BIP at level.",
+        source="f_player_season_xstats_batting / _pitching (l3_advanced.py)",
+        formula_source="OOTP misc/xslg_table.txt (L_REF, frozen at first ingest)",
+        related=("SLG", "xwOBA", "xBA", "ISO"),
+        refs={"Statcast xSLG": "https://baseballsavant.mlb.com/csv-docs"},
+    ),
+
+    Stat(
         id="wRAA",
         display_name="Weighted Runs Above Average",
         short_label="wRAA",
