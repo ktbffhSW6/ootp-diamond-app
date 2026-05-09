@@ -45,6 +45,7 @@ from diamond.api.schemas import (
     PlayerPositionFielding,
     PlayerResponse,
     PlayerRosterStatus,
+    PlayerSituationalRow,
     TeamRef,
 )
 from diamond.api.warehouse import get_cursor
@@ -911,6 +912,162 @@ def _build_pitching_career(stints: list[dict[str, Any]]) -> PlayerCareerPitching
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Situational batting (clutch / RISP splits) — backed by f_pa_event
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# `f_pa_event` is the per-PA log; we filter to regular season via a JOIN
+# to `games_event` (game_type=0 per `GameType.REGULAR_SEASON`). The
+# split layer is a 4-way UNION ALL within the SQL — once per split
+# label — so the row-builder gets a flat tabular result.
+#
+# Splits:
+#   all          — every regular-season PA (parity check vs season totals).
+#   risp         — `risp_flag` (runner on 2nd OR 3rd, outs<3).
+#   risp_2out    — `risp_flag` AND `outs >= 2`.
+#   late_close   — `late_close_flag` (7th+ inning AND OOTP "Close" flag —
+#                  Bref-style "Late & Close" tying-run window).
+#
+# OOTP's bare `close_flag` is intentionally unused as a split label: it
+# fires on ~80% of MLB PAs, far too permissive to mean "clutch." The
+# stricter `late_close_flag` is the right Bref analog.
+
+# Display order for splits — matches the natural reading order on Bref.
+_SITUATIONAL_SPLIT_ORDER: dict[str, int] = {
+    "all": 0,
+    "risp": 1,
+    "risp_2out": 2,
+    "late_close": 3,
+}
+
+_SITUATIONAL_SPLIT_LABELS: dict[str, str] = {
+    "all": "All",
+    "risp": "RISP",
+    "risp_2out": "RISP, 2 out",
+    "late_close": "Late & Close",
+}
+
+# Counting-stat aggregation — same shape across all four splits, so we
+# define it once and reuse via a CTE. `result` codes per AtBatResult:
+# 1=K, 2=BB, 4=GO, 5=FO, 6=1B, 7=2B, 8=3B, 9=HR, 10=HBP, 11=CI.
+# AB = K + outs + hits, with sacrifices excluded (sac=1).
+# SF (sac fly) = sac=1 AND result=5 (fly out flagged sacrifice).
+_SITUATIONAL_QUERY = """
+WITH base AS (
+    SELECT
+        pa.year, pa.level_id,
+        pa.result, pa.sac,
+        pa.risp_flag, pa.late_close_flag, pa.outs
+    FROM f_pa_event pa
+    JOIN games_event g USING (game_id)
+    WHERE pa.batter_id = ?
+      AND g.game_type = 0   -- regular season; matches f_player_season_*
+),
+splits AS (
+    SELECT *, 'all' AS split FROM base
+    UNION ALL
+    SELECT *, 'risp' AS split FROM base WHERE risp_flag
+    UNION ALL
+    SELECT *, 'risp_2out' AS split FROM base WHERE risp_flag AND outs >= 2
+    UNION ALL
+    SELECT *, 'late_close' AS split FROM base WHERE late_close_flag
+)
+SELECT
+    year, level_id, split,
+    COUNT(*)                                                              AS pa,
+    SUM(CASE WHEN result IN (1,4,5,6,7,8,9) AND sac=0 THEN 1 ELSE 0 END)  AS ab,
+    SUM(CASE WHEN result IN (6,7,8,9) THEN 1 ELSE 0 END)                  AS h,
+    SUM(CASE WHEN result = 7 THEN 1 ELSE 0 END)                           AS doubles,
+    SUM(CASE WHEN result = 8 THEN 1 ELSE 0 END)                           AS triples,
+    SUM(CASE WHEN result = 9 THEN 1 ELSE 0 END)                           AS hr,
+    SUM(CASE WHEN result = 2 THEN 1 ELSE 0 END)                           AS bb,
+    SUM(CASE WHEN result = 1 THEN 1 ELSE 0 END)                           AS k,
+    SUM(CASE WHEN result = 10 THEN 1 ELSE 0 END)                          AS hbp,
+    SUM(CASE WHEN sac = 1 AND result = 5 THEN 1 ELSE 0 END)               AS sf
+FROM splits
+GROUP BY year, level_id, split
+HAVING COUNT(*) > 0
+ORDER BY year DESC, level_id, split
+"""
+
+
+def _situational_slash(
+    ab: int, h: int, doubles: int, triples: int, hr: int,
+    bb: int, hbp: int, sf: int,
+) -> tuple[float | None, float | None, float | None, float | None]:
+    """Compute (AVG, OBP, SLG, OPS) — None when denominator is zero.
+
+    Bref convention: OBP denom includes SF but NOT SH (sac bunts);
+    SLG denom is plain AB. Total bases collapse cleanly to
+    H + 2B + 2*3B + 3*HR.
+    """
+    avg = h / ab if ab > 0 else None
+    obp_den = ab + bb + hbp + sf
+    obp = (h + bb + hbp) / obp_den if obp_den > 0 else None
+    tb = h + doubles + 2 * triples + 3 * hr
+    slg = tb / ab if ab > 0 else None
+    ops = (obp + slg) if (obp is not None and slg is not None) else None
+    return avg, obp, slg, ops
+
+
+def _fetch_situational_batting(
+    con: duckdb.DuckDBPyConnection, player_id: int,
+) -> list[PlayerSituationalRow]:
+    """Per-(year, level, split) regular-season situational stats.
+
+    Returns an empty list for pitchers (no `f_pa_event` rows where
+    they bat) and pre-2019 imported players (OOTP carries counting
+    stats but no per-PA log for those years).
+    """
+    rows = con.execute(_SITUATIONAL_QUERY, [player_id]).fetchall()
+    out: list[PlayerSituationalRow] = []
+    for r in rows:
+        (year, level_id, split, pa, ab, h, doubles, triples, hr,
+         bb, k, hbp, sf) = r
+        avg, obp, slg, ops = _situational_slash(
+            int(ab), int(h), int(doubles), int(triples), int(hr),
+            int(bb), int(hbp), int(sf),
+        )
+        out.append(
+            PlayerSituationalRow(
+                year=int(year),
+                level_id=int(level_id) if level_id is not None else 0,
+                level_name=(
+                    LEVEL_NAMES.get(int(level_id))
+                    if level_id is not None else None
+                ),
+                split=str(split),
+                split_label=_SITUATIONAL_SPLIT_LABELS.get(str(split), str(split)),
+                pa=int(pa),
+                ab=int(ab),
+                h=int(h),
+                doubles=int(doubles),
+                triples=int(triples),
+                hr=int(hr),
+                bb=int(bb),
+                k=int(k),
+                hbp=int(hbp),
+                sf=int(sf),
+                avg=avg,
+                obp=obp,
+                slg=slg,
+                ops=ops,
+            )
+        )
+
+    # Re-sort with the canonical split order — the SQL ORDER BY uses
+    # alphabetic on `split` which puts late_close → risp → risp_2out
+    # which is wrong for display.
+    out.sort(
+        key=lambda r: (
+            -r.year,                     # year DESC
+            r.level_id,                  # MLB (1) first
+            _SITUATIONAL_SPLIT_ORDER.get(r.split, 99),
+        )
+    )
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Route
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -940,6 +1097,7 @@ def get_player(
     advanced_pit = _fetch_advanced_pitching(con, player_id)
     position_fielding = _fetch_position_fielding(con, player_id)
     roster_status = _fetch_roster_status(con, player_id)
+    situational_batting = _fetch_situational_batting(con, player_id)
     return PlayerResponse(
         bio=bio,
         batting_seasons=_build_batting_seasons(bat_stints),
@@ -952,4 +1110,5 @@ def get_player(
         fielding_career=_build_fielding_career(fld_rows),
         position_fielding=position_fielding,
         roster_status=roster_status,
+        situational_batting=situational_batting,
     )

@@ -41,6 +41,7 @@ from diamond.api.schemas.player import (
     PlayerPositionFielding,
     PlayerResponse,
     PlayerRosterStatus,
+    PlayerSituationalRow,
     TeamRef,
 )
 from diamond.api.schemas.roster import (
@@ -83,6 +84,7 @@ __all__ = [
     "PlayerPositionFielding",
     "PlayerResponse",
     "PlayerRosterStatus",
+    "PlayerSituationalRow",
     "RosterBattingLine",
     "RosterLevelGroup",
     "RosterPitchingLine",

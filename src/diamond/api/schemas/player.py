@@ -494,6 +494,61 @@ class PlayerCareerFielding(BaseModel):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+class PlayerSituationalRow(BaseModel):
+    """Per-(year, level, split) batter situational stats from `f_pa_event`.
+
+    Each row is one slice of a player's regular-season PA log filtered to a
+    named split. Splits cover the canonical "clutch" cuts:
+
+    - ``all``         — every regular-season PA (parity with `f_player_season_batting`).
+    - ``risp``        — runner on 2nd OR 3rd at start of PA (`risp_flag`).
+    - ``risp_2out``   — RISP AND outs ≥ 2 (the highest-leverage RBI chance).
+    - ``late_close``  — 7th inning or later AND OOTP `Close` flag (Bref-style
+      "Late & Close": tying / go-ahead run on / at-bat / on-deck).
+
+    Slash line is computed server-side so the frontend doesn't have to
+    re-derive it. ``split_label`` is the display string ("RISP, 2 out" /
+    "Late & Close"); ``split`` is the stable id for sort + frontend cases.
+
+    OOTP's looser ``close_flag`` (~80% of all PAs at MLB) is intentionally
+    NOT surfaced as a split — it's too permissive to mean "clutch" in the
+    Bref sense; ``late_close_flag`` (the strict 7th+ tying-run window) is
+    the right analog and what we use here. See DATA_NOTES.
+
+    **Coverage limitation**: `f_pa_event` is OOTP's per-PA log for the
+    current season only — it gets replaced each year on rollover. So
+    ``situational_batting`` has rows only for the latest simulated year
+    (2029 in this save). Pre-2029 splits would require persisting each
+    season's at-bat dump separately; that's a future enhancement.
+
+    Pitcher splits (same SQL, keyed on pitcher_id) are deferred to a
+    follow-up — symmetric in shape but the verdict semantics ("did opp
+    hit me well in clutch?") flip.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    year: int
+    level_id: int
+    level_name: str | None
+    split: str           # "all" | "risp" | "risp_2out" | "late_close"
+    split_label: str     # "All" | "RISP" | "RISP, 2 out" | "Late & Close"
+    pa: int
+    ab: int
+    h: int
+    doubles: int         # 2B (avoid `2b` Python identifier issue)
+    triples: int         # 3B
+    hr: int
+    bb: int
+    k: int
+    hbp: int
+    sf: int              # sacrifice flies — used in OBP denom
+    avg: float | None
+    obp: float | None
+    slg: float | None
+    ops: float | None
+
+
 class PlayerResponse(BaseModel):
     """``GET /api/players/{player_id}`` response.
 
@@ -525,3 +580,8 @@ class PlayerResponse(BaseModel):
     # None when the player has no roster row in the current snapshot
     # (retired, never on a roster, etc.).
     roster_status: PlayerRosterStatus | None
+    # Per-(year, level, split) situational batting from f_pa_event. Empty
+    # for pitchers (zero batter PAs) and pre-2019 imported players (no
+    # at-bat log). Sorted year DESC, level (MLB first), split (all → risp
+    # → risp_2out → late_close).
+    situational_batting: list[PlayerSituationalRow]

@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-11 (in-game year 2029→2030) — **Phase 3: standings page shipped — fills the `/league` tab stub with real content.** `GET /api/standings?league_id=&year=` returns sub-league × division × team rows from `team_record_snapshot` at the resolved MAX(dump_date) within the chosen year. Defaults to MLB / latest year (2029-11-01 = end-of-season). Picker grouped by level (MLB / AAA / AA / A+ / A / Rk / DSL); user's org row gets a left-border accent + "You" pill. Clinched flag (OOTP `magic_number=-1` sentinel) renders as an emerald pill. Streak signed integer renders as W9 (emerald) / L4 (rose) / em-dash. Verified end-to-end: 2029 BOS Red Sox 93-69 in AL East (clinched), CHC 96-66 NL Central +9 streak, all 30 MLB teams + 100+ minor-league teams partition correctly. AAA (sub-league null, 2 divisions) and AFL (no league-meta row) edge cases handled. **Next: clutch / RISP splits on player page** — `f_pa_event` already has `risp_flag`, would add a Situational disclosure row to the Stats tab.
+**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: clutch / RISP splits on player page shipped.** New "Situational batting" section on `/player/[id]` renders four rows per (year, level): All / RISP / RISP 2-out / Late & Close — slash + counting per row. Backed by a new `_fetch_situational_batting()` SQL helper that joins `f_pa_event` to `games_event` (game_type=0 = regular season) and UNIONs the four splits. OPS in a split row colors emerald when it beats the All baseline by ≥25 pts and rose when it lags by ≥25, so clutch / choke patterns read at a glance. Verified Devers 2029: All .777 → RISP .881 (clutch in scoring position) → RISP 2-out .689 (chokes) → Late & Close .685 (chokes). Mayer 2029: All .741 → Late & Close .752 (slight clutch). Pitchers correctly return zero-rows. **Coverage caveat**: `f_pa_event` carries one season at a time (OOTP replaces the per-PA log on rollover), so splits are 2029-only — documented in the schema + the UI footer. **Next: port a CLI history surface** (records / awards / hof / streaks) to the `/history` tab to drain that stub.
 
 ---
 
@@ -534,12 +534,52 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
     - **No team-page deep links** — abbr is shown but not yet
       clickable. Lands when team page ships.
 
-19. **Clutch / RISP splits** on player page *(next slice)* —
-    `f_pa_event` already has `risp_flag`, would add a Situational
-    disclosure row to the Stats tab.
-20. Then **records / awards / hof / streaks → History tab** (port
-    the existing CLI surfaces under `/history`), and the rest of the
-    UI_DESIGN.md ladder.
+19. ✅ **Clutch / RISP splits** on player page — done 2026-05-12.
+    New "Situational batting" section on the player page Stats tab.
+    Four splits per (year, level): All / RISP / RISP 2-out / Late & Close.
+    Each row carries PA / AB / H / 2B / 3B / HR / BB / K + AVG/OBP/SLG/OPS.
+    OPS beating the "All" baseline by ≥25 pts colors emerald (clutch);
+    lagging by ≥25 colors rose (choke); inside ±25 stays neutral
+    (sample-size noise on single-season cuts).
+
+    Implementation:
+    - **Schema** (`PlayerSituationalRow`) — per-(year, level, split)
+      with all counting cols + server-computed slash. Empty array for
+      pitchers + pre-2029 imports.
+    - **SQL** (`_fetch_situational_batting`) — JOIN `f_pa_event` to
+      `games_event` filtered to game_type=0 (= REGULAR_SEASON in
+      `GameType`, NOT 1; verified). UNION ALL four splits within the
+      base CTE for a clean tabular result. AB excludes sacrifices
+      (`sac=0`); SF = (`sac=1 AND result=5`).
+    - **UI** (`SituationalBattingTable`) — one per (year, level)
+      tuple, but in this save the warehouse only holds 2029 splits
+      (`f_pa_event` is single-season), so most players show one block.
+      The "All" row is shaded as the baseline so the eye anchors there.
+    - **Reconciliation**: Devers 2029 All row PA=636 / AB=535 /
+      H=124 / HR=27 / BB=96 / K=158 — exact match against
+      `f_player_season_batting` (split_id=1). Mayer 2029 All matches
+      similarly (PA=582 / AB=529 / H=139 / HR=13 / BB=47 / K=116).
+    - **Coverage caveat**: OOTP replaces `at_bats_event.csv` each
+      season on rollover, so f_pa_event holds the latest year only.
+      Pre-2029 splits would require persisting each season's at-bat
+      dump separately. UI footer explains this.
+
+    Verified: Devers 2029 RISP .881 (emerald — clutch) / RISP 2-out
+    .689 (rose — choked w/ 2 outs) / Late & Close .685 (rose).
+    Mayer 2029 Late & Close .752 (emerald — slight clutch in tying-
+    run windows). Crochet (pitcher) → 0 rows.
+
+    **Deferred**:
+    - Pitcher splits (same SQL keyed on `pitcher_id`) — symmetric
+      shape; lands when there's pull for "vs me with RISP" view.
+    - Bases empty / vs LHP / vs RHP — could mirror the same pattern.
+    - Multi-year rollups — blocked by single-season at-bat log.
+
+20. **Port a CLI history surface** *(next slice)* — drain the
+    `/history` stub with one of `records / awards / hof / streaks`.
+    All four surfaces exist as L3 facts already; UI work only.
+21. Then the rest of the UI_DESIGN.md ladder (pressure board, salary
+    stream, compare under Explore, etc.).
 
 **Open audit carry-forwards** (non-blocking, picked up opportunistically):
 multi-level OPS+/ERA+ park weighting, hit_loc-based spray, LeaderCategory codes

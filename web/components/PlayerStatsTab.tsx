@@ -32,6 +32,7 @@ import type {
   PlayerPitchingStint,
   PlayerPositionFielding,
   PlayerResponse,
+  PlayerSituationalRow,
   TeamRef,
 } from "@/lib/types/api";
 
@@ -856,6 +857,245 @@ function PitchingCareerRow({
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Situational batting (clutch / RISP splits)
+// ─────────────────────────────────────────────────────────────────────────
+//
+// One section per (year, level) tuple — but in this save the warehouse
+// only holds the latest year's PA log (`f_pa_event` is a single-season
+// table per OOTP), so 99% of players will have exactly one tuple here.
+// The grouping is still spelled out so the UI stays correct if a multi-
+// season log ever lands.
+//
+// Each tuple shows four rows: All / RISP / RISP, 2 out / Late & Close.
+// The "All" row is the parity baseline — its slash should match the
+// regular batting section's row for the same (year, level). When OPS
+// in a split row beats the All row's OPS we render the value in
+// emerald (clutch hitter); when it lags we render in rose. The
+// magnitude isn't surfaced numerically — qualitative cue only — to
+// keep the table dense.
+
+function fmtSlash(v: number | null): string {
+  if (v == null) return "—";
+  const s = v.toFixed(3);
+  return v < 1 ? s.replace(/^0/, "") : s;
+}
+
+function opsCellClass(
+  splitOps: number | null,
+  baselineOps: number | null,
+  isBaseline: boolean,
+): string {
+  // Baseline (the "All" row) always renders in primary content color so
+  // the eye anchors there. Splits with no sample stay neutral.
+  if (isBaseline || splitOps == null || baselineOps == null) {
+    return "text-content-primary";
+  }
+  // 25-point OPS gap = the Bref-conventional "clutch" threshold on the
+  // splits page. Anything inside ±25 reads as noise; outside it as
+  // signal. Single-season cuts are inherently noisy — the cue is
+  // qualitative, not predictive.
+  const delta = splitOps - baselineOps;
+  if (delta >= 0.025) return "text-emerald-600 dark:text-emerald-400";
+  if (delta <= -0.025) return "text-rose-600 dark:text-rose-400";
+  return "text-content-primary";
+}
+
+interface SituationalGroup {
+  year: number;
+  level_id: number;
+  level_name: string | null;
+  rows: PlayerSituationalRow[];
+}
+
+function groupSituational(rows: PlayerSituationalRow[]): SituationalGroup[] {
+  const groups = new Map<string, SituationalGroup>();
+  for (const r of rows) {
+    const key = `${r.year}-${r.level_id}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        year: r.year,
+        level_id: r.level_id,
+        level_name: r.level_name,
+        rows: [],
+      };
+      groups.set(key, g);
+    }
+    g.rows.push(r);
+  }
+  // Group iteration matches insertion order — and the API returns rows
+  // pre-sorted year DESC + level (MLB first), so we get the right
+  // group order for free.
+  return [...groups.values()];
+}
+
+function SituationalBattingTable({
+  rows,
+}: {
+  rows: PlayerSituationalRow[];
+}) {
+  const groups = groupSituational(rows);
+
+  return (
+    <section>
+      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-content-muted">
+        Situational batting
+      </h2>
+      <div className="space-y-4">
+        {groups.map((g) => {
+          const baselineOps =
+            g.rows.find((r) => r.split === "all")?.ops ?? null;
+          return (
+            <div
+              key={`${g.year}-${g.level_id}`}
+              className="overflow-x-auto rounded-md border border-border bg-surface-card"
+            >
+              <header className="flex items-baseline gap-2 border-b border-border bg-surface-elevated/50 px-3 py-1.5 text-xs">
+                <span className="font-mono text-content-primary">
+                  {g.year}
+                </span>
+                <span className="text-content-muted">·</span>
+                <span className="font-mono text-content-secondary">
+                  {g.level_name ?? `level ${g.level_id}`}
+                </span>
+                <span className="ml-auto text-[10px] uppercase tracking-wide text-content-muted">
+                  Regular season
+                </span>
+              </header>
+              <table className="min-w-full text-sm">
+                <thead className="bg-surface-elevated/30 text-xs uppercase text-content-muted">
+                  <tr>
+                    <th className="px-3 py-1.5 text-left font-medium">
+                      Split
+                    </th>
+                    <th className="px-2 py-1.5 text-right font-medium" title="Plate appearances">
+                      PA
+                    </th>
+                    <th className="px-2 py-1.5 text-right font-medium" title="At-bats">
+                      AB
+                    </th>
+                    <th className="px-2 py-1.5 text-right font-medium" title="Hits">
+                      H
+                    </th>
+                    <th className="px-2 py-1.5 text-right font-medium" title="Doubles">
+                      2B
+                    </th>
+                    <th className="px-2 py-1.5 text-right font-medium" title="Triples">
+                      3B
+                    </th>
+                    <th className="px-2 py-1.5 text-right font-medium" title="Home runs">
+                      HR
+                    </th>
+                    <th className="px-2 py-1.5 text-right font-medium" title="Walks">
+                      BB
+                    </th>
+                    <th className="px-2 py-1.5 text-right font-medium" title="Strikeouts">
+                      K
+                    </th>
+                    <th className="px-2 py-1.5 text-right font-medium" title="Batting average — H/AB">
+                      AVG
+                    </th>
+                    <th className="px-2 py-1.5 text-right font-medium" title="On-base percentage">
+                      OBP
+                    </th>
+                    <th className="px-2 py-1.5 text-right font-medium" title="Slugging percentage">
+                      SLG
+                    </th>
+                    <th className="px-2 py-1.5 text-right font-medium" title="On-base + slugging">
+                      OPS
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {g.rows.map((r) => {
+                    const isBaseline = r.split === "all";
+                    const opsClass = opsCellClass(
+                      r.ops,
+                      baselineOps,
+                      isBaseline,
+                    );
+                    return (
+                      <tr
+                        key={r.split}
+                        className={
+                          isBaseline
+                            ? "border-t border-border bg-surface-elevated/40"
+                            : "border-t border-border"
+                        }
+                      >
+                        <td
+                          className={
+                            isBaseline
+                              ? "px-3 py-1.5 text-left text-sm font-semibold text-content-primary"
+                              : "px-3 py-1.5 text-left text-sm text-content-secondary"
+                          }
+                        >
+                          {r.split_label}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-primary">
+                          {r.pa}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-primary">
+                          {r.ab}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-primary">
+                          {r.h}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-secondary">
+                          {r.doubles}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-secondary">
+                          {r.triples}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-secondary">
+                          {r.hr}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-secondary">
+                          {r.bb}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-secondary">
+                          {r.k}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-primary">
+                          {fmtSlash(r.avg)}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-primary">
+                          {fmtSlash(r.obp)}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono text-sm tabular-nums text-content-primary">
+                          {fmtSlash(r.slg)}
+                        </td>
+                        <td
+                          className={`px-2 py-1.5 text-right font-mono text-sm tabular-nums ${opsClass}`}
+                        >
+                          {fmtSlash(r.ops)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-1 text-xs text-content-muted">
+        <strong>RISP</strong> = runner on 2nd or 3rd at start of PA.
+        {" "}<strong>RISP, 2 out</strong> = the same with two outs (the
+        last-out RBI chance). <strong>Late &amp; Close</strong> = 7th
+        inning or later with the tying run on base, at the plate, or on
+        deck. OPS in a split row is colored emerald when it beats the
+        &ldquo;All&rdquo; baseline by ≥25 points, rose when it lags by
+        ≥25; smaller gaps are noise on single-season samples.
+        Splits cover the most recent simulated season only — OOTP&apos;s
+        per-PA log is replaced each year on rollover, so prior-year
+        splits aren&apos;t available.
+      </p>
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Main component
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -917,6 +1157,9 @@ export function PlayerStatsTab({
       r.rating_potential != null ||
       r.experience != null,
   );
+  // Situational requires actual PA — empty array for pitchers (no
+  // f_pa_event rows where they bat) and pre-2029 imported players.
+  const hasSituational = (player.situational_batting ?? []).length > 0;
 
   return (
     <div className="space-y-8">
@@ -992,6 +1235,10 @@ export function PlayerStatsTab({
           rows={player.advanced_pitching}
           headers={advPitchingHeaders}
         />
+      )}
+
+      {hasSituational && (
+        <SituationalBattingTable rows={player.situational_batting} />
       )}
 
       {hasFielding && (

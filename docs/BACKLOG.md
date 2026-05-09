@@ -492,10 +492,16 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
   `clinched: bool`. Streak signed int → "W9"/"L4"/—. Sub-league/division
   null cases (AAA divisions only, AFL flat) handled. Pythagorean / RS /
   RA columns deferred (snapshot carries W-L-Pct only).
-- [ ] **Clutch / RISP splits on player page** — `f_pa_event` already
-  has `risp_flag`, `close_flag`, `late_close_flag` populated. One
-  SQL slice to compute per-(player, year, level) splits + add a
-  splits section on the player page.
+- [x] **Clutch / RISP splits on player page** — done 2026-05-12.
+  New "Situational batting" section on the player page Stats tab.
+  Four splits per (year, level): All / RISP / RISP 2-out / Late &
+  Close. Slash + counting per row; OPS color-coded vs the All
+  baseline (≥25 pts emerald = clutch; ≤-25 rose = choke). Backed by
+  `_fetch_situational_batting` (joins `f_pa_event` to `games_event`
+  for the game_type=0 regular-season filter; UNIONs four splits).
+  Pitcher splits + bases-empty / vs LHP / vs RHP deferred. v1
+  inherently single-season because OOTP's per-PA log replaces
+  itself on rollover (documented).
 - [ ] **Pressure board** — companion to the movement ledger. For each
   level, players mashing relative to the level median vs. players
   struggling at the next level up. The "who *should* move" view.
