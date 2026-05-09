@@ -13,6 +13,15 @@ REM use those individually if you only need to restart one half.
 
 cd /d "%~dp0"
 
+REM Self-heal: if a prior session crashed / was force-closed and left
+REM stale processes on :3000 or :8000, clear them before launch.
+REM Without this, the new uvicorn fails to bind and the new Next dev
+REM connects to the stale uvicorn (silent stale-code bug). DEV_AUTOMATED
+REM tells kill-stale.bat to skip its pause prompt so the chain proceeds.
+set DEV_AUTOMATED=1
+call kill-stale.bat
+set DEV_AUTOMATED=
+
 REM `start "Title" cmd /k script` opens a new cmd window that runs the
 REM script and stays open afterward. The title shows in the taskbar so
 REM the two windows are easy to tell apart.

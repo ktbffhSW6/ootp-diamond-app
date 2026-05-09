@@ -79,9 +79,10 @@ If you don't have `make` installed (it's not part of base Windows),
 use the batch shortcuts at the repo root instead:
 
 ```cmd
-api.bat        :: same as `make api`
-web.bat        :: same as `make web`
-dev.bat        :: spawn both + open the browser at :3000 (one-shot launcher)
+api.bat         :: same as `make api`
+web.bat         :: same as `make web`
+dev.bat         :: spawn both + open the browser at :3000 (one-shot launcher)
+kill-stale.bat  :: clear any process on :3000 / :8000 (recovery tool)
 ```
 
 Both `api.bat` and `web.bat` `cd` to the right directory, set
@@ -89,12 +90,27 @@ Both `api.bat` and `web.bat` `cd` to the right directory, set
 side), and pause on error so the message is readable. Double-clicking
 either file from Explorer also works.
 
-`dev.bat` is the one-shot convenience wrapper — it `start`s each of
-the other two batch files in its own console window (so the logs stay
-visible and either can be Ctrl+C'd independently) and then opens the
-default browser to `http://localhost:3000` after a 6-second pause to
-let Next.js's first compile finish. If you only need to restart one
-side, use `api.bat` / `web.bat` directly.
+`dev.bat` is the one-shot convenience wrapper — it calls
+`kill-stale.bat` first (self-heals stale ports from a crashed prior
+session), then `start`s each of the other two batch files in its own
+console window (so the logs stay visible and either can be Ctrl+C'd
+independently) and then opens the default browser to
+`http://localhost:3000` after a 6-second pause to let Next.js's first
+compile finish. If you only need to restart one side, use `api.bat` /
+`web.bat` directly.
+
+`kill-stale.bat` exists for the recovery case the in-app **Quit**
+button can't help with: a prior session was force-closed (machine
+sleep, console window kill, OS reboot) and left a uvicorn or `next
+dev` orphaned on its port. The next launch then fails to bind, OR —
+worse — Next.js silently connects to the **stale uvicorn** while you
+think you're running current code. The Quit button needs a reachable
+API to receive the POST; this script doesn't, so it's the canonical
+side-channel cleanup. It uses `netstat -ano` + `taskkill /F /T` to
+clear anything holding :3000 / :8000 regardless of how it was
+launched. Double-clickable; also called automatically by `dev.bat`
+so the normal launch workflow self-heals without you having to
+remember it exists.
 
 Open http://localhost:3000 — you'll land on the **cockpit dashboard**
 (save header + warehouse stats + Sox division standings + top-3 MLB
@@ -201,6 +217,20 @@ copy its shape when adding new resources.
   in a browser to confirm the backend is reachable.
 - **`make types` fails**: confirm `pnpm install` ran successfully in
   `web/` and `web/node_modules/.bin/json2ts` exists.
+- **`uvicorn` fails to bind on :8000 / `next dev` fails on :3000**:
+  a prior session left a stale process holding the port. Run
+  `kill-stale.bat` (double-click or from cmd) and relaunch.
+  `dev.bat` calls this automatically so the normal workflow
+  self-heals — but `api.bat` / `web.bat` don't (they're per-side
+  shortcuts), so the recovery script is your friend if you only
+  restart one half.
+- **Code changes don't appear in the running app**: classic
+  symptom of Next.js silently connecting to a stale uvicorn from a
+  prior session. The browser hits the new Next, but Next's
+  server-component fetches reach the OLD uvicorn (still on :8000).
+  Run `kill-stale.bat` and restart `dev.bat`. To confirm: hit
+  `http://localhost:8000/api/health` and check the response —
+  the `version` field bumps with each new schema-affecting commit.
 
 ## What's not in scope (yet)
 
