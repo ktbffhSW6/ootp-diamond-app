@@ -90,14 +90,22 @@ Both `api.bat` and `web.bat` `cd` to the right directory, set
 side), and pause on error so the message is readable. Double-clicking
 either file from Explorer also works.
 
-`dev.bat` is the one-shot convenience wrapper — it calls
-`kill-stale.bat` first (self-heals stale ports from a crashed prior
-session), then `start`s each of the other two batch files in its own
-console window (so the logs stay visible and either can be Ctrl+C'd
-independently) and then opens the default browser to
-`http://localhost:3000` after a 6-second pause to let Next.js's first
-compile finish. If you only need to restart one side, use `api.bat` /
-`web.bat` directly.
+`dev.bat` is the one-shot convenience wrapper. Sequence:
+
+1. `kill-stale.bat` — self-heal stale ports from a crashed prior session
+2. **`diamond ingest --all`** — picks up any new dumps OOTP wrote since
+   last launch. No-op (~2-3s) when nothing's new; runs the L0/L1/L2/L3
+   pipeline for each pending dump otherwise. Has to run BEFORE uvicorn
+   binds because uvicorn holds an RW lock on the DuckDB file. Skip with
+   `set DIAMOND_SKIP_AUTO_INGEST=1` in the parent shell.
+3. `start "Diamond API" cmd /k api.bat` — uvicorn :8000 in its own window
+4. `start "Diamond Web" cmd /k web.bat` — Next.js :3000 in its own window
+5. After a 6-second pause, opens the default browser to localhost:3000
+
+If you only need to restart one side, use `api.bat` / `web.bat`
+directly. Those don't auto-ingest — quickest way to skip the ingest
+check is `api.bat` (or hit the in-app **↻ Refresh** button later, see
+below).
 
 `kill-stale.bat` exists for the recovery case the in-app **Quit**
 button can't help with: a prior session was force-closed (machine
@@ -112,7 +120,26 @@ launched. Double-clickable; also called automatically by `dev.bat`
 so the normal launch workflow self-heals without you having to
 remember it exists.
 
-Open http://localhost:3000 — you'll land on the **cockpit dashboard**
+### Keeping the warehouse fresh
+
+OOTP writes a new dump roughly per in-game month. Two paths keep
+Diamond in sync:
+
+1. **Auto-ingest at launch** — `dev.bat` calls `diamond ingest --all`
+   before starting uvicorn (see step 2 above). After OOTP writes a
+   new dump, the next `dev.bat` run picks it up automatically.
+2. **In-app `↻` button** — the header has a Refresh control next to
+   the ⚙ and Quit buttons. It polls `GET /api/admin/dump-status`
+   every 60 seconds and shows an amber badge with the pending count
+   when new dumps are detected. Click to trigger a synchronous
+   `POST /api/admin/ingest` — blocks the UI for the ingest duration
+   (~30s-3min depending on pending count), then auto-refreshes the
+   server-rendered pages so fresh data appears. Useful when you've
+   been simming in OOTP with Diamond open in another window.
+
+CLI introspection: `diamond status` prints the same gap the badge
+shows (no work done — pure read of `_diamond_ingests`). Add
+`--save NAME` to inspect a non-active save.
 (save header + warehouse stats + Sox division standings + top-3 MLB
 promotion/pressure pairs + 6 spotlight cards with sparkline + auto-
 generated insight + last 8 movement-ledger rows). Three demo paths:

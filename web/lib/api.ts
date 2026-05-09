@@ -21,6 +21,8 @@ import type {
   AwardsResponse,
   BattedBallsResponse,
   ChartBuilderResponse,
+  DumpStatusResponse,
+  IngestRunResponse,
   CockpitResponse,
   CompareResponse,
   DraftClassResponse,
@@ -389,6 +391,24 @@ export async function setSaveConfig(
       body: JSON.stringify(body),
     },
   );
+}
+
+// Read-only ingest status — counts pending dumps without doing any
+// work. Cheap; safe to poll. The header's RefreshButton calls this
+// every 60s and shows a badge when pending_count > 0.
+export async function getDumpStatus(): Promise<DumpStatusResponse> {
+  return fetchJson<DumpStatusResponse>("/api/admin/dump-status");
+}
+
+// Trigger a synchronous ingest — picks up any new dumps + rebuilds
+// L1+L2+L3. Long-running (30s-3min depending on pending count); the
+// API blocks during the operation so the UI should show a spinner
+// and bypass the default fetch timeout.
+export async function triggerIngest(): Promise<IngestRunResponse> {
+  return fetchJson<IngestRunResponse>("/api/admin/ingest", {
+    method: "POST",
+    // No client-side timeout — ingest can legitimately take minutes.
+  });
 }
 
 // Trigger a one-click shutdown of both dev servers (Next.js :3000 and

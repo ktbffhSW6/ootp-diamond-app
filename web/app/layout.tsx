@@ -17,6 +17,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { QuitButton } from "@/components/QuitButton";
+import { RefreshButton } from "@/components/RefreshButton";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 
 export const metadata: Metadata = {
@@ -72,6 +73,7 @@ export default function RootLayout({
               <NavLink href="/settings" label="⚙" />
             </nav>
             <div className="flex items-center gap-2">
+              <RefreshButton />
               <ThemeSwitcher />
               <QuitButton />
             </div>

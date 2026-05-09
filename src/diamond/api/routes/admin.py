@@ -1,15 +1,32 @@
 """Admin endpoint — dev-only utilities for the local-first stack.
 
-Currently exposes:
-- ``POST /api/admin/shutdown`` — kill both dev servers (Next.js :3000
-  and this FastAPI :8000) so the user can quit the app from a button
-  in the UI rather than closing two console windows.
+Exposes:
+- ``POST /api/admin/shutdown``    — kill both dev servers
+- ``GET  /api/admin/dump-status`` — list pending dumps (for the
+                                    "Refresh" badge in the header)
+- ``POST /api/admin/ingest``      — synchronously ingest any new
+                                    dumps into the active save's
+                                    warehouse, then rebuild L1+L2+L3.
+                                    Blocks for the full ingest
+                                    duration; the UI shows a spinner.
 
 Why this is OK to ship without auth: Diamond is a single-user local-
 first app per D16. CORS already restricts the API to
-``localhost:3000``; nothing else can hit this endpoint. When the
-Phase-4 web-share path opens we'll either gate this behind a config
-flag or remove it entirely depending on the deploy story.
+``localhost:3000``; nothing else can hit these endpoints. When the
+Phase-4 web-share path opens we'll either gate them behind a config
+flag or remove them entirely depending on the deploy story.
+
+Concurrency story for ingest:
+
+The API holds a single read-write DuckDB connection (the
+``_root_con`` singleton in ``warehouse.py``). The ingest pipeline
+also needs read-write access. Rather than juggle two RW connections
+to the same file (DuckDB doesn't permit that), the ingest handler
+runs on the SAME connection — under the warehouse module's
+``_lock`` so concurrent requests block on cursor creation until
+ingest completes. Acceptable for a single-user app: if you click
+"Refresh" your other tabs pause for ~30s-3min, then unblock with
+fresh data.
 """
 
 from __future__ import annotations
@@ -19,8 +36,23 @@ import platform
 import subprocess
 import sys
 import tempfile
+import time
+from datetime import datetime
+from pathlib import Path
 
+import duckdb
 from fastapi import APIRouter, HTTPException
+
+from diamond.api.schemas import DumpStatusResponse, IngestRunResponse
+from diamond.api.warehouse import (
+    _lock as _warehouse_lock,
+    get_active_save,
+)
+from diamond.schema.build import (
+    already_ingested,
+    build_warehouse,
+    open_warehouse_db,
+)
 
 router = APIRouter()
 
@@ -195,3 +227,169 @@ def shutdown_app() -> dict[str, object]:
         stderr=subprocess.DEVNULL,
     )
     return {"status": "shutting_down", "ports": [3000, 8000]}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ingest status + on-demand refresh
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _list_dumps_on_disk(save) -> list[str]:
+    """Sort dump_* folder names alphabetically (= chronologically).
+
+    OOTP names dumps `dump_YYYY_MM`, so lexical order matches
+    chronological order.
+    """
+    if not save.dump_dir.exists():
+        return []
+    return sorted(
+        p.name for p in save.dump_dir.iterdir()
+        if p.is_dir() and p.name.startswith("dump_")
+    )
+
+
+@router.get("/admin/dump-status", response_model=DumpStatusResponse)
+def get_dump_status() -> DumpStatusResponse:
+    """Read-only snapshot of ingest gap.
+
+    Compares dump folders on disk against `_diamond_ingests` rows.
+    Returns counts + the list of pending dumps (truncated for the UI
+    badge tooltip). Lock-free: opens a temporary read-only connection
+    so it's safe to call while ingest is running.
+    """
+    save = get_active_save()
+    on_disk = _list_dumps_on_disk(save)
+
+    db_path = save.save_dir / "diamond" / "diamond.duckdb"
+    if not db_path.exists():
+        # Fresh save with no warehouse — every dump is pending.
+        return DumpStatusResponse(
+            save_name=save.save_name,
+            has_warehouse=False,
+            on_disk_count=len(on_disk),
+            ingested_count=0,
+            pending_count=len(on_disk),
+            pending_dumps=on_disk[:20],
+            latest_ingested_dump=None,
+            latest_ingested_at=None,
+        )
+
+    # Read-only connection — doesn't conflict with the API's RW _root_con
+    # because DuckDB allows multiple readers of the same file (or a writer
+    # + readers, but we open this one read-only explicitly).
+    try:
+        con = duckdb.connect(str(db_path), read_only=True)
+    except duckdb.Error:
+        # Defensive: if read_only=True somehow fails (rare on Windows
+        # when the file is locked), fall back to "everything pending"
+        # so the UI surfaces the issue rather than silently lying.
+        return DumpStatusResponse(
+            save_name=save.save_name,
+            has_warehouse=True,
+            on_disk_count=len(on_disk),
+            ingested_count=0,
+            pending_count=len(on_disk),
+            pending_dumps=on_disk[:20],
+            latest_ingested_dump=None,
+            latest_ingested_at=None,
+        )
+
+    try:
+        # Initialize the table existence check — we're read-only so we
+        # can't create it; if it doesn't exist, treat as zero ingested.
+        try:
+            ingested_rows = con.execute(
+                "SELECT dump_name, ingest_ts FROM _diamond_ingests "
+                "WHERE status = 'success' ORDER BY ingest_ts DESC"
+            ).fetchall()
+        except duckdb.Error:
+            ingested_rows = []
+
+        ingested_set = {r[0] for r in ingested_rows}
+        pending = [d for d in on_disk if d not in ingested_set]
+
+        latest_dump = ingested_rows[0][0] if ingested_rows else None
+        latest_at = (
+            ingested_rows[0][1].isoformat()
+            if ingested_rows and isinstance(ingested_rows[0][1], datetime)
+            else None
+        )
+
+        return DumpStatusResponse(
+            save_name=save.save_name,
+            has_warehouse=True,
+            on_disk_count=len(on_disk),
+            ingested_count=len(ingested_set),
+            pending_count=len(pending),
+            pending_dumps=pending[:20],
+            latest_ingested_dump=latest_dump,
+            latest_ingested_at=latest_at,
+        )
+    finally:
+        con.close()
+
+
+@router.post("/admin/ingest", response_model=IngestRunResponse)
+def trigger_ingest() -> IngestRunResponse:
+    """Synchronously ingest any new dumps + rebuild L1+L2+L3.
+
+    Holds the warehouse module's `_lock` for the entire operation,
+    blocking concurrent cursor creation. New requests during ingest
+    queue at the lock and unblock when ingest completes.
+
+    Long-running: ~2-3s when nothing's new (no-op fast path), 30s+
+    per pending dump on a real ingest. The frontend should show a
+    spinner and bump its HTTP timeout to several minutes.
+    """
+    save = get_active_save()
+
+    # Guard: don't try to ingest if the dump directory doesn't exist
+    # (fresh-cloned save without OOTP exports yet).
+    if not save.dump_dir.exists():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"No dump directory at {save.dump_dir}. "
+                f"Run OOTP's CSV-export to populate it first."
+            ),
+        )
+
+    # Acquire the warehouse module's singleton lock for the duration
+    # of ingest. While held: any request that hits get_cursor() ->
+    # _ensure_root() will block on _ensure_root's same-name lock,
+    # then proceed once we release. We also force the singleton's
+    # _root_con to None so ingest opens its own fresh connection
+    # (avoids any shared-cursor weirdness during the rebuild).
+    from diamond.api import warehouse as wh_module
+
+    started = time.monotonic()
+    with _warehouse_lock:
+        # Close + null the API's existing connection if any. The next
+        # request will lazy-open a fresh one after we release the lock.
+        if wh_module._root_con is not None:
+            wh_module._root_con.close()
+            wh_module._root_con = None
+
+        # Open a fresh RW connection just for the ingest run.
+        ingest_con = open_warehouse_db(save)
+        try:
+            result = build_warehouse(
+                ingest_con,
+                save,
+                dumps=None,        # auto-detect: every dump folder
+                force=False,       # skip already-ingested
+                rebuild=True,      # always rebuild L1+L2+L3
+                verbose=False,     # spammy in API logs; CLI users get rich output
+                quiet_per_dump=True,
+            )
+        finally:
+            ingest_con.close()
+        # _root_con stays None — next request opens fresh.
+
+    elapsed = time.monotonic() - started
+    return IngestRunResponse(
+        save_name=save.save_name,
+        ingested=list(result.get("ingested", [])),
+        skipped=list(result.get("skipped", [])),
+        elapsed_seconds=round(elapsed, 2),
+    )

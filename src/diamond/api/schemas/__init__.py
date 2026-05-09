@@ -17,6 +17,7 @@ Conventions:
   import GlossaryEntry`` works regardless of the source file.
 """
 
+from diamond.api.schemas.admin import DumpStatusResponse, IngestRunResponse
 from diamond.api.schemas.ai import (
     AIProviderInfo,
     AISettingsResponse,
@@ -139,6 +140,8 @@ __all__ = [
     "AwardsResponse",
     "BattedBallEvent",
     "BattedBallsResponse",
+    "DumpStatusResponse",
+    "IngestRunResponse",
     "ChartBuilderPoint",
     "ChartBuilderResponse",
     "CockpitMovementRow",

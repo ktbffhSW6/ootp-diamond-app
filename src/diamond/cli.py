@@ -241,6 +241,93 @@ def ingest(
 
 
 @app.command()
+def status(
+    save: str = typer.Option(
+        None,
+        "--save",
+        help=(
+            "Save folder name (with the '.lg' suffix). Defaults to the "
+            "active save from ~/.diamond/active_save.toml."
+        ),
+    ),
+) -> None:
+    """Show ingest status for a save: pending dumps, latest snapshot.
+
+    Read-only — opens the warehouse, lists `<save>/dump/dump_*` folders,
+    diffs against `_diamond_ingests` to find what's pending. Use this
+    before calling `diamond ingest --all` to see what would happen.
+    """
+    from diamond.api.warehouse import build_save_config
+    from diamond.saves import list_saves, load_active_save_name
+    from diamond.schema.build import already_ingested
+
+    requested = save or load_active_save_name()
+    if requested is None:
+        save_config = BUILDING_THE_GREEN_MONSTER
+    else:
+        if not requested.endswith(".lg"):
+            requested = requested + ".lg"
+        available = {s.name for s in list_saves()}
+        if requested not in available:
+            _console.print(
+                f"[red]Save '{requested}' not found.[/red] "
+                f"Available: {sorted(available)}"
+            )
+            raise typer.Exit(2)
+        save_config = build_save_config(requested)
+
+    dump_dir = save_config.dump_dir
+    if not dump_dir.exists():
+        _console.print(
+            f"[yellow]No dump directory at[/yellow] {dump_dir}\n"
+            "Run OOTP's CSV-export to populate it first."
+        )
+        raise typer.Exit(0)
+
+    on_disk = sorted(
+        p.name for p in dump_dir.iterdir() if p.is_dir() and p.name.startswith("dump_")
+    )
+    if not on_disk:
+        _console.print(f"[yellow]No dumps found in {dump_dir}[/yellow]")
+        raise typer.Exit(0)
+
+    db_path = save_config.save_dir / "diamond" / "diamond.duckdb"
+    pending: list[str] = []
+    ingested_count = 0
+    if db_path.exists():
+        con = open_warehouse_db(save_config)
+        try:
+            for d in on_disk:
+                if already_ingested(con, d):
+                    ingested_count += 1
+                else:
+                    pending.append(d)
+        finally:
+            con.close()
+    else:
+        # Fresh save with no warehouse yet — everything is pending.
+        pending = list(on_disk)
+
+    _console.print(f"[bold]Save:[/bold] {save_config.save_name}")
+    _console.print(f"[bold]Warehouse:[/bold] {db_path}")
+    _console.print(f"[bold]Dumps on disk:[/bold] {len(on_disk)}")
+    _console.print(f"[bold]Already ingested:[/bold] {ingested_count}")
+    if pending:
+        _console.print(f"[bold yellow]Pending:[/bold yellow] {len(pending)}")
+        for d in pending[:10]:
+            _console.print(f"  • {d}")
+        if len(pending) > 10:
+            _console.print(f"  … and {len(pending) - 10} more")
+        _console.print(
+            f"\n[dim]Run[/dim] [cyan]diamond ingest --all"
+            + (f" --save \"{save_config.save_name}\"" if save else "")
+            + "[/cyan] [dim]to catch up.[/dim]"
+        )
+    else:
+        _console.print("[bold green]Up to date.[/bold green]")
+
+
+@app.command()
 def draft(
     year: int = typer.Argument(..., help="Draft year to analyze (e.g., 2026)."),
     team: int | None = typer.Option(

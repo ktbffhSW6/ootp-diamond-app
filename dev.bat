@@ -22,6 +22,25 @@ set DEV_AUTOMATED=1
 call kill-stale.bat
 set DEV_AUTOMATED=
 
+REM Auto-ingest: pick up any new dumps OOTP wrote since last launch.
+REM `diamond ingest --all` is a no-op when nothing's new (~2-3s open
+REM the warehouse + check `_diamond_ingests`); when there are new
+REM dumps it processes them in chronological order before uvicorn
+REM binds. Has to run BEFORE api.bat because uvicorn holds an RW
+REM lock on the DuckDB file that ingest also needs. Skip with
+REM `set DIAMOND_SKIP_AUTO_INGEST=1` in the parent shell.
+if not defined DIAMOND_SKIP_AUTO_INGEST (
+  echo.
+  echo === Auto-ingest: scanning for new dumps ===
+  .venv\Scripts\diamond.exe ingest --all
+  if errorlevel 1 (
+    echo.
+    echo [WARN] Auto-ingest exited with an error. Continuing with launch
+    echo        anyway; rerun manually after fixing if needed.
+    echo.
+  )
+)
+
 REM `start "Title" cmd /k script` opens a new cmd window that runs the
 REM script and stays open afterward. The title shows in the taskbar so
 REM the two windows are easy to tell apart.

@@ -521,6 +521,25 @@ export interface DraftClassSummary {
   retired: number;
 }
 /**
+ * Read-only snapshot of ingest gap: what's on disk vs what's been
+ * processed into the warehouse.
+ *
+ * `pending_dumps` is a (truncated) list of dump folder names that
+ * OOTP has written but Diamond hasn't ingested yet. The frontend
+ * surfaces a badge when ``pending_count > 0`` and a "Refresh" button
+ * that triggers ``POST /api/admin/ingest``.
+ */
+export interface DumpStatusResponse {
+  save_name: string;
+  has_warehouse: boolean;
+  on_disk_count: number;
+  ingested_count: number;
+  pending_count: number;
+  pending_dumps: string[];
+  latest_ingested_dump: string | null;
+  latest_ingested_at: string | null;
+}
+/**
  * One stat dictionary entry, serialized for HTTP.
  *
  * Field-for-field mirror of :class:`diamond.dictionary.Stat`. See
@@ -608,6 +627,20 @@ export interface HofResponse {
   rows: HofPlayer[];
   inductees_count: number;
   candidates_count: number;
+}
+/**
+ * Result of a ``POST /api/admin/ingest`` invocation.
+ *
+ * `ingested` and `skipped` are dump-folder-name lists. `elapsed_seconds`
+ * is wall-clock for the whole orchestration (L0 + L1 + L2 + L3
+ * rebuild). The frontend shows a toast/banner with these counts +
+ * triggers a router refresh so server-rendered pages re-fetch.
+ */
+export interface IngestRunResponse {
+  save_name: string;
+  ingested: string[];
+  skipped: string[];
+  elapsed_seconds: number;
 }
 /**
  * An entry in the stat picker — one of the supported leaderboard stats.
