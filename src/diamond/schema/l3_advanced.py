@@ -391,7 +391,7 @@ _REPL_FIP_MULT = 1.13
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Park-factor lookup CTE
+# Park-factor lookup
 #
 # Per-stint home park varies — a player traded mid-season has different
 # parks for each stint. For per-(year, league, level) advanced rows we
@@ -399,7 +399,102 @@ _REPL_FIP_MULT = 1.13
 # outs (pitching) at that level, and use that team's park factor.
 # Players with no team mapping default to park_avg=1.0 (no adjustment),
 # matching the convention in `sabermetric.ops_plus_per_player`.
+#
+# `_park_factor_resolved` (D22) is a (team_id, year) view that backfills
+# historical park factors for OOTP-imported pre-save MLB seasons via
+# Lahman's per-team `BPF` / `PPF` columns (100-relative; we divide by
+# 100 to match OOTP's 1.0-relative `parks.avg` convention). For 2026+
+# (save-native) and 2020-2025 (BREF era — Lahman doesn't extend that
+# far, BREF doesn't ship park factors per-team in our scrape) we fall
+# back to the OOTP team's current-day `parks.avg`. Net effect: Bonds
+# 2001 SF Giants gets BPF 0.93 (2001 NL pitcher's park) instead of
+# Oracle Park's modern 1.003, fixing the modern-stadium proxy bias on
+# pre-save OPS+/ERA+. wOBA/wRC+/wRAA are unaffected (they don't use
+# park).
+#
+# OOTP↔Lahman crosswalk is hardcoded for the 30 modern MLB clubs by
+# (team_id, franchID) — franchID is stable through historical team
+# renames (e.g., 'BAL' covers St Louis Browns 1902-1953 + Baltimore
+# Orioles 1954-present), which is the right granularity for a
+# franchise-as-stadium proxy. Defunct historical franchises (Brooklyn
+# Robins, Boston Beaneaters, etc.) won't have OOTP team_id rows in
+# pre-save player data — those player-rows fall through to
+# park_avg=1.0, same as today.
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+# `_park_factor_resolved` view — backfills historical Lahman BPF/PPF
+# for ≤2019 MLB seasons; falls back to current `parks.avg` otherwise.
+# Depends on `history_lahman_teams` — registered conditionally inside
+# `build_l3_advanced` (no-op fallback view if `fetch-history` hasn't run).
+_PARK_FACTOR_RESOLVED_VIEW_SQL = """
+CREATE OR REPLACE VIEW _park_factor_resolved AS
+WITH ootp_franchise_xwalk(team_id, lahman_franch_id) AS (
+    VALUES
+      (1,  'ARI'), (2,  'ATL'), (3,  'BAL'), (4,  'BOS'), (5,  'CHW'),
+      (6,  'CHC'), (7,  'CIN'), (8,  'CLE'), (9,  'COL'), (10, 'DET'),
+      (11, 'FLA'), (12, 'HOU'), (13, 'KCR'), (14, 'ANA'), (15, 'LAD'),
+      (16, 'MIL'), (17, 'MIN'), (18, 'NYY'), (19, 'NYM'), (20, 'OAK'),
+      (21, 'PHI'), (22, 'PIT'), (23, 'SDP'), (24, 'SEA'), (25, 'SFG'),
+      (26, 'STL'), (27, 'TBD'), (28, 'TEX'), (29, 'TOR'), (30, 'WSN')
+),
+historical AS (
+    SELECT
+        x.team_id,
+        ht.yearID AS year,
+        ht.BPF::DOUBLE / 100.0 AS bat_park_avg,
+        ht.PPF::DOUBLE / 100.0 AS pit_park_avg
+    FROM history_lahman_teams ht
+    INNER JOIN ootp_franchise_xwalk x ON x.lahman_franch_id = ht.franchID
+    WHERE ht.yearID <= 2019 AND ht.BPF IS NOT NULL AND ht.PPF IS NOT NULL
+),
+seen_pairs AS (
+    SELECT team_id, year FROM f_player_season_batting WHERE level_id = 1 AND split_id = 1
+    UNION
+    SELECT team_id, year FROM f_player_season_pitching WHERE level_id = 1 AND split_id = 1
+),
+modern AS (
+    SELECT
+        s.team_id,
+        s.year,
+        COALESCE(prk.avg, 1.0) AS bat_park_avg,
+        COALESCE(prk.avg, 1.0) AS pit_park_avg
+    FROM seen_pairs s
+    LEFT JOIN teams t   ON t.team_id  = s.team_id
+    LEFT JOIN parks prk ON prk.park_id = t.park_id
+)
+SELECT team_id, year, bat_park_avg, pit_park_avg, 'lahman' AS src
+FROM historical
+UNION ALL
+SELECT m.team_id, m.year, m.bat_park_avg, m.pit_park_avg, 'modern' AS src
+FROM modern m
+WHERE NOT EXISTS (
+    SELECT 1 FROM historical h
+    WHERE h.team_id = m.team_id AND h.year = m.year
+)
+"""
+
+
+# Fallback when `history_lahman_teams` doesn't exist (fresh save without
+# `fetch-history` run). Just exposes the modern teams.parks lookup with
+# the same shape, so downstream JOIN-on-(team_id,year) keeps working.
+_PARK_FACTOR_RESOLVED_FALLBACK_SQL = """
+CREATE OR REPLACE VIEW _park_factor_resolved AS
+WITH seen_pairs AS (
+    SELECT team_id, year FROM f_player_season_batting WHERE level_id = 1 AND split_id = 1
+    UNION
+    SELECT team_id, year FROM f_player_season_pitching WHERE level_id = 1 AND split_id = 1
+)
+SELECT
+    s.team_id,
+    s.year,
+    COALESCE(prk.avg, 1.0) AS bat_park_avg,
+    COALESCE(prk.avg, 1.0) AS pit_park_avg,
+    'modern' AS src
+FROM seen_pairs s
+LEFT JOIN teams t   ON t.team_id  = s.team_id
+LEFT JOIN parks prk ON prk.park_id = t.park_id
+"""
 
 
 def _build_f_player_season_advanced_batting(con: duckdb.DuckDBPyConnection) -> int:
@@ -455,11 +550,14 @@ def _build_f_player_season_advanced_batting(con: duckdb.DuckDBPyConnection) -> i
             ) WHERE rn = 1
         ),
         park_lookup AS (
+            -- D22: prefer Lahman historical BPF for pre-2020 MLB seasons,
+            -- fall back to modern teams.parks.avg via _park_factor_resolved.
+            -- Final fallback to 1.0 covers defunct franchises / unmapped teams.
             SELECT d.player_id, d.year, d.league_id, d.level_id,
-                   COALESCE(prk.avg, 1.0) AS park_avg
+                   COALESCE(pfr.bat_park_avg, 1.0) AS park_avg
             FROM dominant_team d
-            LEFT JOIN teams t ON t.team_id  = d.team_id
-            LEFT JOIN parks prk ON prk.park_id = t.park_id
+            LEFT JOIN _park_factor_resolved pfr
+                   ON pfr.team_id = d.team_id AND pfr.year = d.year
         ),
         joined AS (
             SELECT
@@ -577,11 +675,13 @@ def _build_f_player_season_advanced_pitching(con: duckdb.DuckDBPyConnection) -> 
             ) WHERE rn = 1
         ),
         park_lookup AS (
+            -- D22: prefer Lahman historical PPF for pre-2020 MLB seasons,
+            -- fall back to modern teams.parks.avg via _park_factor_resolved.
             SELECT d.player_id, d.year, d.league_id, d.level_id,
-                   COALESCE(prk.avg, 1.0) AS park_avg
+                   COALESCE(pfr.pit_park_avg, 1.0) AS park_avg
             FROM dominant_team d
-            LEFT JOIN teams t ON t.team_id  = d.team_id
-            LEFT JOIN parks prk ON prk.park_id = t.park_id
+            LEFT JOIN _park_factor_resolved pfr
+                   ON pfr.team_id = d.team_id AND pfr.year = d.year
         ),
         joined AS (
             SELECT
@@ -829,6 +929,32 @@ def build_l3_advanced(
                 "  [yellow]![/yellow] _lg_constants_advanced (view) "
                 "[dim]native only — run `diamond fetch-history` to backfill "
                 "pre-save MLB baselines[/dim]"
+            )
+
+    # 1b. Register `_park_factor_resolved` (D22) — backfills Lahman
+    #     historical BPF/PPF for ≤2019 MLB seasons; falls back to
+    #     modern teams.parks.avg otherwise. Conditional on
+    #     history_lahman_teams existing.
+    history_teams_loaded = con.execute(
+        """
+        SELECT COUNT(*) > 0 FROM information_schema.tables
+        WHERE table_name = 'history_lahman_teams'
+        """
+    ).fetchone()[0]
+    if history_teams_loaded:
+        con.execute(_PARK_FACTOR_RESOLVED_VIEW_SQL)
+        if verbose:
+            console.print(
+                "  [green]✓[/green] _park_factor_resolved (view) "
+                "[dim]Lahman BPF/PPF ≤ 2019 + modern ≥ 2020[/dim]"
+            )
+    else:
+        con.execute(_PARK_FACTOR_RESOLVED_FALLBACK_SQL)
+        if verbose:
+            console.print(
+                "  [yellow]![/yellow] _park_factor_resolved (view) "
+                "[dim]modern only — run `diamond fetch-history` to "
+                "backfill pre-2020 park factors[/dim]"
             )
 
     # 2. Per-player advanced facts.
