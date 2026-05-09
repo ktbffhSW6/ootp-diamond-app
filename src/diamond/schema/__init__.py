@@ -34,6 +34,16 @@ from diamond.schema.l1_snapshot import (
 )
 from diamond.schema.l2 import build_l2
 from diamond.schema.l3 import build_l3
+from diamond.schema.l_ref import (
+    LREF_CATALOG,
+    LRefSpec,
+    HeaderStyle,
+    compute_lref_diff,
+    ensure_lref,
+    is_lref_frozen,
+    ootp_install_root,
+    refresh_lref,
+)
 from diamond.schema.build import (
     DIAMOND_INGESTS_DDL,
     already_ingested,
@@ -60,9 +70,17 @@ __all__ = [
     "SYNTHETIC_PK_EVENTS",
     "L1SnapshotSpec",
     "GENERIC_SNAPSHOTS",
+    "LREF_CATALOG",
+    "LRefSpec",
+    "HeaderStyle",
     "build_l1_snapshot",
     "build_l2",
     "build_l3",
+    "compute_lref_diff",
+    "ensure_lref",
+    "is_lref_frozen",
+    "ootp_install_root",
+    "refresh_lref",
     "DIAMOND_INGESTS_DDL",
     "already_ingested",
     "build_l0",

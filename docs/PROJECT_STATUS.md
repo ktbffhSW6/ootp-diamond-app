@@ -4,7 +4,9 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-13 (evening, in-game year 2029→2030) — **Phase 3: marathon day + LSEG density refactor + L_REF architectural finding.** Today shipped:
+**Last updated**: 2026-05-14 (morning) — **Phase 3: L_REF Slice 1 shipped.** New `src/diamond/schema/l_ref.py` ingest module reads from the OOTP install folder into 27 per-save `lref_*` tables (575,587 rows total) with first-ingest freeze + SHA1 provenance per **D27**. Three tiers loaded: `misc/` analytical lookup tables (xwoba/xba/xslg @ 106 LA-rows, xiso 6-zone, re288 24-row, li 432-row, wpa 480-row, pi 3-row), `database/` baselines + park factors (pt_ballparks 240, era_ballparks 3,105, era_stats 156 years 1870-2025, era_stats_minors 2,335, era_modifiers/fielding/total_modifiers 153-155, financials 156, weather 513, default_players 12,854), `stats/` crosswalks (master 24,746, milb_master 212k, teams_history 3,142, milb_leagues 2,317, milb_teams 23,075, eos/od_rosters ~100k each, uni_numbers 86k, series_post 411). Wire-in: `ensure_lref()` runs from `rebuild_l1_l2()` on every CLI invocation; idempotent skip when `_diamond_settings.lref.frozen_at` is set; opt-in refresh via `diamond ingest --refresh-lref` (implies rebuild — downstream calcs may JOIN to lref_*). Verified: first ingest → 27 tables loaded; second invocation → "already frozen at ..." silent skip; `compute_lref_diff()` returns 0 changes; spot queries pass (Fenway 7-segment dimensions, Bonds Master crosswalk `bondsba01`, Coors 1995 BPF 1.106 / HR 1.344). Reference doesn't drift mid-save. **Slice 2 (calculation-parity swap) is the natural next-up** — wire `lref_xiso_table` into barrel%/SS%/HH% computation, add bilinear-interpolated `xwoba_pa` to `f_pa_event`, optionally RE24/WPA/LI from the remaining lookup tables.
+
+**2026-05-13 (evening, in-game year 2029→2030) — Phase 3: marathon day + LSEG density refactor + L_REF architectural finding.** Earlier-day shipped:
 
 1. **Five major UI slices in the morning** (Custom leaderboards / Spray + EV-LA charts / Historical park factors D22 / AI overlay D14 / Setup wizard D3 v2)
 2. **IA shuffle**: `/explore` is now the Chart Builder workshop only; per-player charts moved inline to player page; league-wide tools moved to `/league/*`. Permanent 308 redirects keep old URLs working.
@@ -34,7 +36,7 @@ Earlier-today slices (situational stack) in order:
 4. **Bases + platoon splits** — added `bases_empty` / `bases_loaded` (off `base1/2/3`) and `vs_left` / `vs_right` (LEFT JOIN to `players_current` for handedness; switch-hitters resolve to opposite of pitcher's hand). Side-aware labels: batter card "vs LHP/RHP", pitcher card "vs LHB/RHB". Sanity invariant: `vs_left + vs_right = all` ✓.
 5. **Counts + spray splits** — added `first_pitch` / `two_strike` / `full_count` (count BEFORE the resolving pitch) and `pull` / `center` / `oppo` (BIP-only spray; UI skips color coding since denominators differ). Empirically verified `hit_xy` is **batter-relative**, not field-absolute (mean hit_xy on HRs ≈71 for both LHB and RHB — same pull-side band), corrected DATA_NOTES.
 
-**Next — L_REF reference layer (D26 + D27)** is the priority next-up. Slice 1 is roughly 90 minutes; the deep-dive on 2026-05-13 expanded scope substantially and pinned the per-save freeze convention.
+**Next — L_REF Slice 2 (calculation-parity swap)** is the priority next-up. Slice 1 ingest layer landed 2026-05-14; the high-leverage analytical wins (xiso → barrel%, xwoba_pa via bilinear interpolation, optional RE24/WPA/LI columns on `f_pa_event`) come in Slice 2.
 
 **Architectural pin (D27, 2026-05-13 evening)**: L_REF is **per-save and frozen at first ingest**. On first `diamond ingest` for a save, L_REF tables snapshot into `<save>/diamond/diamond.duckdb` and stay pinned to that vintage for the save's lifetime. Subsequent ingests skip L_REF re-ingest by default; explicit `diamond ingest --refresh-lref` opts into pulling new data with CLI diff preview. This mirrors OOTP's own engine convention (saves capture reference data at creation; install-folder patches don't retroactively rewrite running saves) and makes "why did Bonds 2001 OPS+ shift between yesterday and today?" a non-question. Categories that would drift on patch if we didn't freeze: calculation tables (`misc/`), league baselines (`era_*.txt`), park factors (`era_ballparks.txt`, `pt_ballparks.txt`), engine config (`major_league_baseball.json`, `financials.txt`). Categories that wouldn't (additions are upgrades): crosswalks, schema docs, cosmetic assets. We freeze together for simplicity.
 
@@ -50,8 +52,8 @@ Earlier-today slices (situational stack) in order:
 
 | # | Slice | Highlights |
 |---|---|---|
-| 1 | L_REF ingest layer + per-save freeze | First-ingest snapshot, mtime+SHA1 provenance in `_diamond_settings`, `--refresh-lref` opt-in path |
-| 2 | **Calculation-parity swap** | xiso_table → barrel/SS/HH classification; xwoba_table → `xwoba_pa` / `xwoba_season`; optional RE24 + WPA + LI columns on `f_pa_event` |
+| 1 | ✅ **L_REF ingest layer + per-save freeze** (shipped 2026-05-14) | First-ingest snapshot, mtime+SHA1 provenance in `_diamond_settings.lref.*`, `--refresh-lref` opt-in path with diff preview, 27 tables / 575,587 rows |
+| 2 | **Calculation-parity swap** ← *next* | xiso_table → barrel/SS/HH classification; xwoba_table → `xwoba_pa` / `xwoba_season`; optional RE24 + WPA + LI columns on `f_pa_event` |
 | 3 | Era-aware park factors (D22 v2) | LH/RH splits from `lref_era_ballparks`, switch-hitter blend |
 | 4 | D20 v2 — replace Lahman+BREF UNION | Pull baselines from `lref_era_stats` instead |
 | 5 | MiLB pre-save baselines | `lref_milb_master` + `lref_era_stats_minors` extend `_lg_constants_advanced_imported` |

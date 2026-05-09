@@ -303,9 +303,21 @@ The OOTP 27 user-documents root contains ~500MB of static reference data we'd be
 └── ...
 ```
 
-### Per-save freeze convention (D27)
+### Per-save freeze convention (D27) — **Slice 1 shipped 2026-05-14**
 
 L_REF tables that ingest from this layout are **per-save and frozen at first ingest**. Once a save's first `diamond ingest` completes, its `lref_*` tables are pinned to whatever vintage of the install-folder data existed at that moment. Subsequent `diamond ingest` runs **skip** L_REF re-ingest by default; explicit `diamond ingest --refresh-lref` opts into pulling new data with a CLI diff preview.
+
+**Implementation** lives in `src/diamond/schema/l_ref.py`. The `LREF_CATALOG` lists 27 specs across three tiers (`misc/` 8 + `database/` 10 + `stats/` 9) with a `HeaderStyle` per spec — `AUTO` (plain CSV header), `COMMENT` (strip `//` prefix and re-supply column names — used for `re288_table.txt`, `xiso_table.txt`, `weather.txt`), or `HEADERLESS` (DuckDB names cols `column0..N`; used for `li_table.txt`, `wpa_table.txt`, `pi_table.txt`, `total_modifiers.txt`, `EOSRosters.csv`, `ODRosters.csv`). All tables load with `all_varchar=true` for safety; Slice 2+ explicitly casts on JOIN.
+
+**Provenance** stamps five `_diamond_settings` keys: `lref.frozen_at` (ISO timestamp of first ingest), `lref.source_root` (install-folder path), `lref.ootp_version` (e.g. `"27"`), `lref.table_count` (e.g. `"27"`), `lref.files_json` (per-file `{mtime, sha1, size_bytes, rows}` JSON map). The freeze gate is `is_lref_frozen(con)` checking `lref.frozen_at` only.
+
+**Refresh** flow: `compute_lref_diff(con)` walks `LREF_CATALOG`, computes current SHA1s, compares against frozen `files_json`, returns kind-grouped change list (`added` / `changed` / `removed` / `missing_source`). `refresh_lref(con, dry_run=True)` prints the diff without touching the warehouse. `diamond ingest --refresh-lref` calls `ensure_lref(con, force_refresh=True)` which re-ingests only changed files via `_do_ingest(con, install_root, only=<set of source_rels>)` and updates `lref.files_json` + `lref.last_refresh_at`. Implies a full L1+L2 rebuild because downstream advanced-stat calcs JOIN to `lref_*`.
+
+**Verified row counts on first ingest of "Building the Green Monster"** (2026-05-14):
+- Tier 1 (`misc/`): xwoba/xba/xslg @ 106 LA-rows × 61 EV-cols, xiso 6, re288 24, li 432, wpa 480, pi 3
+- Tier 2 (`database/`): pt_ballparks 240, era_ballparks 3,105, era_stats 156 (1870-2025), era_stats_minors 2,335, era_modifiers 153, era_fielding 155, total_modifiers 155, financials 156, weather 513, default_players 12,854
+- Tier 3 (`stats/`): master 24,746, milb_master 212,325, teams_history 3,142, milb_leagues 2,317, milb_teams 23,075, eos_rosters 99,643, od_rosters 102,254, uni_numbers 86,589, series_post 411
+- **Total: 575,587 rows / 27 tables / ~60MB ingested in one CTAS pass.**
 
 This mirrors OOTP's own engine convention: the engine captures install-folder reference data into the save at save-creation time and ignores subsequent install-folder edits, which is why mid-version OOTP patches don't break running saves. We inherit that same write-once-for-save-lifecycle property by snapshotting L_REF into the save's own DuckDB.
 

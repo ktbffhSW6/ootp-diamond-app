@@ -148,6 +148,19 @@ def ingest(
             "loads from ~/.diamond/save_configs.toml when present."
         ),
     ),
+    refresh_lref: bool = typer.Option(
+        False,
+        "--refresh-lref",
+        help=(
+            "Per Decision D27: re-check the OOTP install folder against the "
+            "frozen L_REF snapshot, print a SHA1 diff of changed files, and "
+            "re-ingest changed reference tables (xwoba/xba/xslg/xiso/re288/li/"
+            "wpa/era_*/Master/etc.). Implies a full L1+L2 rebuild because "
+            "downstream advanced-stat calcs JOIN to lref_*. Without this flag, "
+            "L_REF freezes at first ingest and stays pinned for the save's "
+            "lifetime — mirroring OOTP's own engine convention."
+        ),
+    ),
 ) -> None:
     """Ingest OOTP dumps into the warehouse and rebuild L1+L2.
 
@@ -220,7 +233,7 @@ def ingest(
             )
 
         if rebuild_only:
-            rebuild_l1_l2(con, save, verbose=True)
+            rebuild_l1_l2(con, save, verbose=True, refresh_lref=refresh_lref)
         else:
             dumps_arg = None if all_dumps else [dump]
             result = build_warehouse(
@@ -231,6 +244,7 @@ def ingest(
                 rebuild=not no_rebuild,
                 verbose=True,
                 quiet_per_dump=all_dumps,  # cleaner output for --all
+                refresh_lref=refresh_lref,
             )
             _console.print(
                 f"\n[bold]Summary:[/bold] {len(result['ingested'])} ingested, "

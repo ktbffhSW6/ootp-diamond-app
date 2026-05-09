@@ -714,6 +714,10 @@ The "None" rows could in principle be refreshed live without dispersion, but for
 - Mid-save automatic refresh detection. If the user never opts in, L_REF stays pinned forever — fine.
 - Multi-OOTP-version L_REF coexistence within a single save. If the user installs OOTP 28 and refreshes, the old OOTP-27-vintage L_REF is overwritten (with the prior `source_path` retained in settings as audit trail).
 
+**Implementation pin** (Slice 1 shipped 2026-05-14):
+
+The freeze convention is implemented in `src/diamond/schema/l_ref.py`. Provenance lives in `_diamond_settings` under the keys `lref.frozen_at` (ISO timestamp), `lref.source_root` (install-folder path string), `lref.ootp_version` (e.g. `"27"`), `lref.table_count`, and `lref.files_json` (JSON map of `source_rel → {mtime, sha1, size_bytes, rows}`). The freeze gate is `is_lref_frozen(con)` which checks `lref.frozen_at` only — a user who manually drops a `lref_*` table can re-trigger ingest by clearing that setting, but normal ingest is purely additive. Refresh path (`diamond ingest --refresh-lref`) computes a SHA1 diff via `compute_lref_diff()`, prints a kind-grouped summary (added/changed/removed/missing_source), then re-ingests only changed files via `_do_ingest(con, install_root, only=<set of source_rels>)` and updates `lref.files_json` + `lref.last_refresh_at`. Empirically: first ingest of "Building the Green Monster" on 2026-05-14 loaded 27 tables / 575,587 rows and stamped `frozen_at=2026-05-09T16:55:28`; second invocation skipped silently; `compute_lref_diff()` returns `[]` against the install folder unchanged.
+
 ## D28 — Save-folder data: stay on dump CSVs as primary; defer L_NEWS
 
 **Date**: 2026-05-13 (evening, paired with the save-folder deep-dive)

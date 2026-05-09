@@ -29,53 +29,52 @@ top priority — they're the single highest-leverage win in the parent folder
 (swap our hand-rolled xwOBA/RE/WPA/LI math for OOTP's lookup tables, guaranteed
 in-game-UI parity, ~30 minutes of CSV-loader work).
 
-### Slice 1 — L_REF ingest layer with per-save freeze (~90 min):
+### Slice 1 — L_REF ingest layer with per-save freeze ✅ **SHIPPED 2026-05-14**
 
-- [ ] `src/diamond/schema/l_ref.py` — new ingest module.
-- [ ] **Per-save freeze (D27)** — on first ingest, snapshot L_REF into per-save
-      `<save>/diamond/diamond.duckdb`. Subsequent `diamond ingest` runs detect
-      `lref_*` tables already populated and skip silently.
-- [ ] **Provenance** — stash per-file mtime + SHA1 + ingest timestamp + source
-      path + OOTP version in `_diamond_settings.lref.*` so we can answer
-      "what vintage of L_REF is this save pinned to?" without re-reading the
-      install folder.
-- [ ] **Refresh path** — `diamond ingest --refresh-lref` re-reads from install
-      folder, computes diff vs current snapshot, prints summary ("3 files
-      changed: era_ballparks.txt, era_stats.txt, Master.csv"), prompts for
-      confirmation before overwriting.
-- [ ] CTAS for the analytical-table tier (top priority — these are the
-      "calculation parity" wins):
-      - `lref_xwoba_table`, `lref_xba_table`, `lref_xslg_table` — xwOBA / xBA /
-        xSLG grids by (LA, EV) ← `misc/xwoba_table.txt` + siblings
-      - `lref_xiso_table` — 6-zone Statcast LSA classifier ← `misc/xiso_table.txt`
-      - `lref_re288_table` — RE by (outs, bases, count) ← `misc/re288_table.txt`
-      - `lref_li_table` — leverage index ← `misc/li_table.txt`
-      - `lref_wpa_table` — win probability ← `misc/wpa_table.txt`
-      - `lref_pi_table` — pitch impact ← `misc/pi_table.txt`
-- [ ] CTAS for the baselines + park factors tier:
-      - `lref_pt_ballparks` (240 rows) ← `database/pt_ballparks.txt`
-      - `lref_era_ballparks` (3,105 rows × 155 years) ← `database/era_ballparks.txt`
-      - `lref_era_stats` (82-col MLB league avgs) ← `database/era_stats.txt`
-      - `lref_era_stats_minors` ← `database/era_stats_minors.txt`
-      - `lref_era_modifiers` ← `database/era_modifiers.txt`
-      - `lref_era_fielding` ← `database/era_fielding.txt`
-      - `lref_total_modifiers` ← `database/total_modifiers.txt`
-      - `lref_financials` ← `database/financials.txt`
-      - `lref_weather` ← `database/weather.txt`
-- [ ] CTAS for the crosswalks + history tier:
-      - `lref_master` ← `stats/Master.csv` (24,747-row OOTP↔Lahman crosswalk)
-      - `lref_milb_master` ← `stats/MiLBMaster.csv` (29MB)
-      - `lref_teams_history` ← `stats/Teams.csv`
-      - `lref_milb_leagues` ← `stats/MiLBLeagues.csv`
-      - `lref_milb_teams` ← `stats/MiLBTeams.csv`
-      - `lref_eos_rosters` ← `stats/EOSRosters.csv`
-      - `lref_od_rosters` ← `stats/ODRosters.csv`
-      - `lref_uni_numbers` ← `stats/UniNumbers.csv`
-      - `lref_series_post` ← `stats/SeriesPost.csv`
-      - `lref_default_players` ← `database/players.csv` (231-col seed pool)
-- [ ] Wire into `build_warehouse` orchestrator (runs once on first ingest only).
+Implemented in `src/diamond/schema/l_ref.py`. 27 reference tables / 575,587 rows
+loaded into per-save `<save>/diamond/diamond.duckdb` on first `diamond ingest`.
 
-### Slice 2 — calculation-parity swap (highest analytical leverage):
+- [x] `src/diamond/schema/l_ref.py` — new ingest module with `LRefSpec` catalog,
+      three-tier `HeaderStyle` parser (`AUTO` / `COMMENT` / `HEADERLESS`), and
+      `ensure_lref` / `compute_lref_diff` / `refresh_lref` entry points.
+- [x] **Per-save freeze (D27)** — `_diamond_settings.lref.frozen_at` is the
+      single source of truth; `is_lref_frozen(con)` gate skips re-ingest when
+      set. Verified: 2nd CLI invocation prints `"L_REF already frozen at ..."`
+      and proceeds straight to L1 rebuild.
+- [x] **Provenance** — `_diamond_settings.lref.frozen_at` (ISO timestamp),
+      `lref.source_root` (install folder path), `lref.ootp_version` (e.g.
+      `"27"`), `lref.table_count`, and `lref.files_json` (per-file `{mtime,
+      sha1, size_bytes, rows}`).
+- [x] **Refresh path** — `diamond ingest --refresh-lref` calls
+      `compute_lref_diff()` to print added/changed/removed by SHA1, then
+      re-ingests changed files only and updates provenance. Bare `--refresh-lref`
+      with no install-folder changes prints "no changes". Implies a full L1+L2
+      rebuild because downstream advanced-stat calcs JOIN to `lref_*`.
+- [x] CTAS for the analytical-table tier (Tier 1, `misc/`):
+      - `lref_xwoba_table` / `lref_xba_table` / `lref_xslg_table` — 106 rows each
+        (LA -45 to +60, EV 50-110 wide grid)
+      - `lref_xiso_table` — 6 rows (6-zone LSA classifier)
+      - `lref_re288_table` — 24 rows (3 outs × 8 base states × 12 counts)
+      - `lref_li_table` — 432 rows
+      - `lref_wpa_table` — 480 rows
+      - `lref_pi_table` — 3 rows (FB/BR/OFF)
+- [x] CTAS for the baselines + park factors tier (Tier 2, `database/`):
+      - `lref_pt_ballparks` 240 rows (Fenway sanity-checked)
+      - `lref_era_ballparks` 3,105 rows × 155 years (Coors 1995 BPF 1.106 ✓)
+      - `lref_era_stats` 156 rows (1870-2025)
+      - `lref_era_stats_minors` 2,335 rows
+      - `lref_era_modifiers` 153 / `lref_era_fielding` 155 / `lref_total_modifiers` 155
+      - `lref_financials` 156 / `lref_weather` 513 / `lref_default_players` 12,854
+- [x] CTAS for the crosswalks + history tier (Tier 3, `stats/`):
+      - `lref_master` 24,746 rows (Bonds → `bondsba01` ✓)
+      - `lref_milb_master` 212,325 rows (29MB)
+      - `lref_teams_history` 3,142 / `lref_milb_leagues` 2,317 / `lref_milb_teams` 23,075
+      - `lref_eos_rosters` 99,643 / `lref_od_rosters` 102,254
+      - `lref_uni_numbers` 86,589 / `lref_series_post` 411
+- [x] Wired into `build_warehouse` via `rebuild_l1_l2(...)` — fires before L1
+      machinery so downstream layers can JOIN to `lref_*` (Slice 2+ work).
+
+### Slice 2 — calculation-parity swap (← **NEXT UP**, highest analytical leverage):
 
 - [ ] Replace barrel% / sweet_spot% / hard_hit% computation in
       `f_player_season_statcast_*` with a JOIN to `lref_xiso_table` (look up

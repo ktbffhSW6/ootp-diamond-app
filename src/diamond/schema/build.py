@@ -383,6 +383,7 @@ def rebuild_l1_l2(
     save: SaveConfig,
     *,
     verbose: bool = True,
+    refresh_lref: bool = False,
 ) -> dict[str, dict[str, int]]:
     """Drop-and-rebuild L1 (machinery + reference + event + snapshot), L2, and L3.
 
@@ -394,6 +395,10 @@ def rebuild_l1_l2(
 
     Function name kept as `rebuild_l1_l2` for backward compatibility, but
     it now also runs L3 (player_movements). Future L3 builders append here.
+
+    Also fires the L_REF first-ingest freeze if it hasn't run yet (D26+D27).
+    With `refresh_lref=True`, recomputes the diff vs install folder and
+    re-ingests changed files; otherwise no-op when already frozen.
     """
     # Late imports avoid pulling these into module-import time when the
     # schema package's other modules import build.py.
@@ -403,8 +408,13 @@ def rebuild_l1_l2(
     from diamond.schema.l1_snapshot import build_l1_snapshot
     from diamond.schema.l2 import build_l2
     from diamond.schema.l3 import build_l3
+    from diamond.schema.l_ref import ensure_lref
 
     out: dict[str, dict[str, int]] = {}
+    if verbose:
+        console.rule("L_REF (D27 freeze)")
+    lref_status = ensure_lref(con, force_refresh=refresh_lref, verbose=verbose)
+    out["l_ref"] = lref_status.get("rows_per_table", {})
     if verbose:
         console.rule("L1 machinery")
     out["l1_machinery"] = build_l1_machinery(con, save, verbose=verbose)
@@ -435,6 +445,7 @@ def build_warehouse(
     rebuild: bool = True,
     verbose: bool = True,
     quiet_per_dump: bool = False,
+    refresh_lref: bool = False,
 ) -> dict:
     """Full ingest + rebuild orchestrator.
 
@@ -489,8 +500,10 @@ def build_warehouse(
         )
 
     l1_l2 = None
-    if rebuild and (ingested or force):
-        l1_l2 = rebuild_l1_l2(con, save, verbose=verbose)
+    # `--refresh-lref` implies rebuild — refreshing reference tables
+    # potentially invalidates downstream advanced-stat calcs that JOIN to them.
+    if rebuild and (ingested or force or refresh_lref):
+        l1_l2 = rebuild_l1_l2(con, save, verbose=verbose, refresh_lref=refresh_lref)
     elif rebuild and not ingested:
         if verbose:
             console.print(
