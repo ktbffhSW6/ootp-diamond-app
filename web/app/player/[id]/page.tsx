@@ -1,13 +1,23 @@
-// Player page — bio header + tab nav + Stats tab content.
+// Player page — bio + persistent header strip + tab-filtered content.
 //
-// Server component: fetches player payload + glossary in parallel
-// (so column-header tooltips pull from the D15 dictionary). Hands the
-// result to the client-side Stats tab for disclosure-row interaction.
+// 2026-05-13 IA shuffle (round 2): the page was a single long scroll
+// — Stats table, Spray chart, EV/LA scatter, AI summary all stacked.
+// Now `?tab=` (query state) selects which content section is visible:
 //
-// Route shape: /player/[id] where [id] is the internal `player_id`
-// (BIGINT in the warehouse). Per D16 we picked numeric IDs over
-// bbref_id for v1 — bbref-shaped routes can be added later as
-// redirects without breaking this URL.
+//   ?tab=stats       (default) Stats tables (PlayerStatsTab)
+//   ?tab=charts      Spray + EV/LA + (if there's BIP at MLB)
+//   ?tab=ai          AI summary trigger
+//   ?tab=game-log / comparisons / scouting  ─ placeholders
+//
+// Header content (bio + Service & Status + CareerArc + Contract)
+// stays visible across all tabs — it's the "page metadata" strip,
+// not a tab. When you flip from Stats to Charts you don't lose the
+// player's name + position + age + service-time context.
+//
+// Server component reads `searchParams.tab`; PlayerTabNav (also
+// server) is just a strip of <Link> elements. No client tab-state
+// plumbing — every tab change is a regular URL navigation, browser
+// back works, deep-links work.
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -18,14 +28,25 @@ import { EvLaScatter } from "@/components/EvLaScatter";
 import { PlayerAvatar } from "@/components/PlayerAvatar";
 import { PlayerContractCard } from "@/components/PlayerContractCard";
 import { PlayerStatsTab } from "@/components/PlayerStatsTab";
-import { SprayChart } from "@/components/SprayChart";
-import { getBattedBalls, getGlossary, getPlayer } from "@/lib/api";
+import { PlayerTabNav, type PlayerTab } from "@/components/PlayerTabNav";
+import { StadiumSprayChart } from "@/components/StadiumSprayChart";
+import { getBattedBalls, getGlossary, getPlayer, getSave } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
 interface Props {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ tab?: string }>;
 }
+
+const TAB_VALUES: PlayerTab[] = [
+  "stats",
+  "charts",
+  "ai",
+  "game-log",
+  "comparisons",
+  "scouting",
+];
 
 export async function generateMetadata({ params }: Props) {
   const { id } = await params;
@@ -41,22 +62,26 @@ export async function generateMetadata({ params }: Props) {
   }
 }
 
-export default async function PlayerPage({ params }: Props) {
+export default async function PlayerPage({ params, searchParams }: Props) {
   const { id } = await params;
+  const sp = await searchParams;
   const playerId = Number.parseInt(id, 10);
   if (!Number.isFinite(playerId)) {
     notFound();
   }
 
+  // Validate ?tab= against the union; bad values fall back to "stats".
+  const requestedTab = (sp.tab ?? "stats") as PlayerTab;
+  const tab: PlayerTab = TAB_VALUES.includes(requestedTab) ? requestedTab : "stats";
+
   // Fetch in parallel — glossary supplies column-header tooltips
   // (per D15 maintenance contract: every UI label comes from the
   // dictionary). batted_balls populates the inline Spray + EV-LA
-  // sections (gated on bip_count > 0). All three fetches are cheap
-  // on localhost — the player route is the canonical single-payload
-  // route and glossary is static.
-  let player, glossary, battedBalls;
+  // sections (gated on bip_count > 0). save metadata gives us the
+  // user's home park abbr for the stadium-overlay default.
+  let player, glossary, battedBalls, save;
   try {
-    [player, glossary, battedBalls] = await Promise.all([
+    [player, glossary, battedBalls, save] = await Promise.all([
       getPlayer(playerId),
       getGlossary(),
       // Don't fail the whole page if batted_balls 404s — defensive,
@@ -64,6 +89,7 @@ export default async function PlayerPage({ params }: Props) {
       // have an empty BIP set at MLB. Empty rows[] is the normal
       // shape and gates the section render below.
       getBattedBalls({ playerId, levelId: 1 }).catch(() => null),
+      getSave().catch(() => null),
     ]);
   } catch (err) {
     if (err instanceof Error && err.message.includes("404")) {
@@ -73,6 +99,7 @@ export default async function PlayerPage({ params }: Props) {
   }
 
   const { bio, roster_status: rs } = player;
+  const hasBip = !!battedBalls && battedBalls.bip_count > 0;
 
   // Service-class color hint — emerald (FA-eligible / vet) ~ accent-blue
   // (arb-eligible) ~ neutral (pre-arb). Cap the choice list small so the
@@ -87,7 +114,7 @@ export default async function PlayerPage({ params }: Props) {
 
   return (
     <article className="space-y-6">
-      {/* Bio header — mirrors Bref's player-page top strip */}
+      {/* Bio header — always visible. */}
       <header className="flex flex-wrap items-start gap-4 border-b border-border pb-4">
         <PlayerAvatar
           playerId={playerId}
@@ -114,61 +141,57 @@ export default async function PlayerPage({ params }: Props) {
               </span>
             )}
           </h1>
-        <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm text-content-secondary">
-          {bio.current_team && (
-            <div>
-              <dt className="inline text-content-muted">Team:</dt>{" "}
-              <dd className="inline">
-                <span className="font-mono text-content-primary">
-                  {bio.current_team.abbr}
-                </span>{" "}
-                <span className="text-content-muted">
-                  ({bio.current_team.level_name ?? "—"})
-                </span>
-              </dd>
-            </div>
-          )}
-          {bio.age != null && (
-            <div>
-              <dt className="inline text-content-muted">Age:</dt>{" "}
-              <dd className="inline font-mono text-content-primary">
-                {bio.age}
-              </dd>
-            </div>
-          )}
-          {bio.bbref_id && (
-            <div>
-              <dt className="inline text-content-muted">Bref ID:</dt>{" "}
-              <dd className="inline font-mono text-content-primary">
-                {bio.bbref_id}
-              </dd>
-            </div>
-          )}
-          {bio.retired && (
-            <div className="rounded bg-surface-elevated px-2 text-xs text-content-secondary">
-              Retired
-            </div>
-          )}
-          {bio.free_agent && !bio.retired && (
-            <div className="rounded bg-amber-50 px-2 text-xs text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
-              Free Agent
-            </div>
-          )}
-          {bio.hall_of_fame && (
-            <div className="rounded bg-amber-100 px-2 text-xs font-semibold text-amber-800 dark:bg-amber-900/60 dark:text-amber-200">
-              ★ Hall of Fame
-            </div>
-          )}
-        </dl>
+          <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm text-content-secondary">
+            {bio.current_team && (
+              <div>
+                <dt className="inline text-content-muted">Team:</dt>{" "}
+                <dd className="inline">
+                  <span className="font-mono text-content-primary">
+                    {bio.current_team.abbr}
+                  </span>{" "}
+                  <span className="text-content-muted">
+                    ({bio.current_team.level_name ?? "—"})
+                  </span>
+                </dd>
+              </div>
+            )}
+            {bio.age != null && (
+              <div>
+                <dt className="inline text-content-muted">Age:</dt>{" "}
+                <dd className="inline font-mono text-content-primary">
+                  {bio.age}
+                </dd>
+              </div>
+            )}
+            {bio.bbref_id && (
+              <div>
+                <dt className="inline text-content-muted">Bref ID:</dt>{" "}
+                <dd className="inline font-mono text-content-primary">
+                  {bio.bbref_id}
+                </dd>
+              </div>
+            )}
+            {bio.retired && (
+              <div className="rounded bg-surface-elevated px-2 text-xs text-content-secondary">
+                Retired
+              </div>
+            )}
+            {bio.free_agent && !bio.retired && (
+              <div className="rounded bg-amber-50 px-2 text-xs text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                Free Agent
+              </div>
+            )}
+            {bio.hall_of_fame && (
+              <div className="rounded bg-amber-100 px-2 text-xs font-semibold text-amber-800 dark:bg-amber-900/60 dark:text-amber-200">
+                ★ Hall of Fame
+              </div>
+            )}
+          </dl>
         </div>
       </header>
 
-      {/* Service & Status — small card under the bio header. Skipped
-          for retired / never-rostered players (rs is null). Shows MLB
-          service time, arb/FA class, options, and any non-active
-          status flags (DL / DFA / waivers). The November snapshot
-          tends to have all status flags off (offseason) — they light
-          up in mid-season ingests. */}
+      {/* Service & Status — always visible header strip. Skipped for
+          retired / never-rostered players (rs is null). */}
       {rs && (
         <section className="rounded-md border border-border bg-surface-card px-4 py-3">
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
@@ -187,7 +210,7 @@ export default async function PlayerPage({ params }: Props) {
                 rs.is_free_agent_eligible
                   ? "Player has reached 6.000 years of MLB service — eligible for free agency at end of contract / season."
                   : rs.service_class === "pre_arb"
-                    ? "Pre-arbitration: less than 3.000 years of MLB service. Renewable contract; no salary leverage. (Super-Two qualifiers not modeled in v1.)"
+                    ? "Pre-arbitration: less than 3.000 years of MLB service. Renewable contract; no salary leverage."
                     : "Arbitration-eligible: 3 to 6 years of MLB service. Three arb years before reaching free agency."
               }
             >
@@ -212,9 +235,6 @@ export default async function PlayerPage({ params }: Props) {
                 </span>
               )}
             </div>
-            {/* Status flags — only render when truthy. Most are zero
-                on the offseason November dump; in-season ingests will
-                light them up. */}
             <div className="ml-auto flex flex-wrap gap-1.5">
               {rs.is_active && (
                 <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
@@ -254,10 +274,7 @@ export default async function PlayerPage({ params }: Props) {
         </section>
       )}
 
-      {/* Career arc — small WAR-by-year line chart between the Service
-          card and the tab strip. Shape tells the career story at a
-          glance (peak years, trajectory, gaps). Renders an empty
-          placeholder for players with no advanced data. */}
+      {/* Career arc — always visible. Career story at a glance. */}
       <section>
         <CareerArc
           batting={player.advanced_batting}
@@ -265,53 +282,47 @@ export default async function PlayerPage({ params }: Props) {
         />
       </section>
 
-      {/* Contract — salary-by-year bar chart with options + no-trade.
-          Skipped for players without an active contract row (amateurs,
-          retirees, FAs). */}
+      {/* Contract — always visible if active. */}
       {player.contract && <PlayerContractCard contract={player.contract} />}
 
-      {/* Tab strip — Stats is the only wired tab in v1. The Charts
-          modules (spray, EV-LA) live as inline sections below Stats
-          rather than as cross-linked tabs — they're per-player views,
-          not Explore destinations. Other labels stay placeholders. */}
-      <nav className="flex flex-wrap items-center gap-1 border-b border-border text-sm">
-        <span className="border-b-2 border-content-primary px-3 py-1.5 font-semibold text-content-primary">
-          Stats
-        </span>
-        {["Game log", "Comparisons", "Scouting", "Contract"].map((label) => (
-          <span
-            key={label}
-            className="cursor-not-allowed px-3 py-1.5 text-content-muted"
-            title="Coming soon"
-          >
-            {label}
-          </span>
-        ))}
-      </nav>
+      {/* Tab nav — selects which content section renders below. */}
+      <PlayerTabNav active={tab} playerId={playerId} hasBip={hasBip} />
 
-      <PlayerStatsTab player={player} glossary={glossary} />
+      {/* Tab content — only the active tab renders. */}
+      {tab === "stats" && <PlayerStatsTab player={player} glossary={glossary} />}
 
-      {/* Batted-ball charts — render inline when the player has BIP at
-          MLB. Both views read the same one-(player, year, level)
-          payload so we only fetch once. Pitchers + non-MLB-call-ups
-          drop these sections gracefully (empty rows[]). */}
-      {battedBalls && battedBalls.bip_count > 0 && (
-        <>
+      {tab === "charts" && !hasBip && (
+        <section className="rounded-md border border-border bg-surface-card p-8 text-center text-content-muted">
+          <p className="text-sm">
+            No MLB ball-in-play events for this player. Charts populate
+            once a batter has BIP data at the major-league level
+            (pitchers, amateurs, and minor-league call-ups all drop this
+            tab).
+          </p>
+        </section>
+      )}
+      {tab === "charts" && hasBip && battedBalls && (
+        <div className="space-y-8">
           <section>
             <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-content-secondary">
               Spray · {battedBalls.year} MLB · {battedBalls.bip_count} BIP
             </h2>
             <p className="mb-3 text-xs text-content-muted">
-              Spray angle is OOTP&apos;s 1D `hit_xy` (0 = pull-side foul
-              line, 130 = oppo). Wedge radius is BIP volume; outs muted,
-              hits saturated, HR loud. Pull side flips with batter
-              handedness ({bio.bats_throws}).
+              Each dot is one ball-in-play, plotted at its{" "}
+              <strong>field-absolute</strong> location. Spray angle from
+              OOTP&apos;s `hit_xy` (batter-relative, flipped per
+              handedness {bio.bats_throws}); distance synthesized from
+              EV + LA via projectile physics with empirical drag (HRs
+              floored to clear the foul-pole distance). Stadium overlay
+              picks the user&apos;s home park by default —{" "}
+              <strong>switchable</strong> in the dropdown.
             </p>
-            <SprayChart
+            <StadiumSprayChart
               rows={battedBalls.rows}
               handedness={
                 bio.bats === 2 ? "L" : bio.bats === 3 ? "S" : "R"
               }
+              defaultStadium={save?.org_team_abbr ?? "BOS"}
             />
           </section>
 
@@ -326,21 +337,32 @@ export default async function PlayerPage({ params }: Props) {
             </p>
             <EvLaScatter rows={battedBalls.rows} />
           </section>
-        </>
+        </div>
       )}
 
-      {/* AI summary — opt-in per click. Renders disabled state when no
-          key is set (with a deep-link to /settings/ai). */}
-      <section>
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-content-secondary">
-          AI summary
-        </h2>
-        <AISummarizeButton
-          kind="player"
-          targetId={player.bio.player_id}
-          label="Summarize career"
-        />
-      </section>
+      {tab === "ai" && (
+        <section>
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-content-secondary">
+            AI summary
+          </h2>
+          <AISummarizeButton
+            kind="player"
+            targetId={player.bio.player_id}
+            label="Summarize career"
+          />
+        </section>
+      )}
+
+      {(tab === "game-log" || tab === "comparisons" || tab === "scouting") && (
+        <section className="rounded-md border border-border bg-surface-card p-8 text-center text-content-muted">
+          <p className="text-sm">
+            <span className="font-semibold capitalize text-content-primary">
+              {tab.replace("-", " ")}
+            </span>{" "}
+            — coming soon.
+          </p>
+        </section>
+      )}
 
       <p className="pt-4 text-xs text-content-muted">
         <Link href="/" className="hover:text-content-primary">
