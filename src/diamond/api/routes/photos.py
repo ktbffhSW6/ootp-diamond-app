@@ -1,4 +1,4 @@
-"""Image streaming endpoints — player headshots + team logos.
+"""Image streaming endpoints — player headshots + team logos + HoF plaques.
 
 Endpoints:
 - ``GET /api/photos/players/{player_id}.png`` — streams
@@ -10,6 +10,15 @@ Endpoints:
   ``logo_file_name`` is read from the warehouse `teams` table; OOTP
   pre-renders 7 size variants per team (16/25/40/50/110/full/small)
   and the route picks the closest match.
+- ``GET /api/photos/hof/{bbref_id}.png`` — streams the OOTP-shipped
+  Hall of Fame plaque from ``<install>/hof/{bbref_id}.png``. Only ~8
+  plaques actually ship (Bagwell, Carter, Ford, Gibson, Griffey Jr.,
+  Kaline, Sandberg, Ozzie Smith); the rest 404 and the frontend
+  falls back to a generic plaque card.
+- ``GET /api/photos/hof`` — manifest endpoint listing the bbref_ids
+  for which a plaque file actually exists on disk. The frontend
+  uses this to render the plaque-gallery section without trying to
+  load 200 images and 404'ing 192 of them.
 
 OOTP generates faces for in-save players (active rosters + recent
 retirees) but does NOT auto-write the PNG to disk on player creation
@@ -53,12 +62,20 @@ from fastapi.responses import FileResponse, Response
 import duckdb
 
 from diamond.api.warehouse import get_active_save, get_cursor
+from diamond.schema.l_ref import ootp_install_root
 
 router = APIRouter()
 
 
 _PHOTO_SUBPATH = Path("news") / "html" / "images" / "person_pictures"
 _LOGO_SUBPATH = Path("news") / "html" / "images" / "team_logos"
+_HOF_SUBPATH = Path("hof")  # under OOTP install root, not save folder
+
+# BBref id format: 5-letter last + 2-letter first + 2-digit suffix.
+# Strict allowlist: lowercase a-z + 0-9 + dot (Lahman uses '.' as a
+# placeholder when first-initial pad is needed, e.g. 'sabatc.01' for
+# CC Sabathia), max 12 chars.
+_BBREF_ID_RE = re.compile(r"^[a-z0-9.]{1,12}$")
 
 # Allowed filename characters for team logos. OOTP only writes a-z, 0-9,
 # underscore, dash, parens, and dot — the regex below is a strict
@@ -277,6 +294,133 @@ def get_team_logo(
 
     return FileResponse(
         logo_path,
+        media_type="image/png",
+        headers={
+            "ETag": etag,
+            "Last-Modified": last_modified_http,
+            "Cache-Control": "no-cache",
+        },
+    )
+
+
+@router.get("/photos/hof")
+def list_hof_plaques() -> dict[str, list[dict[str, str]]]:
+    """Manifest of HoF plaques actually present on disk.
+
+    Reads the install-folder ``hof/`` directory, intersects against
+    ``hof/index.json`` (OOTP-supplied metadata: name + induction line),
+    and returns the union as ``{"plaques": [{"bbref_id", "name",
+    "description"}, ...]}``. The frontend uses this to seed the
+    plaque-gallery section on ``/history/hof`` so we only render
+    images that actually exist.
+    """
+    import json
+
+    hof_dir = ootp_install_root() / _HOF_SUBPATH
+    if not hof_dir.is_dir():
+        return {"plaques": []}
+
+    # Parse the index.json metadata. Tolerant of missing/malformed —
+    # falls back to bare bbref_id list if the JSON is unreadable.
+    metadata: dict[str, dict[str, str]] = {}
+    index_path = hof_dir / "index.json"
+    if index_path.is_file():
+        try:
+            raw = index_path.read_text(encoding="utf-8")
+            # OOTP's JSON has a trailing comma after the items array
+            # which strict JSON rejects. Cheap fix: drop trailing
+            # commas before `]` and `}`.
+            cleaned = re.sub(r",(\s*[\]}])", r"\1", raw)
+            doc = json.loads(cleaned)
+            for item in doc.get("plaques", {}).get("items", []):
+                bb = item.get("bbref")
+                if bb and _BBREF_ID_RE.match(bb):
+                    metadata[bb] = {
+                        "name": item.get("name", bb),
+                        "description": item.get("description", ""),
+                    }
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    # Intersect with actual files on disk — only return plaques we
+    # can serve. ``index.json`` lists 19 entries but only ~8 ship.
+    plaques: list[dict[str, str]] = []
+    for png_path in sorted(hof_dir.glob("*.png")):
+        bbref = png_path.stem
+        if not _BBREF_ID_RE.match(bbref):
+            continue
+        meta = metadata.get(bbref, {"name": bbref, "description": ""})
+        plaques.append(
+            {
+                "bbref_id": bbref,
+                "name": meta["name"],
+                "description": meta["description"],
+            }
+        )
+    return {"plaques": plaques}
+
+
+@router.get("/photos/hof/{bbref_id}.png")
+def get_hof_plaque(bbref_id: str, request: Request) -> Response:
+    """Stream the OOTP-shipped Hall of Fame plaque PNG.
+
+    Source: ``<install>/hof/{bbref_id}.png`` (NOT the save folder —
+    the install ships ~8 plaque images for marquee real-life HoFers
+    like Bagwell / Carter / Ford / Gibson / Griffey Jr / Kaline /
+    Sandberg / Ozzie Smith). Other inducted players 404 and the
+    frontend falls back to a generic plaque card.
+
+    Strict bbref_id allowlist (lowercase a-z + 0-9, ≤12 chars) before
+    any disk I/O — no traversal vector. Same revalidation pattern as
+    the other photo routes.
+    """
+    if not _BBREF_ID_RE.match(bbref_id):
+        raise HTTPException(
+            status_code=400,
+            detail=f"bbref_id failed allowlist: '{bbref_id}'",
+        )
+
+    plaque_path = ootp_install_root() / _HOF_SUBPATH / f"{bbref_id}.png"
+    if not plaque_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=f"No plaque for bbref_id={bbref_id}",
+        )
+
+    stat = plaque_path.stat()
+    mtime = stat.st_mtime
+    etag = _build_etag(mtime, stat.st_size)
+    last_modified_http = formatdate(mtime, usegmt=True)
+
+    client_etag = request.headers.get("if-none-match")
+    if client_etag and client_etag == etag:
+        return Response(
+            status_code=304,
+            headers={
+                "ETag": etag,
+                "Last-Modified": last_modified_http,
+                "Cache-Control": "no-cache",
+            },
+        )
+
+    if_modified_since = request.headers.get("if-modified-since")
+    if if_modified_since:
+        try:
+            client_dt = parsedate_to_datetime(if_modified_since)
+            if client_dt is not None and int(client_dt.timestamp()) >= int(mtime):
+                return Response(
+                    status_code=304,
+                    headers={
+                        "ETag": etag,
+                        "Last-Modified": last_modified_http,
+                        "Cache-Control": "no-cache",
+                    },
+                )
+        except (TypeError, ValueError):
+            pass
+
+    return FileResponse(
+        plaque_path,
         media_type="image/png",
         headers={
             "ETag": etag,

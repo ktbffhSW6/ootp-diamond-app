@@ -617,6 +617,7 @@ export interface HofPlayer {
   career_war: number | null;
   last_team_abbr: string | null;
   retired: boolean;
+  bbref_id?: string | null;
 }
 /**
  * Whole payload — inductees-or-candidates rows + the counts so

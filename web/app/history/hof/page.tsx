@@ -13,8 +13,10 @@
 
 import Link from "next/link";
 
-import { getHof } from "@/lib/api";
+import { getHof, getHofPlaques, type HofPlaqueManifest } from "@/lib/api";
 import type { HofPlayer, HofResponse } from "@/lib/types/api";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export const metadata = { title: "Hall of Fame — Diamond" };
 export const dynamic = "force-dynamic";
@@ -165,6 +167,93 @@ function HofTable({
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Plaque gallery
+//
+// OOTP ships ~8 marquee plaques as PNG files in
+// <install>/hof/. The /api/photos/hof manifest enumerates the ones
+// actually present on disk; we render those as a horizontal-scroll
+// gallery above the inductees table. Each thumbnail links into the
+// player page for that bbref_id when we can resolve a player_id from
+// the inductees rows. Clicking the image opens the full plaque in a
+// new tab via /api/photos/hof/{bbref_id}.png.
+// ─────────────────────────────────────────────────────────────────────
+
+function PlaqueGallery({
+  manifest,
+  inductees,
+}: {
+  manifest: HofPlaqueManifest;
+  inductees: HofPlayer[];
+}) {
+  if (manifest.plaques.length === 0) return null;
+  // Build bbref_id → player_id map from inductees so plaque clicks
+  // navigate into the player page where possible.
+  const playerIdByBbref = new Map<string, number>();
+  for (const row of inductees) {
+    if (row.bbref_id) playerIdByBbref.set(row.bbref_id, row.player_id);
+  }
+  return (
+    <section className="rounded-md border border-border bg-surface-card p-4">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-content-secondary">
+        Real plaques · OOTP-shipped imagery
+      </h2>
+      <p className="mb-3 text-xs text-content-muted">
+        {manifest.plaques.length} of OOTP&apos;s real Cooperstown plaque PNGs
+        ship with the install. Click to open at full resolution.
+      </p>
+      <div className="-mx-1 flex flex-nowrap gap-3 overflow-x-auto px-1 pb-2">
+        {manifest.plaques.map((p) => {
+          const playerId = playerIdByBbref.get(p.bbref_id);
+          const inner = (
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={`${API_URL}/api/photos/hof/${p.bbref_id}.png`}
+                alt={`${p.name} plaque`}
+                width={140}
+                height={180}
+                loading="lazy"
+                decoding="async"
+                className="h-44 w-auto rounded border border-border object-cover transition group-hover:border-border-strong"
+              />
+              <div className="mt-1 text-center text-xs text-content-secondary">
+                <div className="truncate font-medium text-content-primary">
+                  {p.name}
+                </div>
+                <div className="truncate text-[10px] text-content-muted">
+                  {p.description.split("\n")[0]}
+                </div>
+              </div>
+            </>
+          );
+          return playerId !== undefined ? (
+            <Link
+              key={p.bbref_id}
+              href={`/player/${playerId}`}
+              className="group block w-36 shrink-0"
+              title={`${p.name} — ${p.description}`}
+            >
+              {inner}
+            </Link>
+          ) : (
+            <a
+              key={p.bbref_id}
+              href={`${API_URL}/api/photos/hof/${p.bbref_id}.png`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group block w-36 shrink-0"
+              title={`${p.name} — ${p.description}`}
+            >
+              {inner}
+            </a>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Page
 // ─────────────────────────────────────────────────────────────────────
 
@@ -176,7 +265,13 @@ export default async function HofPage({
   const params = await searchParams;
   const view: "inductees" | "candidates" =
     params.view === "candidates" ? "candidates" : "inductees";
-  const data: HofResponse = await getHof({ view });
+  // Fetch HoF rows + plaque manifest in parallel. Manifest call is
+  // tolerant of failure — the page renders the table only if it 404s.
+  const [data, plaqueManifest]: [HofResponse, HofPlaqueManifest] =
+    await Promise.all([
+      getHof({ view }),
+      getHofPlaques().catch(() => ({ plaques: [] }) as HofPlaqueManifest),
+    ]);
 
   const headline =
     view === "inductees"
@@ -226,6 +321,10 @@ export default async function HofPage({
           label="Candidates"
         />
       </div>
+
+      {view === "inductees" && (
+        <PlaqueGallery manifest={plaqueManifest} inductees={data.rows} />
+      )}
 
       <HofTable rows={data.rows} view={view} />
 

@@ -97,11 +97,19 @@ SELECT
     pc.inducted,
     pc.retired,
     COALESCE(cb.war, cp.war) AS career_war,
-    t.abbr AS last_team_abbr
+    t.abbr AS last_team_abbr,
+    -- bbref_id via name + birth-year disambiguated JOIN (Slice D).
+    -- Resolves to a unique bbref_id for real-life HoFers; null for
+    -- in-save inductees (not in Lahman) and pre-Lahman-era retirees.
+    lp.bbrefID AS bbref_id
 FROM players_current pc
 LEFT JOIN career_bat_war cb USING (player_id)
 LEFT JOIN career_pit_war cp USING (player_id)
 LEFT JOIN teams t ON t.team_id = pc.team_id
+LEFT JOIN history_lahman_people lp
+  ON LOWER(lp.nameFirst) = LOWER(pc.first_name)
+ AND LOWER(lp.nameLast)  = LOWER(pc.last_name)
+ AND EXTRACT(YEAR FROM pc.date_of_birth) = lp.birthYear
 WHERE pc.hall_of_fame = 1
 ORDER BY pc.inducted DESC NULLS LAST, display_name
 """
@@ -140,10 +148,15 @@ SELECT
     NULL::BIGINT AS inducted,
     pc.retired,
     cw.war AS career_war,
-    t.abbr AS last_team_abbr
+    t.abbr AS last_team_abbr,
+    lp.bbrefID AS bbref_id
 FROM combined_war cw
 JOIN players_current pc USING (player_id)
 LEFT JOIN teams t ON t.team_id = pc.team_id
+LEFT JOIN history_lahman_people lp
+  ON LOWER(lp.nameFirst) = LOWER(pc.first_name)
+ AND LOWER(lp.nameLast)  = LOWER(pc.last_name)
+ AND EXTRACT(YEAR FROM pc.date_of_birth) = lp.birthYear
 WHERE pc.hall_of_fame = 0
 ORDER BY cw.war DESC NULLS LAST, display_name
 LIMIT ?
@@ -195,6 +208,7 @@ def get_hof(
                 career_war=float(r[4]) if r[4] is not None else None,
                 last_team_abbr=r[5],
                 retired=bool(r[3]) if r[3] is not None else True,
+                bbref_id=r[6],
             )
             for r in rows_raw
         ]
@@ -218,6 +232,7 @@ def get_hof(
                 career_war=float(r[4]) if r[4] is not None else None,
                 last_team_abbr=r[5],
                 retired=bool(r[3]) if r[3] is not None else False,
+                bbref_id=r[6],
             )
         )
     return HofResponse(

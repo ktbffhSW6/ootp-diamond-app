@@ -332,6 +332,18 @@ export async function getParks(): Promise<ParksResponse> {
   return fetchJson<ParksResponse>("/api/parks");
 }
 
+// Hall of Fame plaque manifest (Slice D). Lists the bbref_ids that
+// actually have a PNG on disk in OOTP's install `hof/` folder
+// (~8 marquee plaques: Bagwell, Carter, Ford, Gibson, Griffey Jr,
+// Kaline, Sandberg, Ozzie Smith). Used by /history/hof to render
+// the plaque gallery without 404-spamming.
+export interface HofPlaqueManifest {
+  plaques: Array<{ bbref_id: string; name: string; description: string }>;
+}
+export async function getHofPlaques(): Promise<HofPlaqueManifest> {
+  return fetchJson<HofPlaqueManifest>("/api/photos/hof");
+}
+
 // AI overlay (D14). Settings GET/POST manage provider / model /
 // use_level + (write-only) API key — secrets stored in the OS
 // keyring server-side, never returned. Summarize POST is on-demand

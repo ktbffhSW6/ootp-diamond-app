@@ -63,6 +63,12 @@ class HofPlayer(BaseModel):
     career_war: float | None
     last_team_abbr: str | None
     retired: bool
+    # BBref id resolved via history_lahman_people JOIN on (first_name,
+    # last_name, year_of_birth). Used by the frontend to fetch the real
+    # OOTP-shipped plaque PNG via /api/photos/hof/{bbref_id}.png.
+    # Null for in-save HoFers (no real-life Cooperstown match) and
+    # ancient-era inductees not in Lahman.
+    bbref_id: str | None = None
 
 
 class HofResponse(BaseModel):
