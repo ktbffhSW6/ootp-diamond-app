@@ -29,15 +29,17 @@ export default function HistoryPage() {
         },
         {
           title: "Hall of Fame",
-          status: "soon",
+          status: "live",
+          href: "/history/hof",
           blurb:
-            "Inducted players with career-arc summaries. Cross-era comparisons live under Explore.",
+            "Cooperstown roster (inductees) + top-WAR non-inducted candidates. OOTP imports the real Hall plus in-save voted-in classes.",
         },
         {
           title: "Streaks",
-          status: "soon",
+          status: "live",
+          href: "/history/streaks",
           blurb:
-            "Hitting streaks, scoreless-inning streaks, scored-in-every-game streaks. Decoded streak history with leaderboards.",
+            "Top-50 holders for 21 streak types — Hitting / Scoreless Innings / On-Base / Win / etc. Active vs all-time scopes.",
         },
         {
           title: "Past draft classes",

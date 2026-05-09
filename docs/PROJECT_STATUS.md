@@ -4,7 +4,7 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: `/history/records` + `/history/awards` shipped (two stubs drained on the History tab).** Backed by `GET /api/records?scope=&discipline=&category=&era=` — UNIONs save data + Lahman 1871-2019 + BREF 2020-2025 + cross-source merged career rollups + Statcast 2015-2025 batted-ball quality. Three flat picker rows (Scope / Discipline / Era) + a Category strip dynamically populated from the available leaderboards in `f_record_player`. Source chips color-coded (emerald=save, indigo=lahman, sky=bref, violet=merged, amber=statcast); rows clickable through to `/player/<id>` when the underlying record carries an OOTP player_id, plain-text otherwise. Server re-ranks rows globally when era=all so duplicates between `save` (OOTP-imported) and `lahman` (real-life) sit adjacent — confirms the data integration story (Bonds 73 / 73, McGwire 70 / 70, etc.). Earlier today shipped the situational-splits stack (5 slices, 14 splits per year/level) + the **D20 pre-save MLB baselines maintenance pass** that drains `—` from advanced stats on every imported real-history player-season.
+**Last updated**: 2026-05-12 (in-game year 2029→2030) — **Phase 3: `/history/records` + `/history/awards` + `/history/hof` + `/history/streaks` shipped (four of five stubs drained on the History tab; only Past Draft Classes remains).** Backed by `GET /api/records?scope=&discipline=&category=&era=` — UNIONs save data + Lahman 1871-2019 + BREF 2020-2025 + cross-source merged career rollups + Statcast 2015-2025 batted-ball quality. Three flat picker rows (Scope / Discipline / Era) + a Category strip dynamically populated from the available leaderboards in `f_record_player`. Source chips color-coded (emerald=save, indigo=lahman, sky=bref, violet=merged, amber=statcast); rows clickable through to `/player/<id>` when the underlying record carries an OOTP player_id, plain-text otherwise. Server re-ranks rows globally when era=all so duplicates between `save` (OOTP-imported) and `lahman` (real-life) sit adjacent — confirms the data integration story (Bonds 73 / 73, McGwire 70 / 70, etc.). Earlier today shipped the situational-splits stack (5 slices, 14 splits per year/level) + the **D20 pre-save MLB baselines maintenance pass** that drains `—` from advanced stats on every imported real-history player-season.
 
 Maintenance slice — **D20 pre-save MLB baselines** (closed earlier today): The `_lg_constants_advanced` view is now a UNION of `_native` (OOTP `league_history_*` — save years only) and `_imported` (Lahman 1871-2019 + BREF 2020-2025, summed across AL/NL into MLB league_id=203, level_id=1). `f_player_season_advanced_batting` jumped from 30k → **244,183 rows** — every imported MLB player-season pre-2026 now resolves wOBA / wRC+ / OPS+ / FIP / ERA+ / b_WAR. Headline spot-checks: Bonds 2001 wOBA .550 / OPS+ 257 / b_WAR 12.5 (vs BBR 259 / 12.5); Pujols 2003 OPS+ 189 (BBR 189 — exact); Trout 2018 OPS+ 198 (real 198 — exact); Pedro 2000 ERA+ 285 (BBR 291); Mantle 1956 OPS+ 220 (BBR 210, modern Yankee Stadium PF gap). Soft-skip on missing history tables means smoke / fresh warehouses still build cleanly. Park factors for pre-2026 use the team's *current-day* park (deferred follow-on); minor-league pre-save baselines stay null (Lahman doesn't carry them). Reconcile harness clean — no save-side regression.
 
@@ -15,7 +15,7 @@ Earlier-today slices (situational stack) in order:
 4. **Bases + platoon splits** — added `bases_empty` / `bases_loaded` (off `base1/2/3`) and `vs_left` / `vs_right` (LEFT JOIN to `players_current` for handedness; switch-hitters resolve to opposite of pitcher's hand). Side-aware labels: batter card "vs LHP/RHP", pitcher card "vs LHB/RHB". Sanity invariant: `vs_left + vs_right = all` ✓.
 5. **Counts + spray splits** — added `first_pitch` / `two_strike` / `full_count` (count BEFORE the resolving pitch) and `pull` / `center` / `oppo` (BIP-only spray; UI skips color coding since denominators differ). Empirically verified `hit_xy` is **batter-relative**, not field-absolute (mean hit_xy on HRs ≈71 for both LHB and RHB — same pull-side band), corrected DATA_NOTES.
 
-**Next**: port the next CLI history surface (`hof / streaks / draft`) to `/history`. Records + Awards shipped 2026-05-12; HoF is the natural next pick (Cooperstown roster + on-the-bubble candidates, mostly UI on existing `players_current.hall_of_fame` + the awards rollup).
+**Next**: `/history/draft` to drain the last History stub, then move on to the rest of the UI_DESIGN.md ladder (pressure board, salary stream, compare under Explore). Draft is mostly UI on the existing `f_draft_class` L3 fact; per-class outcome buckets already pre-bucketed (mlb_star / mlb_regular / mlb_callup / in_draft_org / traded_away / released / retired).
 
 ---
 
@@ -755,12 +755,26 @@ Per [UI_DESIGN.md](UI_DESIGN.md). Build order:
     as save data. Era=real cleanly isolates Yadier Molina 9 GG /
     R.A. Dickey 1 Cy / etc. (retired players whose bbref_ids didn't
     match save players).
-26. **Port the next CLI history surface** *(next slice)* — `hof`
-    (Cooperstown roster + on-the-bubble candidates) is the natural
-    pick. Backed by `players_current.hall_of_fame` + the
-    `f_award_career_player` rollup. Then `streaks` (smallest
-    surface), then `draft <year>`.
-27. Then the rest of the UI_DESIGN.md ladder (pressure board, salary
+26. **`/history/hof` + `/history/streaks`** ✅ (2026-05-12) — third
+    and fourth stubs on the `/history` tab drained in one slice.
+    HoF: `GET /api/hof?view=&limit=` returns either Inductees (285
+    players flagged `hall_of_fame=1`, ordered by induction year) or
+    Candidates (top-25 career WAR who aren't yet inducted). Both
+    views share the same `HofPlayer` row shape; toggle is a simple
+    pill with count hints. Marquee non-inducted: Bonds 146.6 /
+    Clemens 142.6 / Pete Rose 123.0 / A-Rod 120.6 — canonical
+    "should be in but aren't" list. Streaks: `GET /api/streaks?
+    streak_id=&scope=` returns the L3-pre-cut top-50 holders for
+    21 streak types × 2 scopes (active | all_time). Hitting streak
+    all-time top: Charlie Szykowny 56 games (DiMaggio mark). Active
+    streaks render a "Live" badge instead of an end date. Both
+    pages reuse the records / awards picker pattern.
+27. **`/history/draft`** *(next slice)* — last stub on the History
+    tab. Per-class outcome buckets already in `f_draft_class`
+    (mlb_star / mlb_regular / mlb_callup / in_draft_org /
+    traded_away / released / retired). UI work only — needs a year
+    picker + class-summary header + bucket-grouped roster.
+28. Then the rest of the UI_DESIGN.md ladder (pressure board, salary
     stream, compare under Explore, etc.).
 
 **Open audit carry-forwards** (non-blocking, picked up opportunistically):

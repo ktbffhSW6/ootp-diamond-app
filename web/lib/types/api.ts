@@ -132,6 +132,46 @@ export interface HealthResponse {
   api_version: string;
 }
 /**
+ * One Hall row — same shape for inductees + candidates so the
+ * table component is uniform.
+ *
+ * For inductees, ``inducted_year`` is populated and ``rank`` is
+ * null (inductees are ordered by year, not WAR rank).
+ *
+ * For candidates, ``inducted_year`` is null and ``rank`` is the
+ * 1-based career-WAR rank within the non-inducted cohort.
+ *
+ * ``career_war`` is OOTP's directly-supplied combined WAR (sum of
+ * ``f_player_season_advanced_batting.b_war`` across the player's
+ * seasons — same value the player page Advanced view shows). May
+ * be null for pure-pitcher inductees from the pre-fWAR era; the UI
+ * renders a dash in that case.
+ *
+ * ``last_team_abbr`` is the most recent team the player wore;
+ * blank for ancient retirees whose final team didn't survive
+ * OOTP's team-history tracking.
+ */
+export interface HofPlayer {
+  player_id: number;
+  display_name: string;
+  inducted_year: number | null;
+  rank: number | null;
+  career_war: number | null;
+  last_team_abbr: string | null;
+  retired: boolean;
+}
+/**
+ * Whole payload — inductees-or-candidates rows + the counts so
+ * the toggle pill can show "·N" hints on each side without a second
+ * round-trip.
+ */
+export interface HofResponse {
+  view: "inductees" | "candidates";
+  rows: HofPlayer[];
+  inductees_count: number;
+  candidates_count: number;
+}
+/**
  * Headline batting line shown in the before / after columns.
  *
  * ``ops_plus`` is the verdict driver (already park-adjusted, league-
@@ -1017,4 +1057,66 @@ export interface StandingsSubLeague {
   sub_league_id: number;
   sub_league_name: string | null;
   divisions: StandingsDivision[];
+}
+/**
+ * Lightweight streak handle for the picker. ``available_scopes``
+ * lists which scopes have data for this streak type — every code
+ * has both in our build, but the field is present in case a future
+ * save loses one (e.g., zero active games-played streaks because
+ * the season just rolled over).
+ */
+export interface StreakCategoryRef {
+  streak_id: number;
+  label: string;
+  available_scopes: ("active" | "all_time")[];
+}
+/**
+ * One streak-leaderboard row.
+ *
+ * ``rank`` mirrors ``rank_in_scope`` (no re-ranking needed; the
+ * L3 build already top-50'd per (streak_id, scope)).
+ *
+ * ``has_ended`` distinguishes active vs ended streaks. When
+ * ``scope='active'``, ``has_ended`` is always false; when
+ * ``scope='all_time'``, it can be either (active streaks
+ * naturally appear in both scopes — same player, same value).
+ *
+ * ``ended`` is the date string from the dump (e.g., ``"2028-7-29"``
+ * or ``"NULL"`` for active rows). The L3 builder leaves it as a
+ * string because the dump's date format isn't always parseable
+ * (single-digit months don't zero-pad). The UI renders it
+ * verbatim when present.
+ *
+ * ``team_abbr`` is the team at the start of the streak; nullable
+ * when the dump didn't carry team metadata for that game (pre-2026
+ * real-history streaks).
+ */
+export interface StreakRow {
+  rank: number;
+  player_id: number | null;
+  display_name: string;
+  value: number;
+  has_ended: boolean;
+  started: string | null;
+  ended: string | null;
+  league_id: number | null;
+  team_abbr: string | null;
+}
+/**
+ * One streak's leaderboard, top-N holders.
+ *
+ * ``available_streaks`` is the full picker list (all 21 streak_ids
+ * in the warehouse, with their labels). ``streak_id`` + ``scope``
+ * are the active selection.
+ *
+ * Like records / awards, the rendered ``rows`` is the source of
+ * truth for ordering — server already ordered by rank ASC.
+ */
+export interface StreaksResponse {
+  streak_id: number;
+  streak_label: string;
+  scope: "active" | "all_time";
+  available_streaks: StreakCategoryRef[];
+  rows: StreakRow[];
+  total_in_scope: number;
 }

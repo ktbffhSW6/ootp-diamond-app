@@ -573,13 +573,28 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
     awards). Per-season races deferred (need `f_award_event`-grain
     query); per-team rollups deferred (need `f_award_franchise`-grain
     query — same UI shape, different fact).
-  - [ ] **Hall of Fame** *(next)* — Cooperstown roster + on-the-bubble
-    candidates. Backed by `players_current.hall_of_fame` + the
-    `f_award_career_player` rollup (already powers `diamond hof`).
-  - [ ] **Streaks** — top-50-per-(streak_id × scope) leaderboards
-    from `f_player_streak`. Smallest surface; quick win.
-  - [ ] **Draft classes** — `diamond draft <year>` port. Per-class
-    retention + outcome buckets from `f_draft_class`.
+  - [x] **Hall of Fame** *(2026-05-12)* — `/history/hof` lives.
+    `GET /api/hof?view=&limit=` toggles between Inductees (285
+    players flagged `hall_of_fame=1`, ordered by induction year)
+    and Candidates (top-25 career WAR who aren't inducted —
+    Bonds / Clemens / Pete Rose / A-Rod headline the absentees).
+    Career WAR aggregation pulls from
+    `f_player_season_advanced_batting.b_war` + `_pitching.p_war`,
+    GREATEST'd to a single per-player value. View toggle pill
+    shows "·N" count hints on each side.
+  - [x] **Streaks** *(2026-05-12)* — `/history/streaks` lives.
+    `GET /api/streaks?streak_id=&scope=&limit=` returns top-50
+    holders for any of 21 streak types × 2 scopes (active |
+    all_time). Picker ordered by relevance (Hitting / Scoreless
+    Innings / On-Base / Win headlines first, rare codes last).
+    Active streaks render a "Live" badge instead of an end date.
+    Hitting streak all-time top: Charlie Szykowny 56 games (DiMaggio
+    mark).
+  - [ ] **Draft classes** *(next)* — `diamond draft <year>` port.
+    Per-class retention + outcome buckets from `f_draft_class`
+    (mlb_star / mlb_regular / mlb_callup / in_draft_org /
+    traded_away / released / retired). UI: year picker + class
+    summary header + bucket-grouped roster.
 - [ ] **League view content** — Standings shipped 2026-05-11; remaining:
   leaderboards, awards races, free-agent pool. Stub-strip below the
   standings block lists what's still pending.

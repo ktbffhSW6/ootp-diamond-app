@@ -25,6 +25,7 @@ from diamond.api.schemas.awards import (
 )
 from diamond.api.schemas.glossary import GlossaryEntry, GlossaryListResponse
 from diamond.api.schemas.health import HealthResponse
+from diamond.api.schemas.hof import HofPlayer, HofResponse
 from diamond.api.schemas.movements import (
     MovementBattingStats,
     MovementPitchingStats,
@@ -71,6 +72,11 @@ from diamond.api.schemas.standings import (
     StandingsSubLeague,
     StandingsTeamRow,
 )
+from diamond.api.schemas.streaks import (
+    StreakCategoryRef,
+    StreakRow,
+    StreaksResponse,
+)
 
 __all__ = [
     "AwardCategoryRef",
@@ -80,6 +86,8 @@ __all__ = [
     "GlossaryEntry",
     "GlossaryListResponse",
     "HealthResponse",
+    "HofPlayer",
+    "HofResponse",
     "MovementBattingStats",
     "MovementPitchingStats",
     "MovementRow",
@@ -115,5 +123,8 @@ __all__ = [
     "StandingsResponse",
     "StandingsSubLeague",
     "StandingsTeamRow",
+    "StreakCategoryRef",
+    "StreakRow",
+    "StreaksResponse",
     "TeamRef",
 ]

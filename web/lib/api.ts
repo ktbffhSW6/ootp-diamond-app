@@ -18,12 +18,14 @@ import type {
   GlossaryEntry,
   GlossaryListResponse,
   HealthResponse,
+  HofResponse,
   MovementsResponse,
   PlayerResponse,
   RecordsResponse,
   RosterResponse,
   SaveResponse,
   StandingsResponse,
+  StreaksResponse,
 } from "@/lib/types/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -145,6 +147,40 @@ export async function getAwards(args: {
   if (args.limit !== undefined) params.push(`limit=${args.limit}`);
   const qs = params.length === 0 ? "" : `?${params.join("&")}`;
   return fetchJson<AwardsResponse>(`/api/awards${qs}`);
+}
+
+// Hall of Fame payload — either the inductees roster or the
+// candidates list (top non-inducted by career WAR). Defaults to
+// ``view='inductees'`` (the canonical "who's in?" view); pass
+// ``view='candidates'`` for the "who should be next?" board.
+// ``inductees_count`` and ``candidates_count`` come back on every
+// response so the toggle can show "·N" hints.
+export async function getHof(args: {
+  view?: "inductees" | "candidates";
+  limit?: number;
+}): Promise<HofResponse> {
+  const params: string[] = [];
+  if (args.view) params.push(`view=${args.view}`);
+  if (args.limit !== undefined) params.push(`limit=${args.limit}`);
+  const qs = params.length === 0 ? "" : `?${params.join("&")}`;
+  return fetchJson<HofResponse>(`/api/hof${qs}`);
+}
+
+// Streaks leaderboard payload — top-N holders for one (streak_id ×
+// scope) combination. Backend defaults to streak_id=0 (HITTING_STREAK)
+// + scope=all_time + limit=25. Bad streak_id falls back to default
+// rather than 404'ing — deep-linked URLs stay forgiving.
+export async function getStreaks(args: {
+  streakId?: number;
+  scope?: "active" | "all_time";
+  limit?: number;
+}): Promise<StreaksResponse> {
+  const params: string[] = [];
+  if (args.streakId !== undefined) params.push(`streak_id=${args.streakId}`);
+  if (args.scope) params.push(`scope=${args.scope}`);
+  if (args.limit !== undefined) params.push(`limit=${args.limit}`);
+  const qs = params.length === 0 ? "" : `?${params.join("&")}`;
+  return fetchJson<StreaksResponse>(`/api/streaks${qs}`);
 }
 
 // Trigger a one-click shutdown of both dev servers (Next.js :3000 and
