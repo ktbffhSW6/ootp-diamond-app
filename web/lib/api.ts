@@ -15,6 +15,7 @@
 
 import type {
   AwardsResponse,
+  DraftClassResponse,
   GlossaryEntry,
   GlossaryListResponse,
   HealthResponse,
@@ -181,6 +182,21 @@ export async function getStreaks(args: {
   if (args.limit !== undefined) params.push(`limit=${args.limit}`);
   const qs = params.length === 0 ? "" : `?${params.join("&")}`;
   return fetchJson<StreaksResponse>(`/api/streaks${qs}`);
+}
+
+// Draft class retrospective — full per-year picks, grouped by
+// outcome bucket (mlb_regular | mlb_callup | in_draft_org |
+// traded_away | released | retired). Backend defaults to the
+// oldest year with material outcome variation (so fresh classes
+// don't render as 600 rows of "still developing"). All ~600 picks
+// returned in one round-trip following the roster page convention.
+export async function getDraft(args: {
+  year?: number;
+}): Promise<DraftClassResponse> {
+  const params: string[] = [];
+  if (args.year !== undefined) params.push(`year=${args.year}`);
+  const qs = params.length === 0 ? "" : `?${params.join("&")}`;
+  return fetchJson<DraftClassResponse>(`/api/draft${qs}`);
 }
 
 // Trigger a one-click shutdown of both dev servers (Next.js :3000 and

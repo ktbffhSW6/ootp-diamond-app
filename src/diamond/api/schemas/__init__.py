@@ -23,6 +23,12 @@ from diamond.api.schemas.awards import (
     AwardLeagueRef,
     AwardsResponse,
 )
+from diamond.api.schemas.draft import (
+    DraftBucket,
+    DraftClassResponse,
+    DraftClassSummary,
+    DraftPick,
+)
 from diamond.api.schemas.glossary import GlossaryEntry, GlossaryListResponse
 from diamond.api.schemas.health import HealthResponse
 from diamond.api.schemas.hof import HofPlayer, HofResponse
@@ -83,6 +89,10 @@ __all__ = [
     "AwardHolderRow",
     "AwardLeagueRef",
     "AwardsResponse",
+    "DraftBucket",
+    "DraftClassResponse",
+    "DraftClassSummary",
+    "DraftPick",
     "GlossaryEntry",
     "GlossaryListResponse",
     "HealthResponse",

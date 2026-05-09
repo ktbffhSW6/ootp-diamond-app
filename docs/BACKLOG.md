@@ -551,9 +551,9 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
   (top regret signals + promotion/demotion candidates from the
   pressure board), standings + Pythag, recent-moves feed embedded
   inline.
-- [/] **History view content** — port the existing CLI surfaces
-  (`diamond records`, `awards`, `hof`, `streaks`, `draft <year>`) to
-  web views under `/history/...`. Stub page lists the planned sections.
+- [x] **History view content** *(2026-05-12)* — fully drained. All
+  five sections (Records / Awards / HoF / Streaks / Draft) live.
+  Hub page links through to each retrospective.
   - [x] **Records** *(2026-05-12)* — `/history/records` lives.
     `GET /api/records?scope=&discipline=&category=&era=&limit=` UNIONs
     save + Lahman 1871-2019 + BREF 2020-2025 + cross-source merged
@@ -590,11 +590,18 @@ Full design in [UI_DESIGN.md](UI_DESIGN.md). Build order:
     Active streaks render a "Live" badge instead of an end date.
     Hitting streak all-time top: Charlie Szykowny 56 games (DiMaggio
     mark).
-  - [ ] **Draft classes** *(next)* — `diamond draft <year>` port.
-    Per-class retention + outcome buckets from `f_draft_class`
-    (mlb_star / mlb_regular / mlb_callup / in_draft_org /
-    traded_away / released / retired). UI: year picker + class
-    summary header + bucket-grouped roster.
+  - [x] **Draft classes** *(2026-05-12)* — `/history/draft` lives.
+    `GET /api/draft?year=` returns the entire ~600-pick class
+    grouped by outcome bucket (MLB Regulars → Callups → Still
+    Developing → Traded → Released → Retired). Year picker defaults
+    to oldest class with material outcome variation (2026 in this
+    save — fresh classes have ~570 in_draft_org rows). Class summary
+    header surfaces total picks + reach-MLB% + color-coded outcome
+    chips. Per-team filter deferred (30 teams = lots of pills).
+    Per-class draft trade retrospectives deferred (would need to
+    join `f_trade_participant` × `f_draft_class`). The 'mlb_star'
+    bucket from D8's original taxonomy is unused in the L3 builder
+    — only mlb_regular / mlb_callup are emitted today.
 - [ ] **League view content** — Standings shipped 2026-05-11; remaining:
   leaderboards, awards races, free-agent pool. Stub-strip below the
   standings block lists what's still pending.

@@ -83,6 +83,98 @@ export interface AwardsResponse {
   total_in_source: number;
 }
 /**
+ * One outcome bucket, with its picks ordered by overall pick ASC.
+ *
+ * Per-bucket count surfaced separately so the UI can render
+ * section headers with size hints ("MLB Regulars · 7") without
+ * counting client-side.
+ */
+export interface DraftBucket {
+  outcome: "mlb_regular" | "mlb_callup" | "in_draft_org" | "traded_away" | "released" | "retired";
+  label: string;
+  count: number;
+  rows: DraftPick[];
+}
+/**
+ * One drafted player + their current outcome.
+ *
+ * ``draft_overall_pick`` is the global pick number (1.1 = 1, 1.2 = 2,
+ * ..., 2.1 = 31, etc. — depends on round size). ``draft_round`` is
+ * the round number, kept for display ("Rd 4, Pick 124").
+ *
+ * ``career_mlb_war`` is the canonical "how did this pick turn out?"
+ * number — sums batting + pitching WAR across the player's MLB
+ * career. Always populated (zeros for players who never made MLB).
+ *
+ * ``mlb_g`` / ``mlb_pa`` / ``mlb_outs`` are batting/pitching career
+ * counters; the UI picks one to display based on the player's
+ * primary discipline.
+ *
+ * ``current_team_name`` is the team they're on now (could be the
+ * drafting org for ``in_draft_org`` outcomes, a different MLB org
+ * for ``traded_away``, or null for retired/released). ``current_level_id``
+ * 1=MLB, 2=AAA, 3=AA, 4=A+/A, 6=Rk/DSL — same convention as
+ * elsewhere.
+ */
+export interface DraftPick {
+  player_id: number;
+  display_name: string;
+  position: number;
+  bats: number | null;
+  throws: number | null;
+  draft_age: number | null;
+  draft_round: number | null;
+  draft_overall_pick: number | null;
+  draft_team_name: string | null;
+  current_team_name: string | null;
+  current_level_id: number | null;
+  outcome: "mlb_regular" | "mlb_callup" | "in_draft_org" | "traded_away" | "released" | "retired";
+  ever_made_mlb: boolean;
+  first_mlb_date: string | null;
+  mlb_g: number;
+  mlb_pa: number;
+  mlb_hr: number;
+  mlb_war_bat: number;
+  mlb_g_pit: number;
+  mlb_outs: number;
+  mlb_w: number;
+  mlb_s: number;
+  mlb_war_pit: number;
+  career_mlb_war: number;
+}
+/**
+ * Whole payload for one rendered draft year.
+ *
+ * ``available_years`` lists every year with picks (used by the
+ * year picker). ``summary`` is the headline counts for the rendered
+ * year. ``buckets`` is the actual roster, grouped + ordered.
+ */
+export interface DraftClassResponse {
+  year: number;
+  available_years: number[];
+  summary: DraftClassSummary;
+  buckets: DraftBucket[];
+}
+/**
+ * Year-level summary for the page header.
+ *
+ * ``total_picks`` is the count of all rows in the class (≈573-599
+ * per year in this save). ``ever_made_mlb`` is the cumulative
+ * promote-to-MLB count across the class — the headline "x% of this
+ * class has made the show" stat.
+ */
+export interface DraftClassSummary {
+  year: number;
+  total_picks: number;
+  ever_made_mlb: number;
+  mlb_regular: number;
+  mlb_callup: number;
+  in_draft_org: number;
+  traded_away: number;
+  released: number;
+  retired: number;
+}
+/**
  * One stat dictionary entry, serialized for HTTP.
  *
  * Field-for-field mirror of :class:`diamond.dictionary.Stat`. See

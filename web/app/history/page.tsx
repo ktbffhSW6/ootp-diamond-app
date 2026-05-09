@@ -1,6 +1,6 @@
-// History view — past seasons, records, awards, HoF. Most of this
-// already exists as CLI commands (`diamond records / awards / hof /
-// streaks`); porting them into web views is the v1 content. Stub.
+// History view — past seasons, records, awards, HoF, streaks, draft.
+// All five sections shipped 2026-05-12. Now a hub page that links
+// through to each retrospective.
 
 import { TabStub } from "@/components/TabStub";
 
@@ -11,7 +11,7 @@ export default function HistoryPage() {
   return (
     <TabStub
       title="History"
-      blurb="Past seasons, records, awards, Hall of Fame. The CLI surfaces (`diamond records`, `diamond awards`, `diamond hof`, `diamond streaks`) all already exist — porting them into web views is the v1 content here."
+      blurb="Past seasons through five lenses — all-time records, career trophy cases, the Hall of Fame, streak leaderboards, and per-year draft retrospectives. Save data fused with real MLB history (Lahman 1871-2019, BREF 2020-2025, MLB Stats API for awards / HoF gap-fills, Statcast 2015-2025 for batted-ball quality)."
       sections={[
         {
           title: "Records",
@@ -43,9 +43,10 @@ export default function HistoryPage() {
         },
         {
           title: "Past draft classes",
-          status: "soon",
+          status: "live",
+          href: "/history/draft",
           blurb:
-            "Each draft class with retrospectives — who hit, who busted, who's still developing.",
+            "Per-year retrospectives bucketed by outcome (MLB Regular / Callup / Still Developing / Traded / Released / Retired). 2026 class — Cholowsky 1.1, Skelton Sox 4th-round 3.6 WAR find.",
         },
       ]}
     />
