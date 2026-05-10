@@ -1019,3 +1019,103 @@ Commit `2b3f03f`.
 **Lesson**: should have checked X-Frame-Options on Metabase OSS *before* writing the iframe component. The pivot itself was 30 minutes of code; the iframe scaffolding was wasted work. For future "embed product X" decisions, validate the embedding headers / licensing first, design the integration second.
 
 **No revision to D31's main thesis** (Pattern A, Metabase as BI workshop, save-aware sync) — those all hold. The corrections are tactical: which port, how the page component composes, iframe vs launcher.
+
+---
+
+## D32 — Native desktop shell: pywebview + PyInstaller (no browser, no consoles)
+
+**Date**: 2026-05-15 (evening)
+**Decision**: Wrap Diamond in a native Windows desktop shell. One double-click on `Diamond.exe` opens a single titled window pointing at the local Next.js URL; FastAPI runs in an in-process uvicorn thread; Next.js runs as a hidden `node server.js` subprocess. Closing the window kills both backends cleanly via a Windows Job Object. No browser tab, no flapping cmd windows, no zombie processes. Single-instance enforcement via named mutex.
+
+**Why**: The dev workflow (two visible cmd windows + a browser tab) is fine for engineers but wrong for the actual use case. Diamond is a single-user local-first analytics tool; the user wants it to feel like Tableau Desktop / Power BI Desktop / a native app — not a service-stack you have to manually orchestrate. The browser-tab + flapping consoles were an artifact of the dev path leaking into production.
+
+**Stack picked**: pywebview (Microsoft Edge WebView2 on Windows) + PyInstaller for the bundle.
+
+**Alternatives considered**:
+
+| Option | Pros | Cons | Verdict |
+|---|---|---|---|
+| **Tauri 2 (Rust)** | Tiny bundle (~15MB), modern toolchain, first-class Mac/Linux | Adds Rust to the build chain; tooling tax for a Python-heavy team | Defer until cross-platform matters |
+| **Electron** | Mature, battle-tested | ~150MB bundle (Chromium), heavyweight for a single-user local app | No |
+| **pywebview + PyInstaller** | Pure-Python orchestrator (matches existing codebase), uses OS WebView2 (already on Win11), ~60-80MB single-folder bundle | Less polished than Tauri; Mac/Linux story is weaker | **Picked** |
+| **Static-export Next.js** | Simpler — one fewer subprocess | Massive refactor: every page is `force-dynamic` + uses server components; would need full migration to client-side fetch | No |
+
+**Architecture (single-window-morph pattern)**:
+
+1. **Single-instance lock** — `CreateMutexW("Local\\Diamond.OOTP.Desktop.SingleInstance")`. Second double-click sees `ERROR_ALREADY_EXISTS`, calls `FindWindowW` + `SetForegroundWindow` on the existing window, exits.
+2. **Job Object** — `CreateJobObjectW` + `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. Every spawned child PID gets `AssignProcessToJobObject`. A hard-killed launcher (Task Manager / power loss / PyInstaller crash) takes its kids down with it. **Eliminates the "stale process on :3000" failure mode entirely** — no more `kill-stale.bat` needed.
+3. **Single window with morph** — pywebview only supports one `webview.start()` call per process, so we open ONE window initialized with splash HTML at the final size (1600×1000). A background daemon thread runs sidecar boot (`start_sidecars`); when both ports are reachable, it calls `window.load_url(main_url)` (thread-safe in pywebview — internally posts to the GUI thread). The user sees a polished loading screen for the 3-5s cold-start window, then the app appears.
+4. **uvicorn in-thread** — FastAPI runs as a daemon thread inside the launcher process via `uvicorn.Server.run()`. No subprocess. Works inside PyInstaller bundles (no need for `python.exe` on PATH).
+5. **Next.js as hidden subprocess** — `node server.js` against the standalone build (`output: 'standalone'`). Spawned with `creationflags=CREATE_NO_WINDOW` so no console pops up. Requires `node` on PATH (acceptable for v1; a later slice could bundle Node).
+6. **Tray icon** (pystray) — runs in a daemon thread. Menu: Show / Open Metabase / API docs / Quit. Optional and fail-soft (`--no-tray` disables; missing pystray skips silently).
+7. **WebView2 runtime check** — registry probe before pywebview starts. If WebView2 is missing (Windows 10 edge case), we surface a `MessageBoxW` with the install URL instead of a confusing crash.
+
+**Build pipeline**:
+
+```
+make install-desktop    # pip install -e ".[desktop]"  (pywebview, pystray, PIL, pyinstaller, psutil)
+make desktop            # next build (standalone) + copy static + copy public + python -m diamond.desktop
+make desktop-package    # ↑ + PyInstaller → dist/Diamond/Diamond.exe
+```
+
+`scripts/build_desktop.py` orchestrates; `src/diamond/desktop/diamond.spec` is the PyInstaller spec.
+
+**One-folder, not one-file**. PyInstaller can produce a single .exe but it unpacks to TEMP on every launch — the Next.js standalone tree is ~thousands of small files, adding 2-3s to cold-start. One-folder bundle ships a `dist/Diamond/` directory with `Diamond.exe` at the root; an installer (Inno Setup / MSIX) wraps it for distribution.
+
+**Files**:
+
+```
+src/diamond/desktop/
+  __init__.py            module docstring
+  __main__.py            python -m diamond.desktop entry
+  launcher.py            argv parse + lifecycle orchestration
+  paths.py               source-vs-frozen path resolution
+  sidecar.py             uvicorn-thread + Next.js subprocess + port probes
+  single_instance.py     Win32 named mutex + FindWindow/SetForeground
+  win_jobobject.py       ctypes Job Object wrapper
+  splash.py              loads assets/splash.html (load_url morph)
+  tray.py                pystray icon + menu
+  diamond.spec           PyInstaller one-folder spec
+  assets/
+    splash.html          dark-themed loading screen
+    tray_icon.png        (optional; runtime PIL fallback if absent)
+    diamond.ico          (optional; spec picks up if present)
+
+scripts/build_desktop.py    next build + asset copy + (optional) PyInstaller
+```
+
+**What this changes for the user**:
+
+- Double-click `Diamond.exe` → splash window in ~200ms → main window in ~3-5s. No browser, no terminals.
+- Close the window → process tree empty. No leftover uvicorn / node / DuckDB locks.
+- Tray icon (taskbar notification area) → Show / Metabase / Quit.
+- Second double-click while running → focuses the existing window (no duplicate).
+- Hard-kill via Task Manager → Job Object kills the children too. **`kill-stale.bat` is deprecated** for the desktop path (still useful if the user runs `dev.bat` and crashes the dev terminals).
+
+**What stays unchanged**:
+
+- `dev.bat` and the two-terminal hot-reload workflow — kept for engineering. Desktop shell is the **production user surface**, not a replacement for the dev path.
+- Metabase Workshop launcher (D31) still opens in default browser. Acceptable: Metabase is the explicit "BI escape hatch", and rendering it in a separate WebView2 instance buys nothing.
+- All API routes, schemas, theme system, dictionary, warehouse — zero touch.
+
+**Tradeoffs**:
+
+- **Bundle size** ~60-80MB. Most of that is the Python runtime (~25MB) + Next.js standalone tree (~30MB) + pywebview + pystray + PIL. Acceptable for a desktop app; not optimizing further until distribution becomes a real concern.
+- **Node still required** — we don't bundle Node.js v1. The user already has it for dev; an installer can pin a Node version later. This is the lowest-risk path; bundling Node would add ~50MB and require `nodemon`-style wrapping.
+- **Mac/Linux story is weaker** — pywebview works there but with caveats. Diamond is currently Windows-pinned (saves path is a hardcoded constant); when we cross-platform, Tauri becomes attractive again.
+- **Dev iteration on the launcher itself** — `python -m diamond.desktop --dev` skips the build step and connects to the running `dev.bat` servers. Saves the ~30s rebuild cycle while iterating on launcher / tray / splash code.
+
+**Failure modes and recovery**:
+
+| Failure | Symptom | Recovery |
+|---|---|---|
+| WebView2 missing | MessageBox with install URL | User installs WebView2, relaunches |
+| Standalone tree missing | Splash → error HTML in window | `python scripts/build_desktop.py` |
+| Node not on PATH | Splash → error HTML | Install Node 20+ |
+| Port collision (rare) | `_free_port` finds an alternate | Auto-recovers |
+| Hard-kill of launcher | (none) Job Object kills the kids | Relaunch |
+| Sidecar boot timeout | Splash → error HTML after 45s | Check launcher logs |
+
+**Pinned**: pywebview (not Tauri/Electron), one-folder PyInstaller bundle (not one-file), single-window-morph (not splash-then-main, not multi-window), Job Object + named mutex for lifecycle.
+
+**Deferred to v2**: code signing (Windows SmartScreen friendliness), Inno Setup MSI installer for Start Menu integration + uninstall, auto-update via Tauri-style updater, Mac/Linux ports.

@@ -40,9 +40,21 @@ dev = [
     # peer-dep — install via `pnpm install` in `web/`.
     "pydantic-to-typescript>=2.0.0",
 ]
+# Desktop shell (D32) — native pywebview window wrapping FastAPI
+# (in-process uvicorn thread) + Next.js standalone sidecar. Hidden
+# children, single-instance lock, Job Object lifecycle. PyInstaller
+# bundles into one Diamond.exe; pystray + Pillow give the tray icon.
+desktop = [
+    "pywebview>=5.3",
+    "pystray>=0.19.5",
+    "Pillow>=10.0.0",
+    "psutil>=5.9.0",
+    "pyinstaller>=6.10.0",
+]
 
 [project.scripts]
 diamond = "diamond.cli:app"
+diamond-desktop = "diamond.desktop.launcher:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/diamond"]

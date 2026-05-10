@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Diamond — starting</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        width: 100%;
+        background: linear-gradient(160deg, #0b1220 0%, #0f1b2e 100%);
+        color: #e8eef9;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        overflow: hidden;
+        user-select: none;
+      }
+      .wrap {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+      }
+      .badge {
+        font-size: 11px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: #6b8bb6;
+      }
+      .title {
+        font-size: 32px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .subtitle {
+        font-size: 13px;
+        color: #94a8c4;
+      }
+      .ring {
+        margin-top: 12px;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: 2px solid rgba(148, 168, 196, 0.25);
+        border-top-color: #5b8def;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .footer {
+        position: absolute;
+        bottom: 14px;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-size: 11px;
+        color: #4a6280;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="badge">Diamond</div>
+      <div class="title">Building the Green Monster</div>
+      <div class="subtitle">Loading warehouse · starting services</div>
+      <div class="ring" aria-hidden="true"></div>
+    </div>
+    <div class="footer">OOTP 27 · local-first analytics</div>
+  </body>
+</html>

@@ -4,7 +4,51 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-15 (evening) — **Phase 3: Metabase integration shipped (D31).** Diamond now has a self-hosted, save-aware Metabase as its full-BI workshop — Pattern A (single Database connection follows the active save). Five commits this evening: spike → integration → port-flip (3000→3001) → SSR cleanup → iframe-to-launcher pivot.
+**Last updated**: 2026-05-15 (late evening) — **Phase 3: Native desktop shell shipped (D32).** Diamond now ships as a native Windows app — one `Diamond.exe`, no browser tab, no flapping cmd windows, clean shutdown via Windows Job Object. Single-window-morph pattern (splash → main URL via `window.load_url`); pywebview + WebView2 for the chrome; PyInstaller for the bundle. Five-slice ship in a single session.
+
+| Slice | Headline | Files |
+|---|---|---|
+| **1. Launcher MVP** | `src/diamond/desktop/launcher.py` orchestrates lifecycle. uvicorn runs in a daemon thread (in-process, no `python.exe` subprocess needed inside the frozen bundle). Next.js standalone runs as a hidden `node server.js` child via `CREATE_NO_WINDOW`. Both bind 127.0.0.1; ports auto-fallback to OS-assigned if 8000/3000 are busy. | `desktop/{launcher,sidecar,paths}.py`, `desktop/__main__.py`, pyproject `[desktop]` extra |
+| **2. Standalone build** | Flipped `web/next.config.mjs` to `output: 'standalone'`. New `scripts/build_desktop.py` runs `next build` + copies `.next/static` and `public/` into the standalone tree (Next omits these by default). `make desktop` chains build + run. | `web/next.config.mjs`, `scripts/build_desktop.py`, `Makefile` |
+| **3. Lifecycle hardening** | Windows Job Object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) — every spawned child PID is assigned to it; hard-killed launcher takes its kids down too. **Eliminates stale-process failure mode entirely.** Single-instance lock via `CreateMutexW` + `Local\\Diamond.OOTP.Desktop.SingleInstance`; second double-click sees `ERROR_ALREADY_EXISTS`, calls `FindWindowW` + `SetForegroundWindow` on the running window. | `desktop/{win_jobobject,single_instance}.py` |
+| **4. PyInstaller bundle** | `src/diamond/desktop/diamond.spec` is a one-folder spec (not `--onefile` — the standalone tree's thousands of small files would add 2-3s per-launch unpack to TEMP). Datas: web standalone tree → `web_standalone/`, asset folder → `desktop_assets/`. Hidden imports cover all 23 API route modules + uvicorn dynamic imports + pywebview backends + pystray + PIL. `make desktop-package` builds → `dist/Diamond/Diamond.exe`. | `desktop/diamond.spec`, `scripts/build_desktop.py --package` |
+| **5. Polish** | **Splash → main morph** (single window, single `webview.start()`; `window.load_url` is thread-safe so the boot thread drives the swap atomically). Splash HTML in `assets/splash.html` matches D18 dark theme. **WebView2 runtime probe** before pywebview starts — missing → `MessageBoxW` with install URL, exit cleanly (Win10 edge case). **Tray icon** via pystray in a daemon thread (Show / Open Metabase Workshop / API docs / Quit). Tray and splash both fail-soft. | `desktop/{splash,tray}.py`, `desktop/assets/splash.html` |
+
+**What changes for the user**:
+
+- Double-click `Diamond.exe` → splash window in ~200ms → main window in ~3-5s. **No browser. No terminals.**
+- Close the window → process tree empty. No leftover uvicorn / node / DuckDB locks.
+- Tray icon (Win11 notification area) → Show / Open Metabase / Quit.
+- Second double-click while running → focuses the existing window (no duplicate copy).
+- Hard-kill via Task Manager → Job Object kills the children too. **`kill-stale.bat` is deprecated** for the desktop path.
+
+**What stays unchanged**:
+
+- `dev.bat` and the two-terminal hot-reload workflow — kept for engineering. Desktop shell is the production user surface, not a replacement for the dev path.
+- Metabase Workshop launcher (D31) still opens in default browser (acceptable: Metabase is the explicit BI escape hatch, and rendering it inside another WebView2 buys nothing).
+- All API routes, schemas, theme system, dictionary, warehouse — zero touch.
+
+**Run modes**:
+
+| Command | Use |
+|---|---|
+| `dev.bat` | Engineering — two cmd windows + browser tab, hot-reload |
+| `python -m diamond.desktop --dev` | Iterating on launcher / tray / splash code (assumes dev.bat is up) |
+| `make desktop` | Validate production path locally — runs `next build` + opens native window |
+| `make desktop-package` | Full bundle → `dist/Diamond/Diamond.exe` |
+
+**Documented**: `docs/DESKTOP.md` (architecture / build pipeline / troubleshooting / when-not-to-use); `docs/DECISIONS.md` D32 (full architectural reasoning vs Tauri / Electron / static-export).
+
+**Caveats / known follow-ups**:
+- Code signing (Windows SmartScreen friendliness) deferred — `Diamond.exe` will trip SmartScreen on first run; user clicks "More info" → "Run anyway". Acceptable for single-user local. Tracked in BACKLOG.md.
+- Inno Setup MSI installer for Start Menu integration + uninstall deferred — manual `dist/Diamond/Diamond.exe` for now.
+- Auto-update deferred — relaunch Diamond after a `git pull` + `make desktop-package`.
+- Mac/Linux deferred — pywebview supports both but Diamond's saves path is hardcoded to Windows; cross-platform is a separate scope.
+- Node still required on PATH — bundling Node would add ~50MB; deferred to a future "no external deps" slice.
+
+---
+
+**2026-05-15 (evening) — Phase 3: Metabase integration shipped (D31).** Diamond now has a self-hosted, save-aware Metabase as its full-BI workshop — Pattern A (single Database connection follows the active save). Five commits this evening: spike → integration → port-flip (3000→3001) → SSR cleanup → iframe-to-launcher pivot.
 
 | Phase | Headline | Commit |
 |---|---|---|

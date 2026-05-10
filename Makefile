@@ -13,7 +13,7 @@
 # logs cleanly. Open two terminals: `make api` in one, `make web` in
 # the other.
 
-.PHONY: help api web types smoke install-dev clean
+.PHONY: help api web types smoke install-dev install-desktop desktop desktop-package clean
 
 PY := .venv/Scripts/python.exe
 
@@ -41,6 +41,19 @@ smoke:
 
 install-dev:
 	$(PY) -m pip install -e ".[dev]"
+
+# Desktop shell (D32)
+install-desktop:
+	$(PY) -m pip install -e ".[desktop]"
+
+# Build standalone Next.js + boot the native window from source.
+desktop:
+	$(PY) scripts/build_desktop.py
+	$(PY) -m diamond.desktop
+
+# Full bundle: standalone + PyInstaller → dist/Diamond/Diamond.exe.
+desktop-package:
+	$(PY) scripts/build_desktop.py --package
 
 clean:
 	rm -rf web/.next web/node_modules/.cache

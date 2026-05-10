@@ -12,6 +12,14 @@ const nextConfig = {
   // Leaving server-component fetches as the data path — they hit the
   // FastAPI backend over localhost during dev.
   //
+  // D32 (desktop shell): `output: 'standalone'` produces a self-contained
+  // server tree at .next/standalone/{server.js, .next/, node_modules/}
+  // that the desktop launcher spawns via `node server.js`. The standalone
+  // tree only includes runtime deps, so the bundle stays small (~40MB
+  // vs ~300MB of dev node_modules). Static assets (.next/static + public/)
+  // are NOT auto-copied — `scripts/build_desktop.py` handles that step.
+  output: "standalone",
+  //
   // 2026-05-13 IA shuffle: /explore is now JUST the Chart Builder.
   // Per-player charts (spray, EV/LA) live inline on the player page;
   // league-wide tools (leaderboards, compare) moved under /league.

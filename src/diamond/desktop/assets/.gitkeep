@@ -1,0 +1,5 @@
+# Desktop assets directory.
+# - splash.html      (Slice 5; pywebview-rendered cold-start splash)
+# - tray_icon.png    (Slice 5; system tray glyph; 32x32 RGBA)
+# - diamond.ico      (Windows .exe icon, optional; build_desktop.py
+#                     picks it up if present)
