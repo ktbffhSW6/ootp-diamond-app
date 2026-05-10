@@ -88,12 +88,27 @@ _BASE_W_HR = 2.10
 
 
 # Native view — sources from `league_history_*_event` (the OOTP-native
-# per-(league_id, year, level_id) aggregates). Save coverage only —
-# 2026 onward in this save, since OOTP doesn't emit league_history rows
-# for pre-save imported player-seasons.
+# per-(league_id, year, level_id) aggregates) for completed seasons, with
+# an in-progress fallback that aggregates from `f_player_season_*` for any
+# (league_id, year, level_id) NOT present in the league_history rollups.
+#
+# Why the fallback exists: OOTP only writes `league_history_*_stats.csv`
+# rows for completed seasons (the post-season writeback step). Mid-season
+# dumps therefore lack rollup rows for the active year — e.g. a July 2028
+# dump has zero MLB rows in `league_history_batting_event` for year=2028,
+# even though every MLB player has 2028 stats on `players_career_*_stats`.
+# Without this fallback, the entire in-progress year's wOBA/wRC+/OPS+/FIP/
+# ERA+ stack comes out NULL — see the symptoms in `docs/DATA_NOTES.md`
+# "In-progress season league constants".
+#
+# Both sources are scope-filtered identically: league_history_*_event uses
+# _SCOPE_LEAGUE_HARDCODED_15; f_player_season_* is sourced from
+# players_career_*_event which uses _SCOPE_PLAYER (which itself is gated to
+# scoped teams + ≥1 MLB appearance). The fallback uses split_id=1 (overall)
+# only — sub-splits would double-count.
 _LG_CONSTANTS_NATIVE_VIEW_SQL = f"""
 CREATE OR REPLACE VIEW _lg_constants_advanced_native AS
-WITH agg_bat AS (
+WITH agg_bat_history AS (
     SELECT
         league_id, year, level_id,
         SUM(pa)::DOUBLE  AS lg_pa,
@@ -111,7 +126,50 @@ WITH agg_bat AS (
     FROM league_history_batting_event
     GROUP BY league_id, year, level_id
 ),
-agg_pit AS (
+agg_bat_fallback AS (
+    -- In-progress fallback: aggregate from latest-dump player totals when
+    -- league_history hasn't been written yet. f_player_season_batting is
+    -- already dump-deduplicated (L1 picks MAX(dump_date) per natural key).
+    --
+    -- Year filter is critical: this fallback fires ONLY for years that
+    -- already have SOME league_history coverage (i.e. the in-save scope).
+    -- Pre-save years (Lahman/BREF-imported player rows) have no
+    -- league_history rows at all, and their constants come from
+    -- `_lg_constants_advanced_imported` (lref_era_stats-backed). Without
+    -- the year filter, this CTE would aggregate imported pre-save player
+    -- rows into a "native" row and displace the imported source — values
+    -- would be nearly identical (both Lahman-sourced), but the precedence
+    -- swap would be undocumented and could mask drift if Lahman ↔ OOTP
+    -- import-shape ever diverges.
+    SELECT
+        league_id, year, level_id,
+        SUM(pa)::DOUBLE  AS lg_pa,
+        SUM(ab)::DOUBLE  AS lg_ab,
+        SUM(h)::DOUBLE   AS lg_h,
+        SUM(d)::DOUBLE   AS lg_d,
+        SUM(t)::DOUBLE   AS lg_t,
+        SUM(hr)::DOUBLE  AS lg_hr,
+        SUM(bb)::DOUBLE  AS lg_bb,
+        SUM(ibb)::DOUBLE AS lg_ibb,
+        SUM(hp)::DOUBLE  AS lg_hp,
+        SUM(sf)::DOUBLE  AS lg_sf,
+        SUM(r)::DOUBLE   AS lg_r,
+        (SUM(h) - SUM(d) - SUM(t) - SUM(hr))::DOUBLE AS lg_singles
+    FROM f_player_season_batting
+    WHERE split_id = 1
+      AND year IN (SELECT DISTINCT year FROM league_history_batting_event)
+      AND (league_id, year, level_id) NOT IN (
+          SELECT DISTINCT league_id, year, level_id
+          FROM league_history_batting_event
+      )
+    GROUP BY league_id, year, level_id
+),
+agg_bat AS (
+    SELECT * FROM agg_bat_history
+    UNION ALL
+    SELECT * FROM agg_bat_fallback
+),
+agg_pit_history AS (
     -- league_history_pitching has ip + ipf (full innings + frac outs);
     -- collapse to total outs to match the player-side outs convention.
     SELECT
@@ -124,6 +182,33 @@ agg_pit AS (
         SUM(k)::DOUBLE                     AS lg_pit_k
     FROM league_history_pitching_event
     GROUP BY league_id, year, level_id
+),
+agg_pit_fallback AS (
+    -- Mirror agg_bat_fallback: aggregate from f_player_season_pitching for
+    -- (league, year, level) combos not in league_history_pitching_event.
+    -- `outs` is pre-computed in f_player_season_pitching as ip*3 + ipf.
+    -- Same year-filter rationale as agg_bat_fallback above.
+    SELECT
+        league_id, year, level_id,
+        SUM(outs)::DOUBLE AS lg_outs,
+        SUM(er)::DOUBLE   AS lg_er,
+        SUM(hra)::DOUBLE  AS lg_hra,
+        SUM(bb)::DOUBLE   AS lg_pit_bb,
+        SUM(hp)::DOUBLE   AS lg_pit_hp,
+        SUM(k)::DOUBLE    AS lg_pit_k
+    FROM f_player_season_pitching
+    WHERE split_id = 1
+      AND year IN (SELECT DISTINCT year FROM league_history_pitching_event)
+      AND (league_id, year, level_id) NOT IN (
+          SELECT DISTINCT league_id, year, level_id
+          FROM league_history_pitching_event
+      )
+    GROUP BY league_id, year, level_id
+),
+agg_pit AS (
+    SELECT * FROM agg_pit_history
+    UNION ALL
+    SELECT * FROM agg_pit_fallback
 ),
 joined AS (
     SELECT

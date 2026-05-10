@@ -1919,3 +1919,77 @@ visible without a real-world reference). OPS+ *is* park-adjusted
 to be park-adjusted is a separate refactor; the current values are
 useful for cross-season comparisons within a player's own career
 arc but should not be compared 1:1 with published Fangraphs wRC+.
+
+
+## In-progress season league constants (D37, 2026-05-17)
+
+OOTP only writes `league_history_*_stats.csv` rows for **completed** seasons. The post-season writeback step is what fills in `(league_id, year, level_id)` rollup rows for that year. Mid-season dumps therefore have **zero `league_history` entries for the active year** — except for short-season foreign rookie leagues (DSL plays Jun-Aug, complete by July, so `dump_2028_07` did have 2028 league_history rows for league_id 217/218 but not MLB / AAA / etc).
+
+Without league constants for (in-progress year, MLB), the entire wOBA/wRC+/OPS+/FIP/ERA+ stack returns NULL for every player in that year. This was visible in the cockpit as a giant red "0" headline metric on every spotlight player + "No qualifiers yet" on the MLB Pressure board.
+
+`_lg_constants_advanced_native` (in `src/diamond/schema/l3_advanced.py`) handles this with two new CTEs UNION ALL'd into the historical aggregations:
+
+- **`agg_bat_fallback`** — aggregates from `f_player_season_batting` (already dump-deduplicated to latest dump via L1's `MAX(dump_date)` filter) for `(league_id, year, level_id)` combos NOT in `league_history_batting_event`. Same fields as the league_history aggregation (lg_pa, lg_ab, lg_h, lg_d, lg_t, lg_hr, lg_bb, lg_ibb, lg_hp, lg_sf, lg_r, lg_singles).
+- **`agg_pit_fallback`** — mirrors agg_bat for pitching, using `f_player_season_pitching.outs` (which is pre-computed as `ip*3 + ipf` in L2).
+
+**Two safety gates** keep the fallback from displacing canonical sources:
+
+1. **Year filter**: `year IN (SELECT DISTINCT year FROM league_history_*_event)`. Pre-save years (Lahman/BREF-imported player rows) have NO league_history rows at all, and stay routed to `_lg_constants_advanced_imported` (the lref_era_stats-backed view, canonical for pre-save). Without this gate, the fallback would aggregate Lahman-imported player rows into "native" rows and silently displace the imported source — values would be near-identical (both Lahman-rooted), but the precedence swap could mask drift if the OOTP↔Lahman import shape ever diverges.
+2. **Combo filter**: `(league_id, year, level_id) NOT IN (SELECT DISTINCT league_id, year, level_id FROM league_history_*_event)`. Wherever league_history has data, that's authoritative — this fallback only fills the gaps.
+
+Spot check: post-fix, 2028 in `_lg_constants_advanced` for The Fathers save jumped from 2 rows (DSL only) to 25 rows (MLB / AAA / AA / A+ / A / MiLB-rookie / level-7 international / AFL / level-12-college). 2028 MLB lg_obp = .316, lg_slg = .407, lg_era = 4.14 — sensible mid-season values matching the in-game UI within rounding.
+
+Implication for downstream consumers: when OOTP eventually writes the post-season `league_history` rows for 2028 (next dump after the season completes), the fallback combo filter naturally drops those (year, level, league) entries from the fallback path and lets the league_history values take precedence — no warehouse rebuild needed beyond the routine `--rebuild-only`.
+
+**Cockpit must handle NULL metrics gracefully even with this fix in place** — edge cases like a player with PAs in a level that has no other players, or zero-PA accidents, can still produce NULL. `CockpitSpotlightCard.headline_metric_value` is `int | None` per D37; the frontend renders "—" with `text-content-muted` rather than showing a misleading red "0".
+
+
+## API endpoints with `history_*` table dependencies (D37, 2026-05-17)
+
+`diamond fetch-history` is opt-in per save — it downloads + processes ~150MB of Lahman tables (`people`, `batting`, `pitching`, `fielding`, `awards`, etc.), BREF 2020-2025 supplemental, MLB Stats API endpoints, Statcast pulls. Saves where the user hasn't run it yet have **zero `history_*` tables** in the warehouse.
+
+API endpoints that JOIN to optional `history_*` tables MUST probe `information_schema.tables` first and degrade gracefully:
+
+```python
+def _history_loaded(con):
+    row = con.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_name = 'history_lahman_people' LIMIT 1"
+    ).fetchone()
+    return row is not None
+```
+
+Then build the query with or without the JOIN. DuckDB's missing-table error is **compile-time** — the LEFT JOIN doesn't help; the entire query fails to bind. Use a template-string approach:
+
+```python
+QUERY_TEMPLATE = """
+SELECT ..., {bbref_select} AS bbref_id
+FROM players_current pc
+{lahman_join}
+WHERE ...
+"""
+
+if history_present:
+    sql = QUERY_TEMPLATE.format(
+        bbref_select="lp.bbrefID",
+        lahman_join="LEFT JOIN history_lahman_people lp ON ...",
+    )
+else:
+    sql = QUERY_TEMPLATE.format(
+        bbref_select="NULL::VARCHAR",
+        lahman_join="",
+    )
+```
+
+Currently `/api/hof` is the only endpoint with this dependency (resolves bbref_id for HoF plaque deep-links). Records / awards / streaks UNION in real-history via L3-derived tables (`f_record_player`, `f_award_career_player`, etc.) which simply don't include real-history rows when the source tables aren't there — graceful by construction. If we ever add another endpoint that JOINs history_* directly, follow the hof.py pattern.
+
+
+## API endpoints reading the warehouse (Windows file-lock hazard, D37)
+
+DuckDB on Windows respects exclusive file locking — even read-only connections from the same process fail with `IOException` while uvicorn's RW connection holds the warehouse. This is platform-specific behavior (Linux + macOS allow concurrent readers + 1 writer; Windows doesn't).
+
+**Convention**: all API endpoints that need warehouse access use `Depends(get_cursor)` to share the API's single RW connection. Don't open a second `duckdb.connect(... read_only=True)` from within the API process — it'll silently fail.
+
+Caught in D37: `/api/admin/dump-status` was opening its own read-only connection and falling into its `except duckdb.Error` fallback that returned "everything pending" (badge would falsely show all dumps unprocessed). Fix was to switch to `Depends(get_cursor)`.
+
+CLI commands (run in their own process from a separate cmd window) are not subject to this — they open their own RW connection cleanly when uvicorn isn't holding the file. The `diamond status` CLI works fine for terminal introspection of ingest state.

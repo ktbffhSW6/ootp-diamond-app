@@ -41,13 +41,16 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from typing import Annotated
+
 import duckdb
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from diamond.api.schemas import DumpStatusResponse, IngestRunResponse
 from diamond.api.warehouse import (
     _lock as _warehouse_lock,
     get_active_save,
+    get_cursor,
 )
 from diamond.schema.build import (
     already_ingested,
@@ -146,13 +149,22 @@ def _list_dumps_on_disk(save) -> list[str]:
 
 
 @router.get("/admin/dump-status", response_model=DumpStatusResponse)
-def get_dump_status() -> DumpStatusResponse:
+def get_dump_status(
+    con: Annotated[duckdb.DuckDBPyConnection, Depends(get_cursor)],
+) -> DumpStatusResponse:
     """Read-only snapshot of ingest gap.
 
     Compares dump folders on disk against `_diamond_ingests` rows.
     Returns counts + the list of pending dumps (truncated for the UI
-    badge tooltip). Lock-free: opens a temporary read-only connection
-    so it's safe to call while ingest is running.
+    badge tooltip).
+
+    Uses the shared API cursor (`get_cursor`) rather than opening its
+    own connection — DuckDB on Windows holds an exclusive file lock
+    when uvicorn has the warehouse open RW, so a second
+    `duckdb.connect(read_only=True)` from the same process raises
+    IOException and the endpoint silently returned "everything
+    pending" (badge would falsely show all dumps unprocessed). The
+    fast-but-quiet failure is documented in `docs/DECISIONS.md`.
     """
     save = get_active_save()
     on_disk = _list_dumps_on_disk(save)
@@ -171,59 +183,37 @@ def get_dump_status() -> DumpStatusResponse:
             latest_ingested_at=None,
         )
 
-    # Read-only connection — doesn't conflict with the API's RW _root_con
-    # because DuckDB allows multiple readers of the same file (or a writer
-    # + readers, but we open this one read-only explicitly).
+    # Probe table existence first — if the warehouse exists but
+    # `_diamond_ingests` doesn't (very-old warehouse or one that errored
+    # mid-build), treat as zero ingested rather than 500.
     try:
-        con = duckdb.connect(str(db_path), read_only=True)
+        ingested_rows = con.execute(
+            "SELECT dump_name, ingest_ts FROM _diamond_ingests "
+            "WHERE status = 'success' ORDER BY ingest_ts DESC"
+        ).fetchall()
     except duckdb.Error:
-        # Defensive: if read_only=True somehow fails (rare on Windows
-        # when the file is locked), fall back to "everything pending"
-        # so the UI surfaces the issue rather than silently lying.
-        return DumpStatusResponse(
-            save_name=save.save_name,
-            has_warehouse=True,
-            on_disk_count=len(on_disk),
-            ingested_count=0,
-            pending_count=len(on_disk),
-            pending_dumps=on_disk[:20],
-            latest_ingested_dump=None,
-            latest_ingested_at=None,
-        )
+        ingested_rows = []
 
-    try:
-        # Initialize the table existence check — we're read-only so we
-        # can't create it; if it doesn't exist, treat as zero ingested.
-        try:
-            ingested_rows = con.execute(
-                "SELECT dump_name, ingest_ts FROM _diamond_ingests "
-                "WHERE status = 'success' ORDER BY ingest_ts DESC"
-            ).fetchall()
-        except duckdb.Error:
-            ingested_rows = []
+    ingested_set = {r[0] for r in ingested_rows}
+    pending = [d for d in on_disk if d not in ingested_set]
 
-        ingested_set = {r[0] for r in ingested_rows}
-        pending = [d for d in on_disk if d not in ingested_set]
+    latest_dump = ingested_rows[0][0] if ingested_rows else None
+    latest_at = (
+        ingested_rows[0][1].isoformat()
+        if ingested_rows and isinstance(ingested_rows[0][1], datetime)
+        else None
+    )
 
-        latest_dump = ingested_rows[0][0] if ingested_rows else None
-        latest_at = (
-            ingested_rows[0][1].isoformat()
-            if ingested_rows and isinstance(ingested_rows[0][1], datetime)
-            else None
-        )
-
-        return DumpStatusResponse(
-            save_name=save.save_name,
-            has_warehouse=True,
-            on_disk_count=len(on_disk),
-            ingested_count=len(ingested_set),
-            pending_count=len(pending),
-            pending_dumps=pending[:20],
-            latest_ingested_dump=latest_dump,
-            latest_ingested_at=latest_at,
-        )
-    finally:
-        con.close()
+    return DumpStatusResponse(
+        save_name=save.save_name,
+        has_warehouse=True,
+        on_disk_count=len(on_disk),
+        ingested_count=len(ingested_set),
+        pending_count=len(pending),
+        pending_dumps=pending[:20],
+        latest_ingested_dump=latest_dump,
+        latest_ingested_at=latest_at,
+    )
 
 
 @router.post("/admin/ingest", response_model=IngestRunResponse)

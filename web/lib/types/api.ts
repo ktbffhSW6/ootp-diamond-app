@@ -414,7 +414,7 @@ export interface CockpitSpotlightCard {
   team_id: number | null;
   team_abbr: string | null;
   headline_metric_label: string;
-  headline_metric_value: number;
+  headline_metric_value: number | null;
   sample: string;
   war_current: number;
   career_years: number[];

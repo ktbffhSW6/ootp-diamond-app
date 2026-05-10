@@ -1442,3 +1442,44 @@ For the November end-of-season dump (`dump_YYYY_11`), end-of-month means 11/30 �
 - All ID-typed scope filters use `TRY_CAST(... AS BIGINT)` — defense in depth against per-save CSV inference quirks. Same pattern in any future L1/L3 builder that filters on a foreign key from L0.
 - Frontend `fmtDate` parses date-only ISO strings as local TZ, not UTC, to avoid the off-by-one-day display drift.
 - `dump_date` semantics: end-of-month for `dump_YYYY_MM`. New ingests after 2026-05-16 land EOM directly. Existing warehouses migrate via `diamond migrate-dump-dates` (opt-in, never auto). The setting `_diamond_settings.dump_date_convention='end_of_month'` marks a migrated warehouse.
+
+---
+
+## D37 — In-progress season league constants + multi-save endpoint resilience
+
+**Status:** Shipped 2026-05-17.
+
+**Context.** The day after D36 shipped, user opened the Padres save mid-2028 (latest dump `dump_2028_07`, mid-July) and reported three regressions on the cockpit:
+
+1. Every spotlight player rendered a giant red "0" headline metric ("OPS+ 0" / "ERA+ 0") even though career-WAR sparklines and bio data populated.
+2. The "MLB Pressure" board on the cockpit said "No qualifiers yet" for both promotion and pressure.
+3. The History → Hall of Fame page returned a server-side 500.
+
+Tracing each:
+
+**Issue 1 + 2 root cause — in-progress season league constants.** OOTP only writes `league_history_*_stats.csv` rows for **completed** seasons (the post-season writeback step). Mid-season dumps therefore have zero rows in `league_history_batting_event` / `league_history_pitching_event` for the active year — except for short-season foreign rookie leagues (DSL play Jun-Aug, complete by July, so `dump_2028_07` had 2028 league_history rows for league 217/218 only). Without league_history rows, the `_lg_constants_advanced_native` view emits NO row for (2028, MLB), so OPS+ / wRC+ / ERA+ / FIP / wOBA all came back NULL. The cockpit's `int(metric) if metric is not None else 0` defensive coercion mapped NULL → 0 → red heat-scale band → the visual artifact. The pressure board's `WHERE ops_plus IS NOT NULL` filter (correct defensiveness) returned zero qualifiers. Pre-save years (2005-2025) were unaffected because `_lg_constants_advanced_imported` (lref_era_stats-backed) covered them.
+
+**Fallback design.** New CTEs in `_LG_CONSTANTS_NATIVE_VIEW_SQL` aggregate from `f_player_season_batting` / `f_player_season_pitching` (already dump-deduplicated to latest dump via L1's `MAX(dump_date)` filter) for `(league_id, year, level_id)` combos NOT covered by `league_history_*_event`. Two safety gates:
+
+1. **Fallback only fires for years already touched by league_history** (`year IN (SELECT DISTINCT year FROM league_history_*)`). Pre-save years have NO league_history rows at all, and stay routed to `_lg_constants_advanced_imported` (canonical lref_era_stats source). Without this gate, the fallback would aggregate Lahman-imported pre-save player rows into a "native" row and silently displace the imported source — values would be near-identical (both Lahman-rooted), but the precedence swap would mask drift if the OOTP↔Lahman import shape ever diverges.
+2. **Fallback only fires for combos NOT already in league_history**. The 2028 DSL rows OOTP wrote stay authoritative; the fallback fills in MLB / AAA / AA / A+ / A / MiLB-rookie / level-7 international / AFL / Mexican / level-12-college that weren't yet written.
+
+Post-fix, 2028 in `_lg_constants_advanced` jumped from 2 rows (DSL only) to 25 rows (all in-scope levels including MLB lg_obp .316 / lg_slg .407 / lg_era 4.14, sensible mid-season values). Merrill 2028 advanced row populated cleanly: pa=443, ops_plus=124, woba=.348, wrc_plus=127 — matching his 2027 (124 / .348 / 124). All six spotlight cards now render real metrics with correct heat-scale coloring; pressure board surfaces Mason Miller (252 ERA+) / Morejon (134) / Merrill (124) for promotion and Marco Luciano (60 OPS+) / Jason Adam (60 ERA+) for pressure.
+
+**Defense in depth — schema nullable + UI dash.** Even with the fix, edge cases (a player with PAs in a level that has no other players, or zero-PA accidents) could still produce NULL ops_plus. `CockpitSpotlightCard.headline_metric_value` is now `int | None`; the cockpit endpoint passes through None instead of coercing to 0; the frontend renders "—" with `text-content-muted` when null. The "Off year — 0 down from 135 peak" misleading insight is suppressed when current metric is None.
+
+**Issue 3 root cause — `/api/hof` hard-required `history_lahman_people`.** The HoF endpoint LEFT JOINs Lahman to resolve `bbref_id` for plaque deep-links. The Padres save was created without running `diamond fetch-history`, so the warehouse has zero `history_*` tables — DuckDB raises `Catalog Error: Table with name history_lahman_people does not exist!` on the FROM-clause expansion (LEFT JOIN doesn't help: missing table is a compile-time error, not a row-resolve error). Fixed by probing `information_schema.tables` for `history_lahman_people` once per request (`_history_loaded(con)`) and building two query variants from a single template — one with the join, one substituting `NULL::VARCHAR AS bbref_id` and dropping the join entirely. Saves without backfill render the inductees list with no plaque images and no deep-links; saves with backfill (run `diamond fetch-history` once per save) get the full plaque gallery.
+
+**Bonus fix found during sweep — `/api/admin/dump-status` reported zero ingested.** The endpoint opened its own `duckdb.connect(read_only=True)` rather than using the API's shared cursor. On Windows, DuckDB respects exclusive file locking — even read-only connections from the SAME process fail with IOException while uvicorn's RW connection holds the warehouse. The endpoint's `except duckdb.Error` fallback returned "everything pending", which made the header's polling Refresh badge show "29 new dumps" amber permanently. Switched to `Depends(get_cursor)` like every other route.
+
+### Wiring
+
+- **Backend:** `src/diamond/schema/l3_advanced.py` (`_LG_CONSTANTS_NATIVE_VIEW_SQL` — added `agg_bat_fallback` + `agg_pit_fallback` CTEs UNION ALL'd into `agg_bat` / `agg_pit`), `src/diamond/api/routes/cockpit.py` (suppress insight + pass None when metric NULL), `src/diamond/api/schemas/cockpit.py` (`headline_metric_value: int | None`), `src/diamond/api/routes/hof.py` (template-based query construction + `_history_loaded` probe), `src/diamond/api/routes/admin.py` (use shared cursor for dump-status).
+- **Frontend:** `web/app/page.tsx` (render "—" + muted color when `headline_metric_value` is null), `web/lib/types/api.ts` (regenerated from Pydantic).
+- **Verified post-fix on The Fathers (Padres):** 25 rows in `_lg_constants_advanced` for 2028 (was 2); Merrill 2028 OPS+ 124, Mason Miller 2028 ERA+ 252; cockpit spotlight + pressure board fully populate; HoF returns 200 with inductees_count=0 (Padres save has no in-save HoF inductees); dump-status returns ingested_count=29 / pending_count=0.
+
+**Pinned**:
+- League constants for in-progress seasons fall back to player-aggregated totals from latest dump. Fallback is gated to only touch years that already have SOME league_history coverage (preserves precedence: imported wins for pre-save, native fallback wins for in-progress, league_history wins everywhere it has data).
+- `headline_metric_value: int | None` is the contract — cockpit UI must handle null gracefully. Don't coerce to 0 server-side.
+- API endpoints with read-only warehouse access use `Depends(get_cursor)` — the shared connection — never `duckdb.connect(read_only=True)`. The Windows file-lock hazard is platform-specific and silent (returns IOException at connect time, not query time).
+- API endpoints that JOIN to optional `history_*` tables probe `information_schema.tables` and degrade gracefully. `diamond fetch-history` is opt-in per save; saves without it should still render every page (with reduced real-history features, never 500s).

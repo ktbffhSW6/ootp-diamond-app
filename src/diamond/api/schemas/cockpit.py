@@ -145,7 +145,9 @@ class CockpitSpotlightCard(BaseModel):
 
     # Current-year headline
     headline_metric_label: str  # e.g. "OPS+" / "ERA+"
-    headline_metric_value: int  # 198, 127, etc.
+    headline_metric_value: int | None  # 198, 127, etc.; null mid-season
+                                       # if league constants haven't
+                                       # resolved yet (UI renders "—")
     sample: str  # "555 PA" / "172.1 IP"
     war_current: float
 

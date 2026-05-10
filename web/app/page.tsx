@@ -226,7 +226,14 @@ function SpotlightCard({ card }: { card: CockpitSpotlightCard }) {
   const values: (number | null)[] = card.career_war;
   const positionLabel =
     card.role === "two-way" ? "TWO" : POSITION_NAMES[card.position] ?? "—";
-  const headlineColor = plusMinusClass(card.headline_metric_value);
+  // headline_metric_value is null mid-season when league constants haven't
+  // resolved yet (the UI renders "—" with a neutral muted color rather than
+  // a misleading red "0"). plusMinusClass treats <100 as red, so we only
+  // hand it real numbers.
+  const hasMetric = card.headline_metric_value != null;
+  const headlineColor = hasMetric
+    ? plusMinusClass(card.headline_metric_value as number)
+    : "text-content-muted";
   return (
     <Link
       href={`/player/${card.player_id}`}
@@ -252,7 +259,7 @@ function SpotlightCard({ card }: { card: CockpitSpotlightCard }) {
       <div className="mt-2 flex items-baseline gap-3">
         <div>
           <div className={`font-mono text-2xl font-semibold tabular-nums ${headlineColor}`}>
-            {card.headline_metric_value}
+            {hasMetric ? card.headline_metric_value : "—"}
           </div>
           <div className="text-[10px] uppercase tracking-wider text-content-muted">
             {card.headline_metric_label} · {card.sample}

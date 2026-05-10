@@ -451,14 +451,21 @@ def _fetch_spotlight(
             else None
         )
 
-        insight = _generate_insight(
-            role=role,
-            year=year,
-            current=int(metric) if metric is not None else 0,
-            prior_peak=prior_peak,
-            prior_year=prior_year,
-            prior_year_metric=prior_year_metric,
-        )
+        # Insight skips entirely when current metric is NULL — comparing
+        # a missing value to a prior peak would render nonsense like
+        # "Off year — 0 down from 135 peak." We'd rather render no
+        # insight than a misleading one.
+        if metric is None:
+            insight = None
+        else:
+            insight = _generate_insight(
+                role=role,
+                year=year,
+                current=int(metric),
+                prior_peak=prior_peak,
+                prior_year=prior_year,
+                prior_year_metric=prior_year_metric,
+            )
 
         # Headline metric label per role.
         metric_label = "OPS+" if role == "batter" else "ERA+"
@@ -485,7 +492,9 @@ def _fetch_spotlight(
                 team_id=int(team_id) if team_id is not None else None,
                 team_abbr=team_abbr,
                 headline_metric_label=metric_label,
-                headline_metric_value=int(metric) if metric is not None else 0,
+                headline_metric_value=(
+                    int(metric) if metric is not None else None
+                ),
                 sample=sample,
                 war_current=float(war_current) if war_current is not None else 0.0,
                 career_years=career_years,

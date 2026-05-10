@@ -80,7 +80,14 @@ def _coerce_limit(raw: int | None) -> int:
 # rows). Pitcher career WAR could be UNIONed in via
 # f_player_season_advanced_pitching.p_war but that requires a separate
 # query path — deferred. For v1 the dash on pitcher rows is acceptable.
-_INDUCTEES_QUERY = """
+# bbref_id resolution depends on history_lahman_people, which is only
+# present after `diamond fetch-history` runs (one-time per save). Saves
+# that haven't backfilled (e.g. user just spun up a new save and hasn't
+# run fetch-history yet) get the same query without the JOIN — bbref_id
+# falls through as null for every row, and the HoF gallery on the
+# frontend renders no plaques. The LEFT JOIN was originally written
+# inline; we now build it conditionally per ``_history_loaded(con)``.
+_INDUCTEES_QUERY_TEMPLATE = """
 WITH career_bat_war AS (
     SELECT player_id, ROUND(SUM(b_war), 1) AS war
     FROM f_player_season_advanced_batting
@@ -98,18 +105,12 @@ SELECT
     pc.retired,
     COALESCE(cb.war, cp.war) AS career_war,
     t.abbr AS last_team_abbr,
-    -- bbref_id via name + birth-year disambiguated JOIN (Slice D).
-    -- Resolves to a unique bbref_id for real-life HoFers; null for
-    -- in-save inductees (not in Lahman) and pre-Lahman-era retirees.
-    lp.bbrefID AS bbref_id
+    {bbref_select} AS bbref_id
 FROM players_current pc
 LEFT JOIN career_bat_war cb USING (player_id)
 LEFT JOIN career_pit_war cp USING (player_id)
 LEFT JOIN teams t ON t.team_id = pc.team_id
-LEFT JOIN history_lahman_people lp
-  ON LOWER(lp.nameFirst) = LOWER(pc.first_name)
- AND LOWER(lp.nameLast)  = LOWER(pc.last_name)
- AND EXTRACT(YEAR FROM pc.date_of_birth) = lp.birthYear
+{lahman_join}
 WHERE pc.hall_of_fame = 1
 ORDER BY pc.inducted DESC NULLS LAST, display_name
 """
@@ -124,7 +125,7 @@ ORDER BY pc.inducted DESC NULLS LAST, display_name
 # f_record_player "career WAR" lookup is batting-only; we'd need a
 # pitching variant for pure pitchers — Verlander, Clemens — to show.
 # For v1 the batting-WAR ranking covers most marquee non-inductees.
-_CANDIDATES_QUERY = """
+_CANDIDATES_QUERY_TEMPLATE = """
 WITH career_bat_war AS (
     SELECT player_id, ROUND(SUM(b_war), 1) AS war
     FROM f_player_season_advanced_batting
@@ -149,18 +150,64 @@ SELECT
     pc.retired,
     cw.war AS career_war,
     t.abbr AS last_team_abbr,
-    lp.bbrefID AS bbref_id
+    {bbref_select} AS bbref_id
 FROM combined_war cw
 JOIN players_current pc USING (player_id)
 LEFT JOIN teams t ON t.team_id = pc.team_id
-LEFT JOIN history_lahman_people lp
-  ON LOWER(lp.nameFirst) = LOWER(pc.first_name)
- AND LOWER(lp.nameLast)  = LOWER(pc.last_name)
- AND EXTRACT(YEAR FROM pc.date_of_birth) = lp.birthYear
+{lahman_join}
 WHERE pc.hall_of_fame = 0
 ORDER BY cw.war DESC NULLS LAST, display_name
 LIMIT ?
 """
+
+
+# Lahman join fragments — applied to the templates above when the
+# `history_lahman_people` table is present (i.e. `diamond fetch-history`
+# has run for this save).
+_LAHMAN_JOIN_SQL = """
+LEFT JOIN history_lahman_people lp
+  ON LOWER(lp.nameFirst) = LOWER(pc.first_name)
+ AND LOWER(lp.nameLast)  = LOWER(pc.last_name)
+ AND EXTRACT(YEAR FROM pc.date_of_birth) = lp.birthYear
+"""
+
+
+def _history_loaded(con: duckdb.DuckDBPyConnection) -> bool:
+    """Cheap probe — does this warehouse have the Lahman backfill loaded?
+
+    Returns True when ``history_lahman_people`` exists. Saves where the
+    user hasn't run ``diamond fetch-history`` yet skip the bbref_id
+    join (renders an inductees list without HoF plaque deep-links).
+    """
+    row = con.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_name = 'history_lahman_people' LIMIT 1"
+    ).fetchone()
+    return row is not None
+
+
+def _build_inductees_query(history_present: bool) -> str:
+    if history_present:
+        return _INDUCTEES_QUERY_TEMPLATE.format(
+            bbref_select="lp.bbrefID",
+            lahman_join=_LAHMAN_JOIN_SQL,
+        )
+    return _INDUCTEES_QUERY_TEMPLATE.format(
+        bbref_select="NULL::VARCHAR",
+        lahman_join="",
+    )
+
+
+def _build_candidates_query(history_present: bool) -> str:
+    if history_present:
+        return _CANDIDATES_QUERY_TEMPLATE.format(
+            bbref_select="lp.bbrefID",
+            lahman_join=_LAHMAN_JOIN_SQL,
+        )
+    return _CANDIDATES_QUERY_TEMPLATE.format(
+        bbref_select="NULL::VARCHAR",
+        lahman_join="",
+    )
 
 
 _INDUCTEES_COUNT_QUERY = (
@@ -196,9 +243,10 @@ def get_hof(
     resolved_limit = _coerce_limit(limit)
 
     inductees_count = int(con.execute(_INDUCTEES_COUNT_QUERY).fetchone()[0])
+    history_present = _history_loaded(con)
 
     if resolved_view == "inductees":
-        rows_raw = con.execute(_INDUCTEES_QUERY).fetchall()
+        rows_raw = con.execute(_build_inductees_query(history_present)).fetchall()
         rows = [
             HofPlayer(
                 player_id=int(r[0]),
@@ -220,7 +268,9 @@ def get_hof(
         )
 
     # candidates
-    rows_raw = con.execute(_CANDIDATES_QUERY, [resolved_limit]).fetchall()
+    rows_raw = con.execute(
+        _build_candidates_query(history_present), [resolved_limit],
+    ).fetchall()
     rows: list[HofPlayer] = []
     for rank, r in enumerate(rows_raw, start=1):
         rows.append(
