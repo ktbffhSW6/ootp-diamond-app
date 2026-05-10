@@ -944,3 +944,78 @@ Schema stability is the load-bearing assumption — every Diamond save has the s
 - AI-assisted "build me a chart" workflow — Claude POSTs to Metabase API directly, returning question/dashboard URLs. Already proven in spike (5 cards + 1 dashboard built in ~8 min).
 
 **Cross-references**: D2 (per-save warehouse), D3 v2 (save switcher), D16 (local-first), D24 (revalidation pattern reused), D27 (per-save freeze model — Metabase's metadata is parallel: per-user, never frozen).
+
+
+### D31 addendum — same-day corrections (iframe → launcher, port flip)
+
+*2026-05-15 evening, three corrections to the morning's D31 implementation.*
+
+**1. Port collision: Metabase moved 3000 → 3001.**
+
+D31's morning launcher script bound Metabase to `:3000`, same as Diamond's Next.js dev server. The collision caused the Workshop iframe to recursively load Diamond's own cockpit when Metabase couldn't bind. Resolved by moving Metabase to `:3001` everywhere:
+
+- `~/.diamond/metabase/metabase.bat` — `MB_JETTY_PORT=3001`
+- `src/diamond/api/metabase.py` — `METABASE_URL = "http://127.0.0.1:3001"`
+- `web/components/MetabaseWorkshop.tsx` — default `http://localhost:3001`, with `NEXT_PUBLIC_METABASE_URL` override
+
+Commit `0f3d4ff`.
+
+**2. Inline-async-child SSR exception in `/explore`.**
+
+The morning's `/explore` page had an inline `async function QuickChart` rendered conditionally:
+
+```tsx
+{mode === "workshop" ? <MetabaseWorkshop /> : <QuickChart sp={sp} />}
+```
+
+Next.js App Router can be flaky composing inline async server components conditionally — the symptom is a "server-side exception" toast at runtime even when TypeScript passes. Fixed by hoisting the data fetch into the top-level page component and returning early for workshop mode (which doesn't need the chart-builder API call at all).
+
+Commit `68ae5ce`. Side benefit: workshop mode no longer wastes a round-trip on each entry.
+
+**3. Iframe → launcher pivot (the architectural correction).**
+
+D31's morning shape had `MetabaseWorkshop` rendering an iframe to Metabase. **This doesn't work on Metabase OSS.**
+
+Metabase ships these headers by default:
+- `X-Frame-Options: DENY`
+- `Content-Security-Policy: ...; frame-ancestors 'none';`
+
+Allowing iframe embedding from a different origin requires Metabase's "interactive embedding" feature, which is **paid Pro only**. Confirmed via API:
+
+```
+PUT /api/setting/embedding-app-origins-interactive
+→ "Setting embedding-app-origins-interactive is not enabled because
+   feature :embedding is not available"
+```
+
+Three paths considered:
+- (A) Upgrade to Metabase Pro — paid; doesn't fit Diamond's local-first single-user model
+- (B) Reverse-proxy through FastAPI to strip the headers — fragile (websocket support, complex routing); also possibly violates Metabase's TOS
+- (C) **Launcher pattern** — Workshop tab opens Metabase in a new browser tab instead of iframing it. Same shape as Tableau Desktop / Power BI Desktop integrations against any web app
+
+**Picked (C).** This is the same end state every BI-sidecar integration ships in practice. Functional equivalence:
+
+| Property | iframe (would-be) | launcher (shipped) |
+|---|---|---|
+| Same DuckDB warehouse | ✓ | ✓ |
+| Pattern A save-switching | ✓ | ✓ |
+| AI-assisted dashboard build via API | ✓ | ✓ |
+| Visual integration in Diamond | inside iframe | one-click new-tab |
+| Full Metabase UI | ✓ (if Pro) | ✓ (full-screen, more space) |
+| Cookie / CORS / sandbox edge cases | many | none |
+
+Implementation:
+
+- **`web/components/MetabaseWorkshop.tsx`** — launcher card with three deep-link sub-cards:
+  - "New question" → `/question/new`
+  - "Sample dashboard" → `/dashboard/1`
+  - "Browse warehouse" → `/browse/databases/1`
+  - Plus a status footnote showing which save's DB is active in Metabase right now
+- **`GET /api/admin/metabase-status`** (new endpoint) — same-origin liveness probe replacing the cross-origin no-cors fetch. Returns `{running, configured, active_save_db, message}`. The frontend probes Diamond's API (no CORS dance) which probes Metabase server-side.
+- **Cold-start guide** — when Metabase is down, the launcher flips to install/restart instructions (`metabase.bat /b`).
+
+Commit `2b3f03f`.
+
+**Lesson**: should have checked X-Frame-Options on Metabase OSS *before* writing the iframe component. The pivot itself was 30 minutes of code; the iframe scaffolding was wasted work. For future "embed product X" decisions, validate the embedding headers / licensing first, design the integration second.
+
+**No revision to D31's main thesis** (Pattern A, Metabase as BI workshop, save-aware sync) — those all hold. The corrections are tactical: which port, how the page component composes, iframe vs launcher.

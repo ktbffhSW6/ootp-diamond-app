@@ -38,6 +38,70 @@ inline plaque thumbnails per inductee row (needs Pillow downsample); full
 7-segment outline rendering on the spray chart (vs the 5-point spline we
 adapt to today).
 
+## ✅ Metabase BI workshop (D31) — SHIPPED 2026-05-15 evening
+
+**Status**: full-BI surface integrated into Diamond. Self-hosted, save-aware,
+free, AI-assistable. 4 commits + the spike.
+
+- ✅ **Spike** — Java 21 + Metabase OSS 0.59.10 + DuckDB driver 1.5.2.0
+  installed at `~/.diamond/metabase/`. 5 sample cards + 1 dashboard built
+  via REST API in 8 min. Proved AI-assisted dashboard workflow works.
+- ✅ **Pattern A wiring** (commit `8451168`): `src/diamond/api/metabase.py`
+  coordination module (auth + cached session + `repoint_active_save()`).
+  `POST /api/saves/active` extended: PUT new database_file + sync_schema.
+  Best-effort + silent-on-failure. Verified end-to-end.
+- ✅ **Port flip** (commit `0f3d4ff`): Metabase moved from `:3000` (collides
+  with Next.js) to `:3001` everywhere — `metabase.bat`, `metabase.py`,
+  `MetabaseWorkshop.tsx` (with `NEXT_PUBLIC_METABASE_URL` override).
+- ✅ **`/explore` SSR fix** (commit `68ae5ce`): hoisted data-fetch to single
+  top-level async server component (avoided inline-async-child quirk in
+  Next App Router).
+- ✅ **Launcher pivot** (commit `2b3f03f`): hit Metabase OSS's
+  `X-Frame-Options: DENY` — interactive embedding is paid Pro only.
+  Pivoted Workshop tab from iframe to launcher. Same shape as Tableau
+  Desktop / Power BI Desktop sidecars. Click → opens Metabase
+  full-screen in new tab. Three deep-link sub-cards. New
+  `GET /api/admin/metabase-status` for same-origin liveness probe.
+- ✅ **Docs**: `docs/METABASE.md` (install, ops, Pattern A, threat
+  model, troubleshooting, AI workflow); `docs/DECISIONS.md` D31 +
+  same-day addendum (port flip + iframe→launcher pivot).
+
+**What this enables**: any chart Metabase supports (~30 types) against
+the active save, drag-and-drop or native SQL, dashboards, parameters,
+drill-through. Pattern A means save-switching in Diamond auto-syncs
+Metabase. Save-agnostic cards work across saves; player-specific cards
+should stay in Diamond's player page (player_ids aren't stable across
+saves).
+
+### Metabase v2 follow-ups — DEFERRED
+
+These extend D31 but aren't blocking:
+
+- [ ] **`diamond metabase deploy` CLI** — read YAML specs from
+      `diamond/metabase/dashboards/*.yaml` and POST to Metabase API.
+      Source-controlled, reproducible dashboards. Currently dashboards
+      live only in Metabase's H2 metadata DB — reset Metabase = lose
+      them. ~1.5 days. Highest-leverage follow-up.
+- [ ] **Pre-built starter dashboards** (depends on the YAML deploy CLI):
+      leaderboards explorer, distribution histograms, career-arc lineup
+      compare, team season summary, pressure cohort, rookie tracker.
+      ~6-8 dashboards as YAML in the repo. Auto-deployed on first run
+      via the CLI above.
+- [ ] **Save-switch flash UX** — currently the save-switch handler
+      logs the Metabase repoint result; surface it in the UI as a toast
+      ("Metabase synced" / "Metabase not running") instead of just
+      logs. ~30 min.
+- [ ] **Static-embed dashboards inline** — Metabase OSS supports
+      static embedding (signed JWTs) for individual dashboards via
+      iframe. Could add per-dashboard inline views in Diamond pages
+      (e.g., a "Sox 2029 review" dashboard rendered on the cockpit).
+      Different from the launcher. ~2-3 hr per dashboard.
+- [ ] **Auto-launch Metabase from `dev.bat`** — currently a separate
+      step. Could chain `metabase.bat /b` into `dev.bat` so all three
+      processes (FastAPI / Next.js / Metabase) start together. ~30 min;
+      gated on user preference (some users may not want Metabase
+      always-running).
+
 **What this means in practice**: pre-save advanced stats (wOBA / wRC+ / OPS+ /
 FIP / ERA+) for any player-season — MLB or MiLB, real-history or save-era —
 are now end-to-end OOTP-canonical. Every reference grid feeding the calc is

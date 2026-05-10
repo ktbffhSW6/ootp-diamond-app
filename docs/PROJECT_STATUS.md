@@ -4,7 +4,38 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-15 — **Phase 3: capability wave shipped (Slices A/B/C/D, D30).** Four slices in one session moving the platform from "trustworthy + data-complete" (post-L_REF) to **visibly more capable** (leverage stack, real assets, OOTP-canonical geometry). Five commits across 25 files; +1,400 LOC; typecheck clean.
+**Last updated**: 2026-05-15 (evening) — **Phase 3: Metabase integration shipped (D31).** Diamond now has a self-hosted, save-aware Metabase as its full-BI workshop — Pattern A (single Database connection follows the active save). Five commits this evening: spike → integration → port-flip (3000→3001) → SSR cleanup → iframe-to-launcher pivot.
+
+| Phase | Headline | Commit |
+|---|---|---|
+| **Spike** | Java 21 + Metabase 0.59.10 + DuckDB driver 1.5.2.0 installed at `~/.diamond/metabase/`. 5 cards + 1 dashboard built via REST API in 8 min — proved the AI-assisted dashboard workflow works (write MBQL/native-SQL spec, POST to `/api/card`, dashboard renders). Verified 296 BTGM 2029 qualified hitters resolve through Metabase. | (spike, no commit) |
+| **Integration** | `src/diamond/api/metabase.py` coordination module (auth + cached session at `~/.diamond/metabase_session.txt` + `repoint_active_save()`). `POST /api/saves/active` extended with Pattern A hook: PUT new database_file + sync_schema. Best-effort + silent-on-failure (Metabase down / no creds → save switch still succeeds). | `8451168` |
+| **Port flip** | Metabase moved from `:3000` (collides with Next.js) to `:3001` everywhere — `metabase.bat`, `metabase.py`, `MetabaseWorkshop.tsx` (with `NEXT_PUBLIC_METABASE_URL` override). | `0f3d4ff` |
+| **SSR fix** | `/explore` page hoisted data-fetching to single top-level async server component (avoids inline-async-child quirk in Next App Router that surfaced as "server-side exception"). Workshop mode no longer fetches chart_builder API on entry. | `68ae5ce` |
+| **Launcher pivot** | Hit Metabase OSS's `X-Frame-Options: DENY` — interactive embedding is paid Pro only. Pivoted Workshop tab from iframe to launcher (same shape as Tableau Desktop / Power BI Desktop sidecars). Click → opens Metabase full-screen in a new tab. Three deep-link cards (New question / Sample dashboard / Browse warehouse). New `GET /api/admin/metabase-status` for same-origin liveness probe. | `2b3f03f` |
+
+**Final shape**:
+
+- **Install**: `~/.diamond/metabase/` holds metabase.jar (520 MB), DuckDB driver plugin (84 MB), H2 metadata (cards + dashboards + accounts), logs, `metabase.bat` launcher (localhost-only, telemetry off, update-check off, port 3001, 2 GB heap)
+- **Credentials**: `~/.diamond/metabase_credentials.toml` for the save-switch hook (gitignored by virtue of being outside repo)
+- **Pattern A**: every save switch in Diamond UI auto-flips Metabase's Database 1 to the new save's DuckDB + triggers schema re-sync. Cards keep working because Diamond's schema is identical across saves; only data changes.
+- **Workshop tab** at `/explore?mode=workshop` shows a launcher card + three deep-link cards. Click any → Metabase opens full-screen in a new tab.
+- **Status endpoint** `/api/admin/metabase-status` returns `{running, configured, active_save_db, message}` for the frontend liveness probe.
+
+**Why launcher, not iframe**: Metabase OSS's `frame-ancestors 'none'` blocks cross-origin iframing. Allowing it requires interactive-embedding (Pro feature, paid). Launcher pattern is functionally equivalent — same warehouse, same Pattern A, same AI-assisted dashboard workflow. Just two browser tabs instead of one. Mirrors how every BI sidecar (Tableau Desktop, Power BI Desktop) integrates with web apps.
+
+**Documented**: `docs/METABASE.md` (install / ops / Pattern A / threat model / troubleshooting / AI workflow). `docs/DECISIONS.md` D31 (full architectural reasoning vs Power BI / SQL Server / custom Vega-Lite).
+
+**Net outcome of evening**: Diamond now has a real chart-building / BI surface that's modern (drag-and-drop, 30+ chart types, dashboards, calculated fields, drill-through), embedded in the IA (Workshop tab in /explore), local-first (no cloud), free (OSS), and AI-assistable (Claude can build cards/dashboards via REST API).
+
+**Caveats / known follow-ups**:
+- Dashboards live only in Metabase's H2 metadata DB right now. Reset Metabase = lose them. v2: `diamond metabase deploy` CLI reads YAML specs from `diamond/metabase/dashboards/*.yaml` + POSTs to API. Source-controlled, reproducible. ~1.5 days.
+- No pre-built starter dashboards beyond the spike's 5 cards / 1 dashboard. v2 plan: ship a battery of leaderboards / distributions / career arcs / team summary / pressure cohort / rookie tracker as YAML.
+- Don't run `diamond ingest` while Metabase is reading the DB (lock collision). Documented in METABASE.md.
+
+---
+
+**2026-05-15 (afternoon) — Phase 3: capability wave shipped (Slices A/B/C/D, D30).** Four slices in one session moving the platform from "trustworthy + data-complete" (post-L_REF) to **visibly more capable** (leverage stack, real assets, OOTP-canonical geometry). Five commits across 25 files; +1,400 LOC; typecheck clean.
 
 | # | Slice | Headline | Commit |
 |---|---|---|---|
