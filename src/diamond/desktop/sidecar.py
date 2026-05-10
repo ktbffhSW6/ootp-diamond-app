@@ -1,6 +1,6 @@
-"""Sidecar process management — uvicorn (in-thread) + Next.js (subprocess).
+"""Sidecar process management — uvicorn (in-thread) + Next.js + Metabase.
 
-Two halves:
+Three halves:
 
 - **API**: uvicorn runs in a daemon thread, in-process. Works in both
   source and frozen modes (no need for ``python.exe`` on PATH inside a
@@ -10,13 +10,23 @@ Two halves:
   ``node server.js``. Requires ``node`` on PATH; a friendly error is
   surfaced if it's missing.
 
-Both bind to 127.0.0.1 (localhost-only, never reachable from the
+- **Metabase** (D31 / D32 ext): launched if ``~/.diamond/metabase/
+  metabase.bat`` exists. Joined to the Windows Job Object so it dies
+  with Diamond. Skipped if port 3001 is already in use (assumes user
+  has Metabase running manually from a prior session). Best-effort —
+  if Metabase fails to spawn, the rest of Diamond still boots and
+  the Workshop tab shows its cold-start guide.
+
+All three bind to 127.0.0.1 (localhost-only, never reachable from the
 network). Ports are configurable via env (``DIAMOND_API_PORT``,
 ``DIAMOND_WEB_PORT``); defaults are 8000 / 3000 to match dev.
+Metabase always uses 3001 (D31 fixed port).
 
-A readiness probe blocks the launcher until both ports accept TCP
-connections, with a sensible timeout (~30s — Next.js cold start
-dominates).
+A readiness probe blocks the launcher until API + Web ports accept
+TCP connections (~30s — Next.js cold start dominates). Metabase is
+fire-and-forget — it takes ~30s on its own and the Workshop UI
+polls ``/api/admin/metabase-status`` to morph from "starting" to
+"ready" without blocking the cockpit.
 """
 
 from __future__ import annotations
@@ -49,12 +59,17 @@ class SidecarHandles:
     """References to running sidecars, exposed to the launcher.
 
     The ``api_thread`` runs uvicorn; it's a daemon thread so it dies
-    with the process. The ``web_proc`` is a real OS process and must
-    be terminated explicitly on shutdown.
+    with the process. ``web_proc`` and ``metabase_proc`` are real OS
+    processes and must be terminated explicitly on shutdown.
+
+    ``metabase_proc`` is None when Metabase is not installed, was
+    skipped because it's already running, or failed to spawn — in
+    all cases the launcher continues without it.
     """
 
     api_thread: threading.Thread
     web_proc: subprocess.Popen[bytes]
+    metabase_proc: Optional[subprocess.Popen[bytes]]
     api_port: int
     web_port: int
 
@@ -86,6 +101,15 @@ def _wait_for_port(port: int, timeout: float = 30.0) -> bool:
         except OSError:
             time.sleep(0.15)
     return False
+
+
+def _port_in_use(port: int) -> bool:
+    """One-shot check — True if something is already listening."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
+        return False
 
 
 def _start_uvicorn_thread(port: int) -> threading.Thread:
@@ -211,6 +235,71 @@ def _start_next_subprocess(
     return proc
 
 
+def _start_metabase_subprocess(
+    *,
+    job_handle: Optional[object] = None,
+) -> Optional[subprocess.Popen[bytes]]:
+    """Spawn Metabase via ``~/.diamond/metabase/metabase.bat``.
+
+    Returns ``None`` (without raising) in any of these cases:
+
+    - Metabase isn't installed (the .bat doesn't exist) — the user
+      hasn't gone through the one-time D31 setup. Workshop tab will
+      show the install guide.
+    - Port 3001 is already in use — something is already listening,
+      most likely a Metabase from a prior session the user kept up.
+      We assume that's intentional and don't double-spawn.
+    - Spawn fails for any other reason — logged at WARNING; rest of
+      Diamond boots normally.
+
+    When successful, returns the Popen handle. The bat is invoked
+    WITHOUT the ``/b`` flag (which would `start /b` and detach Java
+    from our process tree). Foreground invocation keeps Java as a
+    descendant of our launcher, so the Job Object kill-on-close can
+    take it down with Diamond.
+    """
+    metabase_dir = Path.home() / ".diamond" / "metabase"
+    metabase_bat = metabase_dir / "metabase.bat"
+
+    if not metabase_bat.exists():
+        log.info(
+            "metabase: %s not found — skipping (Workshop tab will show install guide)",
+            metabase_bat,
+        )
+        return None
+
+    if _port_in_use(3001):
+        log.info("metabase: already running on :3001 — skipping spawn")
+        return None
+
+    log.info("metabase: starting via %s (foreground; joins Job Object)", metabase_bat)
+    try:
+        # cmd /c invokes the .bat synchronously inside cmd.exe; java
+        # spawns as a child of cmd. Both end up as descendants of our
+        # Python launcher and inherit Job Object membership — so
+        # KILL_ON_JOB_CLOSE takes the entire tree down with Diamond.
+        proc = subprocess.Popen(  # noqa: S603 — argv list, no shell
+            ["cmd.exe", "/c", str(metabase_bat)],
+            cwd=str(metabase_dir),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+    except Exception as exc:
+        log.warning("metabase: spawn failed (%s) — Workshop tab unaffected", exc)
+        return None
+
+    if job_handle is not None and sys.platform == "win32":
+        try:
+            from diamond.desktop import win_jobobject
+
+            win_jobobject.assign_process(job_handle, proc.pid)
+        except Exception:
+            log.debug("metabase: Job Object assignment failed", exc_info=True)
+    return proc
+
+
 def start_sidecars(
     *,
     api_port_pref: int = 8000,
@@ -218,7 +307,11 @@ def start_sidecars(
     job_handle: Optional[object] = None,
     boot_timeout: float = 45.0,
 ) -> SidecarHandles:
-    """Boot both sidecars and wait for readiness."""
+    """Boot all sidecars and wait for FastAPI + Next.js readiness.
+
+    Metabase is fire-and-forget — it takes ~30s on its own and the
+    Workshop UI polls liveness so we don't block the cockpit on it.
+    """
     api_port = _free_port(api_port_pref)
     web_port = _free_port(web_port_pref)
 
@@ -228,6 +321,9 @@ def start_sidecars(
     log.info("starting web on 127.0.0.1:%s (subprocess)", web_port)
     web_proc = _start_next_subprocess(web_port, job_handle=job_handle)
 
+    # Metabase boots in parallel; we don't gate the cockpit on it.
+    metabase_proc = _start_metabase_subprocess(job_handle=job_handle)
+
     if not _wait_for_port(api_port, timeout=boot_timeout):
         raise RuntimeError(f"FastAPI did not bind 127.0.0.1:{api_port} within {boot_timeout}s")
     if not _wait_for_port(web_port, timeout=boot_timeout):
@@ -236,6 +332,7 @@ def start_sidecars(
     return SidecarHandles(
         api_thread=api_thread,
         web_proc=web_proc,
+        metabase_proc=metabase_proc,
         api_port=api_port,
         web_port=web_port,
     )
@@ -244,18 +341,29 @@ def start_sidecars(
 def stop_sidecars(handles: SidecarHandles, *, grace: float = 3.0) -> None:
     """Best-effort orderly shutdown.
 
-    Web subprocess gets a terminate, then a kill on grace timeout.
+    Each subprocess gets a terminate, then a kill on grace timeout.
     The API thread is daemon and dies when the process exits — we
     don't try to gracefully drain it (no in-flight HTTP at quit time
     in normal use).
+
+    Note: even if this function is skipped (hard kill), the Job Object
+    in win_jobobject.py guarantees the children die with the launcher
+    process. This is the orderly path; the Job Object is the safety
+    net.
     """
-    if handles.web_proc.poll() is None:
+    procs = [handles.web_proc]
+    if handles.metabase_proc is not None:
+        procs.append(handles.metabase_proc)
+
+    for proc in procs:
+        if proc.poll() is not None:
+            continue
         try:
-            handles.web_proc.terminate()
-            handles.web_proc.wait(timeout=grace)
+            proc.terminate()
+            proc.wait(timeout=grace)
         except subprocess.TimeoutExpired:
             try:
-                handles.web_proc.kill()
+                proc.kill()
             except Exception:
                 pass
         except Exception:

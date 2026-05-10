@@ -46,6 +46,8 @@ export function MetabaseWorkshop() {
 
   useEffect(() => {
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
     const check = async () => {
       try {
         // Probe via Diamond's FastAPI — same-origin, reliable. The
@@ -61,6 +63,7 @@ export function MetabaseWorkshop() {
           const data: MetabaseStatus = await r.json();
           setStatus(data);
           setState(data.running ? "up" : "down");
+          schedule(data.running ? null : 5000);
           return;
         }
       } catch {
@@ -72,14 +75,30 @@ export function MetabaseWorkshop() {
           mode: "no-cors",
           cache: "no-store",
         });
-        if (!cancelled) setState("up");
+        if (!cancelled) {
+          setState("up");
+          schedule(null);
+        }
       } catch {
-        if (!cancelled) setState("down");
+        if (!cancelled) {
+          setState("down");
+          schedule(5000);
+        }
       }
     };
+
+    // Poll every 5s while Metabase is down (D32 ext: launcher now
+    // boots Metabase as a sidecar; the user sees the cold-start
+    // morph to "ready" without manually reloading). Stop once up.
+    const schedule = (delay: number | null) => {
+      if (cancelled || delay === null) return;
+      timer = setTimeout(check, delay);
+    };
+
     check();
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
     };
   }, []);
 
