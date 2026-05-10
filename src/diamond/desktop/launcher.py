@@ -44,9 +44,55 @@ import logging
 import os
 import sys
 import threading
+from pathlib import Path
 from typing import Callable, Optional
 
-from diamond.desktop import paths, sidecar, splash
+
+# ---- pythonw.exe stdio guard (must run BEFORE any other import that
+#      might write to stdout/stderr) ---------------------------------
+#
+# When launched via Diamond.vbs or as Diamond.exe, the process has no
+# console allocated; sys.stdout / sys.stderr are None. Any library
+# that does `sys.stderr.isatty()` or `print(...)` then crashes with
+# AttributeError. uvicorn's default log config hits this immediately
+# ("Unable to configure formatter 'default'"); pystray, click, and
+# other transitive deps can hit it too.
+#
+# Solution: assign null sinks to stdout/stderr (so writes succeed and
+# disappear), and tee real diagnostic output to a log file the user
+# can read for debugging.
+
+def _ensure_stdio() -> Path | None:
+    """Reroute None stdio to a debug log file under %LOCALAPPDATA%."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return None  # console-mode launch (python -m diamond.desktop)
+    log_dir = Path(os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))) / "Diamond"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return None
+    log_path = log_dir / "launcher.log"
+    try:
+        # Truncate to 1MB if the log gets big.
+        if log_path.exists() and log_path.stat().st_size > 1_000_000:
+            log_path.write_text("", encoding="utf-8")
+        sink = open(log_path, "a", encoding="utf-8", buffering=1)
+        if sys.stdout is None:
+            sys.stdout = sink
+        if sys.stderr is None:
+            sys.stderr = sink
+        return log_path
+    except Exception:
+        # Last resort: discard everything so libraries don't crash.
+        sys.stdout = open(os.devnull, "w")
+        sys.stderr = open(os.devnull, "w")
+        return None
+
+
+_LAUNCHER_LOG_PATH = _ensure_stdio()
+
+
+from diamond.desktop import paths, sidecar, splash  # noqa: E402  (after _ensure_stdio)
 
 
 log = logging.getLogger("diamond.desktop")
@@ -149,10 +195,17 @@ background:#1a0808;padding:12px;border-radius:6px}}
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = _parse_args(argv)
+    # `force=True` lets us reconfigure if anything else already touched
+    # the root logger (uvicorn / httpx import-time noise, etc.). The
+    # handler writes to whatever sys.stderr resolves to — under pythonw
+    # that's now the log file we set up in _ensure_stdio() above.
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        force=True,
     )
+    if _LAUNCHER_LOG_PATH is not None:
+        log.info("launcher log: %s", _LAUNCHER_LOG_PATH)
 
     # 1. Single-instance lock.
     instance_handle = _acquire_single_instance_or_focus()

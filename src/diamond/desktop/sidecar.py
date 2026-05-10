@@ -106,6 +106,12 @@ def _start_uvicorn_thread(port: int) -> threading.Thread:
         # No reload — that's a dev-only feature that conflicts with PyInstaller.
         reload=False,
         workers=1,
+        # log_config=None disables uvicorn's logging.config.dictConfig call.
+        # uvicorn's default config registers formatters that call
+        # sys.stderr.isatty() during init, which crashes under pythonw.exe
+        # where sys.stderr is None ("Unable to configure formatter 'default'").
+        # Our launcher's own logging.basicConfig handles output.
+        log_config=None,
     )
     server = uvicorn.Server(config)
 
