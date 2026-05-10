@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 The project keeps long-running engineering context in `docs/`. Always read at the start of a session:
 
 - `docs/PROJECT_STATUS.md` — current phase, what works, what was last done, what's next.
-- `docs/DECISIONS.md` — append-only log of architectural/scope decisions with rationale (D1–D34).
+- `docs/DECISIONS.md` — append-only log of architectural/scope decisions with rationale (D1–D38).
 - `docs/DATA_NOTES.md` — empirical findings about the OOTP dump shape, codebooks, and IE display conventions.
 - `docs/BACKLOG.md` — prioritized open work, grouped by phase (Schema/Ingest → Analysis → UI).
 - `docs/UI_DESIGN.md` — UI build order + design conventions; committed five-tab IA + theme system live here.
@@ -319,16 +319,19 @@ The audit layer (Phase 1) is **scaffolding**. Advanced stats now run against the
 
 ### Reconciliation patterns (`audit/reconcile.py`)
 
+**Save-agnostic since D38.** `diamond reconcile --save NAME --ie-dir PATH --source warehouse` runs against any save's warehouse with any folder of IE control CSVs. Filenames match the org-agnostic suffix `_organization_-_roster_*.csv` so Sox and Padres files resolve via the same FileSpec defs. Padres recon CSVs live at `docs/helpful_files/recon/Padres/` (270 players × 21 files, dated 7/31/2028) — permanent second test target.
+
 When adding a new `FileSpec`:
 
 - **Don't filter by `team_id`.** IE roster files show each player's *full season* totals (including stints on prior orgs and short-season stops). The standard pattern is `WHERE year = 2029 AND split_id = 1` — no team filter.
 - Fielding stats use `split_id = 0` (no platoon split for fielding).
-- Player ratings (`scouted_ratings`) need `WHERE scouting_team_id = 4` to take the Red Sox's view of every player. Don't add a `league_id` filter — each player has exactly 1 row at team=4 across all leagues, and adding a league filter restricts the audit to MLB only (24 of 220 IE rows).
+- Player ratings (`scouted_ratings`) need `WHERE scouting_team_id = 4` — this is **NOT** an audit_team_id; the L1 view at `_connect_warehouse` stamps a constant `4` regardless of save (D12 already filtered the view to audit_team_id, so the constant is just satisfying the hardcoded WHERE). Don't try to use the actual audit_team_id here — that's a bug-attractor.
 - Use `overall_rating` / `talent_rating` (already 20-80) — **never** the raw `overall` / `talent` fields (0-200 internal scale). Per Decision D6.
 - IP convention: `FLOOR(outs/3) + (outs%3)*0.1` (e.g., 517 outs → 172.1, not 172.4).
 - Tier each column: A=direct dump field, B=trivial calc, C=needs league constants, D=modeled (xstats), E=at-bat aggregation, F=cannot replicate (per D5 or string-formatted display), G=needs scale conversion or integer→string mapping.
 - The matcher (`_is_match`) normalizes IE display formats: `"-"` → null, `"9.1%"` → `9.1`, `"$28 800 000"` → `28800000`, `"1 (auto.)"` → `1`. Don't fight these in derivation SQL — let the matcher handle them.
 - Add new dump CSVs to `_connect()`; that's where every reconcile job picks up its views.
+- After any L3 formula change, re-run reconcile against BOTH Sox AND Padres before shipping (per D38 retrospective — single-instance testing hides assumptions).
 
 ### Codebooks
 
@@ -447,6 +450,8 @@ See `web/components/RosterClient.tsx` for the canonical implementation.
 - The November dump (`dump_YYYY_11`) is the end-of-season snapshot — it's the canonical source for season-stat reconciliation. Earlier monthly dumps roll over at season start (Feb-Mar).
 - **`dump_date` is end-of-month** (D36, 2026-05-16). `dump_YYYY_MM` is exported when OOTP advances *into* MM+1, so its data represents stats through the LAST day of MM (e.g. `dump_2028_07` = stats through 2028-07-31, `dump_2028_11` = stats through 2028-11-30 after the WS). `dump_name_to_date()` returns `date(year, month, last_day_of_month)` via `calendar.monthrange` — leap years handled. Pre-D36 ingests landed dump_date on the 1st of the month; existing warehouses must run `diamond migrate-dump-dates [--save NAME]` once to migrate (idempotent via `_diamond_settings.dump_date_convention='end_of_month'` setting marker; not auto-run because a full migration on a large warehouse takes 10-15 minutes — opt-in only).
 - **VARCHAR-vs-BIGINT defense in scope filters** (D36, 2026-05-16). DuckDB's `read_csv_auto` may park a numeric-looking column as VARCHAR when adjacent column variance confuses inference (observed first on The Fathers' `l0_trade_history.team_id_*` + `l0_league_playoff_fixtures.{league_id, team_id*}`, all string-quoted ints `'10'`, `'307'`). All scope filters in `l1_event.py` (`_SCOPE_PLAYER` / `_SCOPE_TEAM` / `_SCOPE_LEAGUE_HARDCODED_15` / `_SCOPE_TRADE`) wrap LHS in `TRY_CAST(... AS BIGINT)`; `f_trade_participant` builder TRY_CASTs every team_id, player_id (in UNNEST), message_id, and `date` (→ DATE). Same pattern in any future L1/L3 builder that filters on a foreign key from L0.
+- **OOTP-canonical wOBA formula** (D38, 2026-05-17). Base linear weights × PA denominator: `(0.69·uBB + 0.72·HBP + 0.89·1B + 1.27·2B + 1.62·3B + 2.10·HR) / PA`. NOT the FanGraphs canonical `(AB + uBB + SF + HBP)` denominator with lg-OBP-scaled weights. The formulas converge for modern MLB hitters (SH=0); they diverge by .015-.020 for minor leaguers / pitchers batting with sac bunts. Lives in `l3_advanced.py:woba_calc` for production + `reconcile.py:BATTING_DERIVED_CTE` for audit. `lg_woba` in `_lg_constants_advanced_native` / `_imported` is `base_lg_woba` (base weights × lg_pa denom), no longer = `lg_obp`. The scaled `w_*` columns in lg_constants are retained for backward compat but no longer fed to player_woba. After any wOBA-formula touch, rebuild L3 + re-run reconcile against both saves.
+- **Single-save testing hides assumptions** (D38 retrospective). The codebase was tested entirely against Sox for 6+ weeks; ~80% of the D36/D37/D38 bugs were latent in Sox the whole time and only surfaced when Padres exposed them (mid-season opening, SH>0 minor leaguers, VARCHAR inference, day-off date display, no `fetch-history`). The Padres save is now a permanent second test target — recon CSV folder at `docs/helpful_files/recon/Padres/` is a 270-player × 21-file ground-truth corpus. Re-run reconciliation after every L3 formula change. PRs that touch warehouse derivations should document: "verified on Sox + Padres warehouses."
 - DSL teams: the Red Sox have one FCL + two DSL teams; org-level rollups must include all three.
 - Park factors: **halved** for OPS+ / wRC+ (`1 + (avg-1)/2`), **80%** for ERA+ / pit_WAR (`1 + (avg-1)*0.8`). Audit-decoded; verified Crochet 2029 ERA+ 127 vs IE 127 (Fenway).
 - **OOTP supplies WAR directly** as `players_career_*.war` / `.ra9war` (A-tier reconciled to IE since 2026-05-04). Aggregated into `f_player_season_*.war` + `.ra9war`, then SUMed into `f_player_season_advanced_batting.b_war` + `f_player_season_advanced_pitching.p_war` / `.p_ra9_war`. Surfaced on roster Advanced + player page Advanced. The custom `o_war` (offense-only, wRAA-based) + `pit_war` (FIP-only, flat-1.13-replacement) are NOT the canonical IE-reconciled values — they're inspectable alternatives kept for transparency. When users ask "what's player X's WAR?", the answer is `b_war` / `p_war`.

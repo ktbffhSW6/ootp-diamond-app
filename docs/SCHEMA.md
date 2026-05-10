@@ -332,6 +332,10 @@ f_player_season_advanced     (player_id, year, league_id, level_id) PK
                               + OPS+, ERA+, FIP, SIERA, RC, RC/27
                               + RF/9 (fielding), RE24 exposure, etc.
                               [the formulas already live in src/diamond/advanced/*]
+                              [D38 (2026-05-17): wOBA = (base linear weights × counting) / PA,
+                              NOT FanGraphs canonical (AB+uBB+SF+HBP). lg_woba in
+                              _lg_constants_advanced is base_lg_woba (PA-denom), not
+                              lg_obp. Match OOTP IE export.]
 
 f_trade_participant          (trade_id, player_id) PK = (trade_id, player_id)
                               Long-format trade roster: 1 row per (trade × player).

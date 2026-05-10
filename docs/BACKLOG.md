@@ -6,6 +6,117 @@
 
 ---
 
+## 🎯 Active priority — finish Padres reconciliation, then build the Almanac
+
+Tracking ladder agreed 2026-05-17 (post-D38):
+
+**Step 1 — finish reconciliation to ~100% (D39 target)**
+
+Three investigation buckets left from D38 reconciliation pass. Each needs deep-dive against at-bat-grain data (`f_pa_event`, 5M+ rows multi-year), comparing against the Padres IE control data at `docs/helpful_files/recon/Padres/`:
+
+- **Statcast spray classification (Pull% / Cent% / Oppo%)** — 5-18% match. Salvador Perez (RHB) IE Pull%=53.8 vs Diamond=28.2. Need to understand OOTP's `hit_xy` encoding semantics. Hypothesis options: (a) hit_xy is stadium-relative not batter-relative (current DATA_NOTES claim incorrect), (b) thresholds need adjustment, (c) OOTP defines pull via swing-contact-point not hit-landing. Empirical test: pull Perez's full 105 BIP with valid hit_xy, distribution-analyze, find the threshold/transform that reproduces 53.8% pull.
+- **Statcast aggregation (EV / LA / HHi / Barrel% / GB% / FB% / LD%)** — 53-86% match. Suspected BIP-cutoff + weighted-average alignment. Compare Diamond's at-bat-aggregated EV against IE's EV per player; identify which events Diamond includes that IE excludes (or vice versa). Look at Merrill IE BIP=351 vs Diamond=396 — the 45-event delta tells us the filter difference.
+- **xBA / xSLG / xwOBA** (7 D-tier cols across batting + pitching superstats_1) — Diamond stores values via OOTP's `lref_xwoba_table` interpolation (should be canonical by construction), but they differ ~30-40% from IE display. Merrill: Diamond xBA=.190 vs IE=.274. Hypothesis: OOTP IE adds wOBA-equivalent credit for BB/HBP/K on top of per-BIP xstats; Diamond stores BIP-only contributions. Test by computing Diamond's xwOBA with non-BIP-event adjustment and see if it matches IE.
+
+Plus the 8 remaining wOBA outliers (small-sample DSL pitchers batting). Probably league-specific scaling in OOTP we don't fully replicate.
+
+**Step 2 — Baseball Almanac architecture (D40+)**
+
+After D39 closes reconciliation, build the save-agnostic complete-history layer per the 17-item phase plan committed 2026-05-17:
+
+1. HoF Lahman drop — `lref_master.lahmanID` swap (~2 hrs)
+2. `lref_player_*` ingest (Lahman batting/pitching/fielding/hof/awards, frozen per save, 12/31/2025 cutoff enforced)
+3. `lref_statcast_*` ingest (Baseball Savant 2015-2025, real-MPH scale)
+4. Unified player resolver (`/api/players/{key}` accepts OOTP int + Lahman string)
+5. Era-agnostic views (`v_player_season_*`, `v_player_game_*`, `v_game_log`)
+6. `lref_game_log` (Retrosheet GL files — every MLB game 1871+)
+7. `f_game_log` from OOTP sim dumps
+8. First Almanac page `/history/year/[YYYY]`
+9. `lref_game_player_*` (Retrosheet events via Chadwick tools)
+10. `f_player_game_*` from OOTP per-PA data
+11. Stretch comparator (Mantle vs Merrill flagship)
+12. Streak engine / calendar heatmap / park-trip splits
+
+Source-attribution tooltips + Statcast scale labels as cross-cutting work.
+
+**Architectural commitment** (per the 2026-05-17 design pass):
+
+- Pre-2026 = static reference data (lref_* from OOTP install + Lahman + Retrosheet + Baseball Savant), frozen with the save
+- 2026+ = pure OOTP sim from monthly dumps
+- 12/31/2025 boundary machine-enforced via year filters on unified views + smoke-test invariant
+- Save-agnostic by construction: any new save gets the same baseline depth on first ingest
+
+---
+
+## ✅ D38 Padres reconciliation + wOBA formula fix — SHIPPED 2026-05-17 afternoon
+
+**Status**: reconciled Padres save (`The Fathers.lg`) sim stats against
+OOTP IE control data at `docs/helpful_files/recon/Padres/`. Three
+distinct fixes in one commit (`20d161b`):
+
+- ✅ **Multi-save reconciler infrastructure** — `_resolve_ie_path`
+  org-agnostic suffix match (Padres `san_diego_padres_organization_-_*.csv`
+  resolves via same FileSpec defs as Sox), `--ie-dir` + `--save` CLI
+  flags, scouting-stamp fix (`scouting_team_id=4` constant regardless
+  of save because L1 view is already audit-team-filtered at D12).
+- ✅ **wOBA formula corrected to OOTP-canonical** — OOTP uses base
+  linear weights × PA denominator, not FanGraphs (AB+uBB+SF+HBP) form
+  with lg-OBP-scaled weights. Bastidas 2028 IE=.357 vs old Diamond=.372
+  (.015 systematic high drift on minor-leaguers with SH>0). Fixed in
+  `l3_advanced.py` (player_woba + both lg_constants views) and
+  `reconcile.py` BATTING_DERIVED_CTE. wOBA tier match: 76% → 94%.
+  **This bug existed in Sox save too** but didn't surface because
+  Sox MLB hitters have SH=0 and we never reconciled minor leaguers.
+  Sox warehouse will need `--rebuild-only` to refresh L3 with corrected
+  formula (minor-league rows will shift; MLB unchanged).
+- ✅ **Accuracy floor documented**: 197/197 A-tier columns 100%, 43/43
+  B-tier 94-100% (rounding-grade), ~85% of recoverable surface at
+  OOTP-canonical accuracy.
+
+**Honest postmortem**: ~80% of the D36/D37/D38 bugs were latent in the
+Sox save the whole time. The Padres save just exposed them. Pattern:
+single-instance testing → assumptions that happened to hold for Sox
+became invisible coupling. Mitigation going forward: Padres save is
+now a permanent second test target. The recon CSV folder is a stable
+ground-truth corpus we can re-run after every refactor.
+
+---
+
+## ✅ D37 in-progress season + endpoint resilience — SHIPPED 2026-05-17 morning
+
+**Status**: shipped same-day fixes after user opened Padres save
+mid-2028. Three issues:
+
+- ✅ **In-progress season league constants** — OOTP only writes
+  `league_history_*_stats.csv` rows for completed seasons. Mid-season
+  dumps had zero (year, league, level) rollup rows for 2028 (except
+  DSL which completes in July). Without league constants, OPS+/wRC+/
+  ERA+/FIP/wOBA all returned NULL across every in-progress player.
+  New `agg_bat_fallback` + `agg_pit_fallback` CTEs in
+  `_lg_constants_advanced_native` aggregate from `f_player_season_*`
+  for combos NOT in `league_history_*`, gated to years that already
+  have SOME league_history coverage so pre-save Lahman-imported rows
+  stay routed to `_lg_constants_advanced_imported`. Post-fix: 25 rows
+  for 2028 in `_lg_constants_advanced` (was 2); Merrill 2028 OPS+ 124,
+  Mason Miller ERA+ 252.
+- ✅ **Cockpit nullable metrics** — `headline_metric_value: int | None`,
+  cockpit endpoint passes None instead of coercing to 0, frontend
+  renders "—" with `text-content-muted`, insight is suppressed when
+  current metric is None.
+- ✅ **`/api/hof` 500 on Padres save** — endpoint LEFT JOIN-ed
+  `history_lahman_people` for `bbref_id` resolution, but Padres save
+  was created without running `diamond fetch-history` so warehouse
+  has zero `history_*` tables. New `_history_loaded(con)` probe +
+  template-based query construction substitutes `NULL::VARCHAR AS
+  bbref_id` and drops the JOIN entirely when the table's absent.
+- ★ **Bonus**: `/api/admin/dump-status` reported 0 ingested even
+  though warehouse had 29 — endpoint opened its own
+  `duckdb.connect(read_only=True)` which fails on Windows with
+  IOException because uvicorn's RW connection holds an exclusive
+  lock; switched to `Depends(get_cursor)`.
+
+---
+
 ## ✅ Multi-save productionization (D36) — SHIPPED 2026-05-16 end-of-day
 
 **Status**: drove the Padres save (`The Fathers.lg`, audit_team_id=23,

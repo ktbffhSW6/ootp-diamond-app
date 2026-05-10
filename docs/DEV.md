@@ -244,6 +244,45 @@ ootp-diamond-app/
 The glossary endpoint is the canonical reference implementation —
 copy its shape when adding new resources.
 
+## Reconciliation (audit harness)
+
+The reconcile harness is the permanent regression check that verifies Diamond's
+stat surface ties out to OOTP's IE export. Post-D38 it's save-agnostic:
+
+```bash
+# Default: reconcile active save against its own import_export/ folder
+diamond reconcile --source warehouse
+
+# Reconcile a specific save
+diamond reconcile --save "The Fathers.lg" --source warehouse
+
+# Reconcile against an arbitrary control-data folder (e.g. the Padres
+# pinned snapshot at docs/helpful_files/recon/Padres/, dated 7/31/2028)
+diamond reconcile \
+    --save "The Fathers.lg" \
+    --ie-dir docs/helpful_files/recon/Padres \
+    --source warehouse \
+    --output audit_output/reconciliation_padres_2028_07.md
+```
+
+Behavior:
+
+- `--save NAME` selects which save's warehouse to reconcile against.
+  Defaults to the active save from `~/.diamond/active_save.toml`.
+- `--ie-dir PATH` overrides the IE folder location. Filenames match by
+  the org-agnostic suffix `_organization_-_roster_*.csv` so Sox files
+  (`boston_red_sox_...`) and Padres files (`san_diego_padres_...`)
+  both resolve via the same FileSpec definitions.
+- `--source csv` reads raw dump CSVs (audit-phase mode); `--source warehouse`
+  reads the L1/L2/L3 warehouse (the post-ingest regression check per D8).
+
+Output is a cell-by-cell scorecard at `audit_output/reconciliation_report.md`
+(or wherever `--output` points). Each column is rated A-G per Decision D8.
+The Padres save's known-good baseline is documented in DECISIONS.md D38.
+
+Add a new save's control-data folder + an entry in CI / smoke-test config to
+make reconciliation an automated regression check across multiple saves.
+
 ## Troubleshooting
 
 - **CORS errors in the browser**: verify the FastAPI process is

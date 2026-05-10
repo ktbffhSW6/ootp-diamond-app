@@ -22,6 +22,44 @@
 
 ---
 
+## Active priority ladder (post-D38, agreed 2026-05-17 afternoon)
+
+The next-session arc, in order:
+
+**Step 1 — D39: Finish reconciliation to ~100%** (next session, ~1 day work)
+
+Three creative deep-dives using at-bat / game-level data to close the remaining 46 of 316 reconcile columns. The Padres recon CSVs at `docs/helpful_files/recon/Padres/` are the ground-truth target. After D39, Diamond's stat surface will tie out to OOTP at >99% (only the 36 F-tier pitch-tracking columns remaining, permanently unrecoverable).
+
+- **D39a — Statcast spray** (Pull% / Cent% / Oppo%, 3 cols): pull Salvador Perez 2028 BIP from `f_pa_event`, partition by hit_xy + result, manually classify each event by landing point and compare against IE 53.8% pull. Identify the encoding that reproduces IE values. Hypotheses: stadium-relative not batter-relative; threshold boundary differs; swing-contact-point vs landing-point.
+- **D39b — Statcast aggregation** (BIP/EV/LA/HHi/BAR/GB%/FB%/LD% = ~16 cols): align Diamond's BIP filter with OOTP's (target Merrill BIP=351 vs current 396). The 45-event delta tells us the filter difference. Once BIP filter matches, re-derive EV/LA/etc. — most should fall into place.
+- **D39c — xBA/xSLG/xwOBA** (7 cols across batting + pitching superstats_1): test hypothesis that OOTP IE includes wOBA-equivalent credit for non-BIP events (BB/HBP) on top of per-BIP x-stats. Diamond stores BIP-only contributions. Empirical: take Merrill (Diamond xwOBA=.236, IE=.336), add `(BB·.69 + HBP·.72)/PA = (34·.69 + 3·.72)/443 = .055` → predicted .291 vs IE .336 = still gap of .045. Refine hypothesis from there.
+
+**Step 2 — D40+: Build the Baseball Almanac** (~10-14 dev-days, multi-session)
+
+Save-agnostic complete-history layer per the 17-item phase plan committed 2026-05-17 (see BACKLOG.md "Active priority"). Architectural contract:
+
+- Pre-2026 = static reference (lref_* from OOTP install + Lahman + Retrosheet + Baseball Savant), frozen with the save, 12/31/2025 cutoff machine-enforced
+- 2026+ = pure OOTP sim from monthly dumps
+- Unified views (`v_player_season_*`, `v_player_game_*`, `v_game_log`) bridge the two halves; UI components are era-agnostic
+- Save-agnostic by construction: any new save gets the same baseline depth on first ingest
+
+Phase sequence:
+1. HoF Lahman drop — `lref_master.lahmanID` swap (~2 hrs)
+2. `lref_player_*` ingest (Lahman batting/pitching/fielding/hof/awards) — ~1 day
+3. `lref_statcast_*` ingest (Baseball Savant 2015-2025, real-MPH scale) — ~1 day
+4. Unified player resolver `/api/players/{key}` + era-agnostic views — ~1 day
+5. `lref_game_log` (Retrosheet GL files, every MLB game 1871+) — ~1 day
+6. `f_game_log` from OOTP sim dumps — ~0.5 day
+7. First Almanac page `/history/year/[YYYY]` MVP — ~1-2 days
+8. `lref_game_player_*` (Retrosheet events via Chadwick tools) — ~2-3 days
+9. `f_player_game_*` from OOTP per-PA data — ~1 day
+10. Stretch comparator (Mantle-vs-Merrill flagship) — ~2-3 days
+11. Streak engine / calendar heatmap / park-trip splits — ~1 day each
+
+Source-attribution tooltips + Statcast scale labels are cross-cutting UI work.
+
+---
+
 **2026-05-17 (morning)** — **D37 in-progress season league constants + multi-save endpoint resilience.** Day after D36 shipped, user opened the Padres save mid-2028 (`dump_2028_07`, mid-July) and reported the cockpit was showing a giant red "0" headline metric on every spotlight player + "No qualifiers yet" on the MLB Pressure board + History → Hall of Fame returned 500. Three distinct fixes:
 
 | # | Issue | Where |

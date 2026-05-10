@@ -1993,3 +1993,147 @@ DuckDB on Windows respects exclusive file locking — even read-only connections
 Caught in D37: `/api/admin/dump-status` was opening its own read-only connection and falling into its `except duckdb.Error` fallback that returned "everything pending" (badge would falsely show all dumps unprocessed). Fix was to switch to `Depends(get_cursor)`.
 
 CLI commands (run in their own process from a separate cmd window) are not subject to this — they open their own RW connection cleanly when uvicorn isn't holding the file. The `diamond status` CLI works fine for terminal introspection of ingest state.
+
+
+## OOTP-canonical wOBA: base weights × PA denominator (D38, 2026-05-17)
+
+Diamond's wOBA formula was wrong for 6+ weeks. The bug was invisible on the Sox save (MLB hitters with SH=0 → formulas converge) and surfaced via the Padres reconciliation pass on minor-league pitchers batting (high SH count → formulas diverge by .015-.020).
+
+**OOTP's wOBA formula (verified against IE export 2026-05-17):**
+
+```
+                  0.69·uBB + 0.72·HBP + 0.89·1B + 1.27·2B + 1.62·3B + 2.10·HR
+wOBA  =  ─────────────────────────────────────────────────────────────────────
+                                          PA
+```
+
+Where:
+
+- `uBB = BB − IBB` (unintentional walks only)
+- `1B = H − 2B − 3B − HR`
+- `PA = AB + BB + HBP + SF + SH + CI` (the full plate appearances field — NOT the FanGraphs-canonical `AB + uBB + SF + HBP` denominator)
+- Weights are the standard 2024-era FanGraphs base weights, **without league-OBP scaling**
+
+**Key divergences from FanGraphs convention:**
+
+1. **Denominator is `PA`, not `(AB + uBB + SF + HBP)`.** The two differ by `(SH + CI)`. For modern MLB hitters SH≈0 (sac bunts are rare in the analytical era), so the two formulas converge to within rounding. For minor-league players, NL pitchers batting, and any hitter who lays down sac bunts, OOTP's formula gives a slightly lower value.
+2. **No `lg_obp / base_lg_woba` scaling.** FanGraphs scales the weights so `lg_woba == lg_obp` by construction. OOTP doesn't — the league wOBA is just the league's base-weighted per-PA value. Verified against OOTP-supplied `league_history_batting_stats.woba` for MLB 2027: OOTP=.3176, Diamond base+PA-denom=.3202 (rounding-grade match).
+
+**Why this matters operationally:**
+
+- **Production code** (`src/diamond/schema/l3_advanced.py:woba_calc`): now uses base weights × PA denominator. `lg_woba` in `_lg_constants_advanced_native` / `_imported` is `base_lg_woba` (PA-denom), not `lg_obp`. The scaled `w_*` columns are retained for backward-compat but no longer feed `player_woba`.
+- **Reconcile harness** (`src/diamond/audit/reconcile.py:BATTING_DERIVED_CTE`): same formula. Player-side and harness-side both produce identical values.
+- **Sox warehouse**: after D38 the Sox warehouse needs `diamond ingest --rebuild-only --save "Building the Green Monster.lg"` to pick up the new formula. MLB rows will be unchanged (Sox MLB players have SH=0); minor-league rows will shift slightly. This is a correction, not a regression — values are now OOTP-canonical.
+
+**Remaining wOBA drift (~6% of small-sample minor-league rows):**
+
+Players like Ariel Dilone (DSL, 23 PA, IE=.264 vs Diamond=.253) still show .011 drift. OOTP appears to apply a small league-specific adjustment to wOBA in DSL/short-season leagues that we don't replicate. Best hypothesis: the linear weights themselves vary slightly by league environment. For all practical purposes the drift is in samples too small to be statistically meaningful (<30 PA), so v1 accepts it as a noise floor.
+
+
+## Reconciliation harness — multi-save support (D38, 2026-05-17)
+
+The audit harness was Sox-only until D38. Three changes made it save-agnostic:
+
+1. **Org-agnostic filename matching.** `FileSpec.ie_filename` still uses the Sox prefix (`boston_red_sox_organization_-_roster_*.csv`) for backward-compat. At lookup time, `_resolve_ie_path(ie_dir, spec_filename)` extracts the suffix `_organization_-_roster_*.csv` and globs `ie_dir/*{suffix}`. Padres files (`san_diego_padres_organization_-_*.csv`) resolve via suffix match. Same FileSpec defs work for any MLB org.
+2. **CLI flags `--save NAME` + `--ie-dir PATH`.** The save flag selects which warehouse to reconcile (defaults to `~/.diamond/active_save.toml`). The ie-dir flag overrides `save.import_export_dir`, pointing at any folder of IE control CSVs (e.g. `docs/helpful_files/recon/Padres/`).
+3. **Scouting-team-id stamping fix.** The existing FileSpec CTEs for rating files hardcode `WHERE sr.scouting_team_id = 4`. The L1 `players_ratings_snapshot` view is filtered to `audit_team_id` at D12 build time, so the data is already correct per-save. The reconcile harness stamps a constant `4 AS scouting_team_id` on the view regardless of save — satisfies the hardcoded WHERE for any audit team. For Padres (audit_team=23) this fix changes 8 rating files from 0/0/269 (all nulls) to 100% A-tier matches.
+
+**Run pattern** (any save, any control-data folder):
+
+```bash
+diamond reconcile \
+    --save "The Fathers.lg" \
+    --ie-dir docs/helpful_files/recon/Padres \
+    --source warehouse \
+    --output audit_output/reconciliation_padres_2028_07.md
+```
+
+Output is a cell-by-cell scorecard: ~316 columns × ~270 players per file × 21 files = ~85K cells compared. Each column is rated A-G per Decision D8. The report at `audit_output/` is the source of truth for "what ties out to OOTP."
+
+
+## Reconciliation deferred investigations (D38, 2026-05-17)
+
+Three buckets of stat-tier drift remain after D38. All are recoverable in principle but need at-bat-level investigation. The Padres recon CSVs at `docs/helpful_files/recon/Padres/` are the ground-truth corpus to validate against.
+
+**Bucket 1 — Statcast spray classification (Pull% / Cent% / Oppo%)**
+
+Reported match rates: 5-18%. Examples:
+
+```
+Salvador Perez (RHB) 2028:  IE Pull% = 53.8 / Cent% = 31.2 / Oppo% = 15.0
+                        Diamond Pull% = 28.2 / Cent% = 37.2 / Oppo% = 34.6
+                                                            (near-mirror)
+```
+
+The current `BATTING_SUPERSTATS_CTE` classifies spray via `hit_xy / 16` bucketed into LF (0-4) / CF (5-10) / RF (11-15), then applies handedness to map (LF, CF, RF) → (pull, center, oppo). Empirical check on Perez (RHB) 2028 BIP: HRs avg hit_xy=77 (x-bucket 4.8), 1Bs avg hit_xy=124 (x-bucket 7.7), OUTs avg 144 (x-bucket 9.0). Most of his BIP land in CF zone (x = 5-10) per current bucketing — but IE shows him as a 54%-pull hitter.
+
+Three hypotheses:
+
+a) **hit_xy is stadium-relative, not batter-relative.** Earlier DATA_NOTES claim (D29 era) said batter-relative because HR mean ≈71 for both hands. Maybe that empirical claim was wrong, and OOTP actually uses stadium-relative.
+
+b) **OOTP defines "pull" by swing-contact-point, not hit-landing-point.** I.e., a ball that goes the opposite way because the batter was late on it still counts as "pulled" if his swing path was a pull swing. Diamond's hit_xy classifier doesn't know swing path.
+
+c) **Threshold boundaries differ.** Maybe OOTP's pull zone is wider than x ≤ 4 (e.g., x ≤ 6) — would explain the apparent center-vs-pull confusion.
+
+**Test path**: pull Perez's full BIP distribution from `f_pa_event`, partition by hit_xy, manually classify each at landing point + compare against any swing-direction signal. Identify which encoding produces 53.8% pull.
+
+**Bucket 2 — Statcast aggregation drift (EV / LA / HHi / Barrel% / GB% / FB% / LD%)**
+
+Match rates: 53-86%. Subtle drift on most BIP rate stats. Diamond's BIP count itself differs from IE (Merrill 2028: Diamond BIP=396 vs IE=351 — 45-event difference).
+
+Likely causes:
+
+- **Different BIP filter.** Diamond counts BIP as `result IN (4,5,6,7,8,9) AND sac = 0`. OOTP might exclude additional event types or use a PCB-derived count instead. The 45-event delta on Merrill is the clue.
+- **Different weighted-average rules.** EV averages might exclude bunts, sacrifice flies, or extremely-low-velocity contact differently.
+
+**Test path**: align Diamond's BIP filter with whatever OOTP uses (target Merrill BIP=351), then re-derive EV/LA/etc. on the matched event set.
+
+**Bucket 3 — xBA / xSLG / xwOBA divergence (D-tier in superstats files)**
+
+Diamond computes these via 1D interpolation of `lref_xwoba_table` / `lref_xba_table` / `lref_xslg_table` — OOTP's OWN tables copied verbatim from `<install>/misc/`. By construction this SHOULD be OOTP-canonical. Empirically it's not:
+
+```
+Jackson Merrill 2028 MLB:
+  Diamond stored:  xBA=.190  xSLG=.364  xwOBA=.236  bip_xstat=396
+  IE display:      xBA=.274  xSLG=.502  xwOBA=.336  BIP=351
+```
+
+Diamond's stored values are 30-40% LOWER than IE. The BIP count differs by 45 too.
+
+Hypothesis: **OOTP IE includes wOBA-equivalent credit for non-BIP events (BB/HBP/K) on top of per-BIP x-stats.** Diamond stores per-BIP-only contributions. So:
+
+- IE xwOBA = (Σ x-event-value across ALL PA, with K=0 and BB/HBP given wOBA-base-weight credit) / PA
+- Diamond xwoba = (Σ x-bip-value across BIP only) / BIP
+
+If this is correct, the fix is to extend the xstats builder to include non-BIP event contributions per OOTP's actual formula. Need OOTP-doc or empirical validation.
+
+**Test path**: take a few players with known IE xwOBA + Diamond xwOBA, add (BB × .69 + HBP × .72) / PA to Diamond's value and see if it matches IE.
+
+These three buckets cover ~46 of the ~316 reconcile columns. After D39 closes them, Diamond's stat surface will tie out to OOTP at ~99% (only the documented F-tier pitch-tracking columns remaining as permanently unrecoverable).
+
+
+## Single-instance testing was an architectural debt source (D38 retrospective)
+
+Re-cap of why the Padres save surfaced ~6 weeks of latent bugs:
+
+The codebase was tested entirely against ONE save (Sox / Building the Green Monster) for 6+ weeks. Every implicit assumption that happened to hold for that specific save became invisible coupling:
+
+| Assumption baked into code | Why Sox didn't surface | Padres caught it |
+|---|---|---|
+| Save always opened at year-end | User always loaded Sox in Nov dumps | Padres opened in July → in-progress league_history empty (D37) |
+| User has run `diamond fetch-history` | Sox user had run it once | Padres save was brand new → `/api/hof` 500 (D37) |
+| MLB hitters have SH=0 | Modern MLB sac bunts ≈0 | DSL/A-ball pitchers batting have SH>0 → wOBA formula drift exposed (D38) |
+| DuckDB infers types consistently | Sox dumps happened to type-resolve cleanly | Padres trade dumps → VARCHAR vs BIGINT in scope filters (D36) |
+| User won't notice date off-by-one | Sox cockpit "Last Sync" used months-late dates | Padres user opened mid-month, saw "Jul 31" vs "Aug 1" mismatch (D36) |
+| `dump_2025_07` means July 1 | Sox queries used `year` field directly | Padres user pointed out actual semantic is end-of-month (D36) |
+| Reconcile harness only Sox | Audit run always on Sox | Padres recon needed `--ie-dir` + suffix-match + scouting fix (D38) |
+| Sox MLB players never have SH | wOBA formula bug invisible 6+ weeks | Padres DSL pitchers have SH>0 → formula drift (D38) |
+
+**Mitigations going forward:**
+
+1. **Padres save is now a permanent second test target.** The recon CSV folder is a 270-player × 21-file ground-truth corpus that should be re-run after every L3 schema change.
+2. **The `--ie-dir` flag in `reconcile.py`** lets the harness target arbitrary control-data snapshots. Adding a third save (or a fresh Lahman-imported save) is just another `--ie-dir`.
+3. **The smoke test's `_diamond_settings.history_cutoff_year = 2025` marker** (when D39+ ships) machine-enforces the boundary contract, catching regressions automatically.
+4. **Any new feature that depends on the active save's specific data shape should be tested against both saves before shipping.** Document in the PR description: "verified on Sox + Padres warehouses."
+
+The patterns above generalize: **any single-input test suite hides assumptions until a second input arrives**. The fix is to maintain at least two test corpora as part of the project's quality bar, not as a debug exercise after a regression.
