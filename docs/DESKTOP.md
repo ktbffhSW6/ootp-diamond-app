@@ -181,14 +181,17 @@ launcher crashed without releasing — kill it from Task Manager
 
 Should never happen with the Job Object active — but if it does
 (VM hibernation has been observed to break Job Object kill-on-close),
-fall back to the dev-path recovery:
+the manual recovery is:
 
-```bash
-kill-stale.bat
+```cmd
+for /f "tokens=5" %I in ('netstat -ano ^| findstr ":3000.*LISTENING"') do taskkill /F /PID %I
+for /f "tokens=5" %I in ('netstat -ano ^| findstr ":8000.*LISTENING"') do taskkill /F /PID %I
 ```
 
 This is a rare edge case in v1; will be eliminated in v2 by Inno Setup
-running a service-style cleanup on uninstall.
+running a service-style cleanup on uninstall. (D34 cleanup deleted
+the old `kill-stale.bat` recovery file; the equivalent loop is now
+inline in `dev.bat` for the dev path.)
 
 ### Tray icon doesn't appear
 

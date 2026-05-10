@@ -38,6 +38,38 @@ inline plaque thumbnails per inductee row (needs Pillow downsample); full
 7-segment outline rendering on the spray chart (vs the 5-point spline we
 adapt to today).
 
+## ✅ Cleanup pass (D34) — SHIPPED 2026-05-16
+
+Three small commits removing pre-D32 vestigial code and tightening
+the surface. User asked "do we need all the files at the root?" —
+audit confirmed several no longer pulled their weight.
+
+- ✅ **Launcher consolidation** (commit `d3d2bcc`) — deleted `api.bat`,
+  `web.bat`, `kill-stale.bat`. `dev.bat` calls `make api` / `make web`
+  directly; PYTHONIOENCODING exported from the Makefile; kill-stale
+  loop inlined as 8 lines at the top of dev.bat. Launcher count
+  5 → 2 (`Diamond.vbs` + `dev.bat`). DEV.md updated.
+- ✅ **Header Quit button removed** (commit `b682fbb`) — pre-D32
+  vestige; window X + tray Quit cover it cleanly. Removed
+  `QuitButton.tsx`, `shutdownApp()`, `<QuitButton />` from layout,
+  `POST /api/admin/shutdown` route, 100-line `_KILL_SCRIPT` constant,
+  5 imports it required.
+- ✅ **Tray Show focuses native window** (commit `f791080`) — was
+  opening the cockpit in default browser; now uses Qt signal
+  (`showRequested`) to un-minimize/raise/activate the existing
+  window. Tray gains optional `on_show: Callable | None` parameter.
+
+**Net delta**: 4 files deleted at repo root + ~325 LOC removed
+across backend + frontend.
+
+**Files audited and intentionally kept**: `Diamond.vbs`, `dev.bat`,
+`Makefile`, `scripts/xstats_*` (D-tier evidence per DATA_NOTES),
+all `docs/*.md` (well-partitioned by audience), all
+`src/diamond/*` modules (every one imported somewhere — earlier
+"unused" scan was a false positive caused by multi-line imports).
+
+---
+
 ## ✅ AI sidebar (D33) — SHIPPED 2026-05-16
 
 **Status**: full four-tier AI surface replacing D14's single-button
@@ -68,6 +100,29 @@ Metabase API.
   `QDesktopServices.openUrl`. Workshop tab's deep-link cards now work
   inside the desktop shell.
 
+### Same-day D33 follow-ups — SHIPPED 2026-05-16
+
+- ✅ **Anthropic snapshot auto-migration** (`061e2f6`) — `RETIRED_MODELS`
+  map rewrites stale model strings; default flipped to rolling alias
+  `claude-haiku-4-5`.
+- ✅ **DuckDB timeout fix** (`03943aa`) — dropped Postgres-style `SET
+  statement_timeout` that was failing every tool call.
+- ✅ **`describe_table` tool + LIMIT-injection fix** (`3de5bbd`) — model
+  has a clean schema-discovery path; `DESCRIBE` no longer mangled
+  by LIMIT injection. Tool count 6 → 7.
+- ✅ **Persona setting + tool-plumbing hide** (`fe74739`) — free-form
+  `persona` field in `/settings/ai` (5 presets); tool calls hidden
+  by default with verbose toggle in sidebar header; Metabase cards +
+  errors stay visible regardless.
+- ✅ **Page-payload wiring** (`2381f0b`) — `<PagePayloadProvider>`
+  Context + `<PagePayloadBridge>` server-component bridge with 16KB
+  cap. Cockpit + player page publish their data; AISidebar reads via
+  `usePagePayload()`.
+- ✅ **`get_career_arc` tool + cite-your-sources prompt** (`5711f98`) —
+  fixed Crochet-vs-Ryan hallucination class. Deterministic age-per-
+  year + warehouse-aggregated career WAR. System prompt mandates
+  citing tool sources for every specific number. Tool count 7 → 8.
+
 ### AI sidebar v2 follow-ups — DEFERRED
 
 - [ ] **Streaming responses** (SSE) — sidebar currently shows
@@ -77,11 +132,9 @@ Metabase API.
 - [ ] **Conversation persistence** — threads live in component state
       only. Per-save persistence to `~/.diamond/<save>/ai-threads/*.json`
       would let users resume long analyses. ~half day.
-- [ ] **Per-page payload context** — currently only `pathname` is
-      sent. Could attach the player profile / team summary / standings
-      block as `page_context.payload` for a richer T1 experience. The
-      schema reserves the field; just needs each page to populate.
-      ~1 day.
+- [ ] **Page-payload opt-in for more pages** — cockpit + player page
+      done; standings, leaderboards, movements, history, draft still
+      send pathname only. 2-line change per page. ~half day total.
 - [ ] **More tools** — `get_team`, `get_standings`, `get_movements`,
       `get_recent_news`, `compare_seasons` would broaden the analyst
       surface. ~half day per tool.

@@ -4,7 +4,42 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-16 — **Phase 3: AI sidebar shipped (D33) + Metabase link fix.** Diamond's AI is no longer a single "Summarize career" button — it's a full sidebar reachable from every page with tool use, page context, GM-copilot modes, and Metabase card creation. Plus a fix for QtWebEngine target=_blank links (Metabase Workshop deep-links now route to the system browser).
+**Last updated**: 2026-05-16 — **Phase 3: D34 cleanup pass.** Three small commits on top of yesterday's D32 desktop shell + D33 AI sidebar work, removing pre-D32 vestigial code and tightening the surface. Plus six same-day D33 follow-ups landed: model auto-migration, DuckDB timeout fix, describe_table tool, persona setting + tool-plumbing hide, page-payload wiring, get_career_arc tool with cite-your-sources prompt.
+
+**D34 cleanup (today)**:
+
+| # | What | Files / LOC |
+|---|---|---|
+| 1 | **Launcher consolidation** — delete `api.bat` + `web.bat` + `kill-stale.bat`; inline kill loop into `dev.bat`; export PYTHONIOENCODING in Makefile; `dev.bat` calls `make api` / `make web` directly. Launcher count 5 → 2 (`Diamond.vbs` + `dev.bat`). | -3 files, -~85 LOC |
+| 2 | **Remove header Quit button** — pre-D32 vestige. Window X + tray Quit cover it. Removed `QuitButton.tsx`, `shutdownApp()` helper, `<QuitButton />` from layout, `POST /api/admin/shutdown` route, and the 100-line `_KILL_SCRIPT` constant + its 5 imports. | -1 file, -~240 LOC |
+| 3 | **Tray "Show Diamond" focuses native window** — was opening cockpit in default browser; now uses Qt signal to un-minimize/raise/activate the existing window. Tray gains optional `on_show` parameter; launcher wires it via `showRequested` signal. | +50 LOC, -8 LOC |
+
+**D33 same-day follow-ups (also today)**:
+
+- **Anthropic snapshot auto-migration** — `claude-3-5-haiku-20241022` retired upstream; `RETIRED_MODELS` map rewrites stale model strings to `claude-haiku-4-5` on load; default flipped to rolling alias. (`061e2f6`)
+- **DuckDB timeout removed** — `SET statement_timeout` is Postgres syntax; DuckDB 1.5.x rejects it. Was hitting every tool call. Dropped; LIMIT 1000 + read-only + single-statement is the bound. (`03943aa`)
+- **LIMIT injection skips non-SELECT + new `describe_table` tool** — `DESCRIBE players_current LIMIT 1000` was a syntax error; now LIMIT only applies to SELECT/WITH. New tool gives the model a clean schema-discovery path with strict alphanumeric validation. (`3de5bbd`)
+- **Persona + tool-plumbing hide** — new `persona` setting (free-form, appended to chat system prompt); 5 presets in `/settings/ai`. Tool_use/tool_result blocks hidden by default in the sidebar; "Tools" toggle in header for debug; Metabase cards + errors stay visible. (`fe74739`)
+- **Page-payload wiring** — `<PagePayloadProvider>` Context + `<PagePayloadBridge>` server-component bridge with 16KB cap. Cockpit + player page publish their data; AISidebar reads via `usePagePayload()` and includes in `page_context.payload`. Model now sees what the user sees. (`2381f0b`)
+- **`get_career_arc` tool + cite-your-sources prompt** — fixes the Crochet-vs-Ryan hallucination class (model claimed Ryan career pWAR 1,650.6 vs actual 117.9; got year-to-age mapping wrong). Tool returns deterministic age-per-year + warehouse-aggregated career WAR. System prompt: "cite tool sources for every specific number; never from training-data memory." (`5711f98`)
+
+**API surface today** (33 endpoints — D34 removed `/api/admin/shutdown`).
+
+**Tool count**: 8 (query_warehouse, describe_table, get_career_arc, get_player, compare_players, get_glossary, list_leaderboard_stats, create_metabase_card).
+
+**Run modes** (D34 final):
+
+| Command | Use |
+|---|---|
+| `Diamond.vbs` | Production / single-window experience |
+| `dev.bat` | Engineering hot-reload (two cmd windows + browser tab) |
+| `python -m diamond.desktop --dev` | Native window over running dev servers (best of both) |
+| `make api` / `make web` | Single-server start in current terminal |
+| `make desktop` / `make desktop-package` | Desktop validation / full PyInstaller bundle |
+
+---
+
+**2026-05-16 (earlier) — Phase 3: AI sidebar shipped (D33) + Metabase link fix.** Diamond's AI is no longer a single "Summarize career" button — it's a full sidebar reachable from every page with tool use, page context, GM-copilot modes, and Metabase card creation. Plus a fix for QtWebEngine target=_blank links (Metabase Workshop deep-links now route to the system browser).
 
 **D33 four-tier shape**:
 

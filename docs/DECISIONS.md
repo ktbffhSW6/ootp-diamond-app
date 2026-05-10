@@ -1188,6 +1188,72 @@ web/
 - **No memory across sessions**: each new sidebar open starts a fresh thread. The "New" button explicitly resets. Conversation history is in component state only.
 - **`create_metabase_card` requires Metabase to be running**: tool checks port 3001 + Metabase auth; returns `{"ok": False, "error": ...}` with a friendly message if not. The user sees the error inline and can click the Workshop tab (which now auto-launches Metabase per D32).
 
-**Pinned**: tool-loop on the server (not client-driven), Anthropic-shaped internal message format (OpenAI translated in adapter), six tools (not extensible v1 — adding a tool means a code change), six-iteration cap, no streaming.
+**Pinned**: tool-loop on the server (not client-driven), Anthropic-shaped internal message format (OpenAI translated in adapter), six-iteration cap, no streaming.
 
-**Deferred to v2**: streaming responses (SSE), per-page payload-aware context (player profile / team summary baked into `page_context.payload`), conversation persistence (save threads to disk per save), token usage tracking + daily cap (the D14 `use_level` field), more tools (`get_team`, `get_standings`, `get_movements`).
+**Same-day follow-ups** (2026-05-16, all small, none in their own D-entry):
+
+1. **Anthropic snapshot auto-migration** — D14's pinned default `claude-3-5-haiku-20241022` was retired by Anthropic, so `_get_session()` started 404'ing. `RETIRED_MODELS` map in `settings.py` rewrites stale model strings to `claude-haiku-4-5` on load; default flipped to the rolling alias to avoid future bit-rot. (Commit `061e2f6`.)
+2. **`SET statement_timeout` removed from `query_warehouse`** — DuckDB 1.5.x has no such config param (it's Postgres syntax). Every tool call was hitting `Catalog Error: unrecognized configuration parameter`. Dropped the call; LIMIT 1000 + read-only + single-statement is the runtime bound. (Commit `03943aa`.)
+3. **LIMIT injection skips non-SELECT queries + new `describe_table` tool** — `DESCRIBE players_current LIMIT 1000` was being constructed because LIMIT was appended to ANY query. Now gated to SELECT/WITH only. New `describe_table` tool gives the model a clean schema-discovery path (PRAGMA table_info wrapper with strict alphanumeric validation). (Commit `3de5bbd`.)
+4. **Persona field + tool-plumbing hide** — new `persona: str` setting (free-form, appended to chat system prompt verbatim) with 5 presets in `/settings/ai`; tool_use/tool_result blocks hidden by default in the sidebar with a "Tools" toggle in the header (persisted to localStorage); Metabase card creations + tool errors stay visible regardless of toggle. (Commit `fe74739`.)
+5. **Page-payload wiring** — earlier-deferred field is now populated. `<PagePayloadProvider>` Context in `app/layout.tsx`, `<PagePayloadBridge data={...}>` server-component-friendly bridge with 16KB cap + truncation hint. Cockpit (`/`) publishes `{save, cockpit}`; player page (`/player/[id]`) publishes the full PlayerResponse. AISidebar reads via `usePagePayload()` and includes in `page_context.payload`. (Commit `2381f0b`.)
+6. **`get_career_arc` tool + cite-your-sources prompt** — user caught a Crochet-vs-Ryan comparison where the model hallucinated career pWAR (1,650.6 vs actual 117.9) and got year-to-age mapping wrong. New deterministic tool returns season-by-season + age (year - dob.year, minus 1 if birthday > July 1, OOTP convention) + warehouse-aggregated career WAR — eliminates two error classes in one tool. System prompt strengthened: "cite tool sources for every specific number; do NOT cite from training-data memory." (Commit `5711f98`.)
+
+**Tool count: 7 → 8** (query_warehouse, describe_table, get_career_arc, get_player, compare_players, get_glossary, list_leaderboard_stats, create_metabase_card).
+
+**Still deferred to v2**: streaming responses (SSE), conversation persistence (save threads to disk per save), token usage tracking + daily cap (the D14 `use_level` field), more tools (`get_team`, `get_standings`, `get_movements`), inline embedded Metabase static-embed previews.
+
+---
+
+## D34 — Cleanup pass: launcher consolidation + remove pre-D32 vestigial paths
+
+**Date**: 2026-05-16
+**Decision**: Delete three obsolete .bat files at the repo root, remove the redundant header Quit button + its backend endpoint, and fix the tray "Show Diamond" action to focus the existing window instead of opening a browser tab.
+
+**Why**: Post-D32 desktop shell, several files and processes from earlier eras of the project had become redundant or misleading. Keeping them around added cognitive load with no upside. User asked "do we need all the files at the root?" — the answer was no.
+
+**Three sub-changes**:
+
+1. **Launchers** (commit `d3d2bcc`):
+
+   - `api.bat` (24 lines) → deleted. Was a Windows-friendly equivalent of `make api`; only added value was setting `PYTHONIOENCODING=utf-8`. Now exported once at the top of the Makefile via `export PYTHONIOENCODING := utf-8`.
+   - `web.bat` (18 lines) → deleted. Was an exact equivalent of `make web` with no env tweaks.
+   - `kill-stale.bat` (65 lines, 8 lines of real logic) → deleted. Pre-D32 recovery for stale uvicorn / next dev processes; obsolete now that the desktop shell's Job Object handles cleanup atomically. The 8-line netstat/taskkill loop is now inline at the top of `dev.bat` for the dev path (where there's no Job Object).
+   - `dev.bat` rewritten to call `make api` / `make web` directly instead of the deleted .bat files.
+
+   **Launcher count: 5 → 2** (`Diamond.vbs` for production, `dev.bat` for engineering hot-reload). Plus Makefile targets for individual servers.
+
+2. **Header Quit button** (commit `b682fbb`):
+
+   - `web/components/QuitButton.tsx` → deleted (file).
+   - `shutdownApp()` helper in `web/lib/api.ts` → removed.
+   - `<QuitButton />` import + render in `web/app/layout.tsx` → removed.
+   - `POST /api/admin/shutdown` route → removed.
+   - 100-line `_KILL_SCRIPT` constant + 5 imports it required (`os`, `platform`, `subprocess`, `sys`, `tempfile`) → removed.
+
+   The header Quit was important when Diamond was a browser tab and the user had no obvious way to stop the dev servers. Once the native window shipped (D32), it became vestigial. Plus the endpoint specifically targeted processes named `api.bat` / `web.bat` — files that no longer exist post-step-1.
+
+   **Quit paths now**: window X (triggers Qt `aboutToQuit` → Job Object reaps children) or tray "Quit Diamond" (`app.quit()` → same path). Two paths, both clean.
+
+3. **Tray "Show Diamond" focuses native window** (commit `f791080`):
+
+   - Pre-D34, the tray's Show menu item ran `webbrowser.open(main_url)` — opened the cockpit in the user's default browser even though the native Qt window was right there.
+   - Now: tray Show calls back to the launcher via a Qt Signal (`showRequested`), which marshals to the GUI thread and runs the canonical Win32 un-minimize/raise/activate sequence:
+     ```python
+     win.setWindowState(state & ~WindowMinimized)
+     win.show()
+     win.raise_()
+     win.activateWindow()
+     ```
+   - Tray's `start()` accepts an optional `on_show: Callable | None` (None falls back to the old browser path as a safety net).
+
+**Net delta**: 4 files deleted at repo root + ~325 LOC removed across backend + frontend. No functional regressions; one functional improvement (tray Show actually focuses the window).
+
+**Files audited and intentionally kept**:
+
+- `Diamond.vbs` (production launcher), `dev.bat` (engineering launcher), `Makefile` — all needed.
+- `scripts/xstats_eda.py` + `scripts/xstats_3d.py` — EDA probes referenced in DATA_NOTES.md / BACKLOG.md / PROJECT_STATUS.md as the **empirical evidence behind D-tier xstats verdict**. Not actively run, but cheap to keep.
+- All `docs/*.md` files — well-partitioned by audience (DESKTOP for end-users, DEV for engineers, METABASE for BI workshop).
+- All `src/diamond/` modules — every one is imported somewhere (an earlier "unused module" scan was a false alarm caused by multi-line `from X import (a, b, c)` patterns).
+
+**Pinned**: window X + tray Quit are the only quit paths; tray Show focuses the window via Qt signal; no separate per-server .bat files (Makefile is the source of truth).
