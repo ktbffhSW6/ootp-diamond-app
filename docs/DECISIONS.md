@@ -1341,3 +1341,104 @@ The biggest piece. Three layers:
 - pnpm deps: `react-markdown@^10`, `remark-gfm@^4`, `rehype-katex@^7`, `remark-math@^6`. Bundle weight ~80KB gzipped — acceptable for a desktop-shell app where the bundle ships once at install time.
 
 **Pinned**: AI prose renders as markdown; assistant text is flat full-width with one Diamond label per response group; user messages are right-aligned pills; streaming via SSE with a Stop button + animated cursor; mode pills + drag-to-resize live in the header.
+
+## D36 — Multi-save productionization (Padres save smoke test)
+
+**Date**: 2026-05-16 (end-of-day)
+**Context**: D33 + D35 had functionally-complete AI sidebar + Claude.ai-grade rendering, but every test up to that point ran against the legacy `Building the Green Monster.lg` save (Boston Red Sox, audit_team_id=4). To validate Diamond as a real multi-save tool, the user pointed it at their Padres save (`The Fathers.lg`, audit_team_id=23, 29 monthly dumps 2026_03 → 2028_07). Five distinct issues surfaced — three "Sox identity bled into the code", one save-data-shape difference that crashed L1 build twice, and one fundamental semantic bug in how `dump_date` was assigned. All five fixed in three commits.
+
+### Issue 1 — Save-aware AI prompt
+
+The system prompt in `routes/ai.py:_build_system_prompt` opened with:
+
+> "You are Diamond's analytical co-pilot ... The user is the GM of the **Boston Red Sox (organization_id=4, MLB league_id=203)** in the **'Building the Green Monster' save**. Current season is 2029; data covers 2026-2029 ..."
+
+And listed Sox affiliates by name in the org-structure block ("AAA Worcester Red Sox / AA Portland Sea Dogs / High-A Greenville Drive / A Salem Red Sox"). On a Padres save the model would still talk like a Sox GM and recommend Sox players.
+
+**Fix**: new `_resolve_org_context(cursor, save)` helper:
+
+```python
+def _resolve_org_context(cursor, save: SaveConfig) -> dict:
+    team = MLB_TEAMS_BY_ID.get(save.audit_team_id)  # → "San Diego Padres"
+    save_display = save.save_name.removesuffix(".lg").replace("_", " ")  # → "The Fathers"
+    # Probe warehouse for current season range (latest=2028 for The Fathers)
+    row = cursor.execute("SELECT MAX(year), MIN(year) FROM f_player_season_batting").fetchone()
+    return {team_label, team_short, team_id, save_display, latest_year, earliest_year}
+```
+
+Both the sync `/api/ai/chat` and streaming `/api/ai/chat/stream` handlers call it once per request and pass the result into `_build_system_prompt`. The org-structure block becomes generic ("filter by `organization_id={team_id}` for the org pyramid; query `teams` table — filter `organization_id={team_id}` — for affiliate names"). Falls back gracefully on empty / uningested warehouse.
+
+### Issue 2 — Save-aware desktop chrome
+
+Three surfaces hardcoded the Sox save name:
+
+1. `desktop/launcher.py`: `WINDOW_TITLE = "Diamond — Building the Green Monster"` → stamped onto `QMainWindow.setWindowTitle`.
+2. `desktop/single_instance.py`: same string used by `FindWindowW` for the focus-existing-instance flow. Single-instance only worked for Sox; switching saves would have broken it.
+3. `desktop/assets/splash.html`: literal `<div class="title">Building the Green Monster</div>` in the boot splash.
+
+**Fix**: new `diamond.saves.get_active_window_title()` reads `~/.diamond/active_save.toml` directly — no API dep, so the desktop launcher (which boots before any FastAPI machinery) can call it. `launcher.py` and `single_instance.py` both import the helper, so they always agree on the title even after a save switch. `splash.html` gets a `>Loading…<` placeholder; `splash.py` substitutes the active save's display name on the way to QtWebEngine via cheap text replace.
+
+### Issue 3 — VARCHAR-defensive scope filters
+
+The Fathers' `read_csv_auto`-inferred L0 tables had several ID + date columns parked as VARCHAR where the Sox save had BIGINT/DATE:
+
+| L0 table | VARCHAR columns | Sox type |
+|---|---|---|
+| `l0_trade_history` | `team_id_0`, `team_id_1`, `player_id_0_*`, `player_id_1_*` (20 cols), `message_id`, `date` | BIGINT / TIMESTAMP |
+| `l0_league_playoff_fixtures` | `league_id`, `team_id0`, `team_id1` | BIGINT |
+
+OOTP exported these as string-quoted ints (`'10'`, `'307'`) and ISO dates (`'2026-06-24'`); DuckDB's auto-inference fell back to VARCHAR when adjacent column variance confused the inferencer. Naive consumption then died:
+
+- L1 event build: `_SCOPE_TRADE` did `team_id_0 IN (SELECT team_id FROM _scoped_teams)` → `Binder Error: Cannot compare values of type VARCHAR and BIGINT`.
+- L3 player_movements: `tp.trade_date BETWEEN m.dump_date_observed - INTERVAL '60' DAY AND ...` → `Cannot mix VARCHAR and TIMESTAMP in BETWEEN`.
+
+**Fix**: defense-in-depth `TRY_CAST` at every ID/date consumption site:
+
+- `_SCOPE_PLAYER`, `_SCOPE_TEAM`, `_SCOPE_LEAGUE_HARDCODED_15`, `_SCOPE_TRADE` all wrap LHS in `TRY_CAST(... AS BIGINT)`.
+- `f_trade_participant` builder TRY_CASTs `message_id` → BIGINT, both `team_id_X` → BIGINT, every `player_id_X_Y` coming through UNNEST → BIGINT, and `date` → DATE. The L3 fact table is now type-stable across saves regardless of L0 inference quirks.
+
+`TRY_CAST` returns NULL on failure rather than raising; NULLs harmlessly drop out of `IN (...)` and `BETWEEN` filters. Any save with the same CSV-shape quirk will Just Work now too.
+
+### Issue 4 — JS local-TZ date parsing
+
+The cockpit's "Last sync" displayed `Jun 30, 2028` after the user ingested `dump_2028_07`. Looked like the Refresh button hadn't picked up the new dump. The warehouse was actually correct:
+
+```
+_diamond_ingests latest:
+  dump_2028_07   dump_date=2028-07-01   ingested_at=2026-05-10 15:16
+```
+
+Pure rendering bug. Pydantic serialized the `date` field as `"2028-07-01"`; `new Date("2028-07-01")` interprets that as midnight UTC; `toLocaleDateString` then shifts back a day in any TZ west of UTC.
+
+**Fix**: detect date-only ISO strings (regex `^\d{4}-\d{2}-\d{2}$`) and construct via `new Date(y, m-1, d)` instead of the UTC-default constructor. Three sites had the same bug (cockpit / league standings snapshot date / history streaks dates); all three patched.
+
+### Issue 5 — `dump_date` end-of-month convention
+
+After fixing Issue 4 the cockpit displayed `Jul 1, 2028` for `dump_2028_07`. User pointed out that's still wrong: OOTP exports a dump at the END of each simulated month (when the user advances time past the month boundary), so the data inside `dump_YYYY_MM` represents "stats through last day of MM", not first day. `dump_2028_07` is the end-of-July snapshot.
+
+**Fix**: change `dump_name_to_date()` to return `date(year, month, last_day_of_month)` via `calendar.monthrange` (handles leap years: 2024-02-29, 2028-02-29). Sort order is preserved — end-of-month dates sort identically to start-of-month dates within the same month-sequence.
+
+For existing data: new `migrate_dump_dates_to_eom()` runs DuckDB's `LAST_DAY()` over every `dump_date` column on every BASE TABLE in the warehouse (filters out views like `players_current` that inherit `dump_date` from their snapshot bases — DuckDB doesn't allow UPDATE on views). Idempotent via `_diamond_settings.dump_date_convention='end_of_month'` setting marker; subsequent calls bail in O(1). WHERE-filter optimization (`WHERE dump_date <> LAST_DAY(dump_date)`) skips already-EOM rows on partial-state re-runs.
+
+New CLI command `diamond migrate-dump-dates [--save NAME]` runs the migration explicitly. **NOT auto-run on warehouse open**, despite the temptation — a full migration on the legacy Sox save (45+ dumps × ~80 base tables × millions of rows) takes 10-15 minutes, and stalling the API's first request that long is unacceptable. The user runs the CLI on their own schedule.
+
+The Fathers warehouse migrated successfully in ~30s. Sox migration deferred — runs on demand.
+
+### Why end-of-month is the right semantic (worth pinning)
+
+> `dump_2028_07` is exported when OOTP advances *into* August 2028, capturing season-to-date stats through the close of business on 7/31/2028. Labeling it as 7/1 was a "first-of-month-as-canonical-key" hack from when sortability mattered more than semantics. End-of-month sorts identically *and* is semantically correct.
+
+For the November end-of-season dump (`dump_YYYY_11`), end-of-month means 11/30 — correctly after the World Series wraps, which is what queries like "career stats as of end-of-season Y" expect.
+
+### Wiring
+
+- Modified: `src/diamond/api/routes/ai.py` (`_resolve_org_context` + `_build_system_prompt`), `src/diamond/saves.py` (new `get_active_window_title` / `get_active_save_display_name`), `src/diamond/desktop/{launcher,single_instance,splash}.py` + `assets/splash.html`, `src/diamond/schema/l1_event.py` (4 scope filters), `src/diamond/schema/l3.py` (`f_trade_participant` casts), `src/diamond/schema/build.py` (`dump_name_to_date` + `migrate_dump_dates_to_eom`), `src/diamond/cli.py` (new `migrate-dump-dates` command), `web/app/{page,league/page,history/streaks/page}.tsx` (fmtDate fix).
+- Verified post-fix on The Fathers: 208 tables, 27 lref_*, 22 facts, 37 events; Padres MLB roster 51 / org 245; 2027 top OPS+ Jackson Merrill 124 (3.9 bWAR), 2027 top pWAR Vasquez 2.7.
+- Three commits on top of D35: `95c13ce` (Sox-identity removal + VARCHAR fix), `101573e` (fmtDate), `5b66839` (dump_date EOM + migration CLI).
+
+**Pinned**:
+- AI prompt is save-aware via `_resolve_org_context` — never references "Sox" / "Building the Green Monster" unless that's the actual active save.
+- Desktop window title is one source of truth (`get_active_window_title` in `diamond.saves`); both `launcher.py` and `single_instance.py` import from it.
+- All ID-typed scope filters use `TRY_CAST(... AS BIGINT)` — defense in depth against per-save CSV inference quirks. Same pattern in any future L1/L3 builder that filters on a foreign key from L0.
+- Frontend `fmtDate` parses date-only ISO strings as local TZ, not UTC, to avoid the off-by-one-day display drift.
+- `dump_date` semantics: end-of-month for `dump_YYYY_MM`. New ingests after 2026-05-16 land EOM directly. Existing warehouses migrate via `diamond migrate-dump-dates` (opt-in, never auto). The setting `_diamond_settings.dump_date_convention='end_of_month'` marks a migrated warehouse.

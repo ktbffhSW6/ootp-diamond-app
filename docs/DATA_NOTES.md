@@ -528,6 +528,40 @@ How we determined which save-folder sources are stable vs ephemeral:
 | `players_game_batting.csv` | 39 | per-game player batting log |
 | `players_career_fielding_stats.csv` | 33 | year × player × position × split |
 
+## `dump_date` convention (D36, 2026-05-16)
+
+`dump_date` is the canonical timestamp Diamond stamps onto every L0 row + admin record. It's parsed from the dump folder name (`dump_YYYY_MM`) by `dump_name_to_date()` in `schema/build.py`. **Convention: end-of-month**, not first-of-month.
+
+**Why end-of-month**: OOTP exports a dump at the end of each simulated month — when the user advances time past the month boundary, the engine writes the next `dump_YYYY_MM/` folder. So the data inside `dump_2028_07` represents "season-to-date stats through the close of business on 7/31/2028", not 7/1. The `dump_2028_11` end-of-season dump correctly lands at 11/30 (after the World Series).
+
+**Implementation**: `dump_name_to_date()` returns `date(year, month, last_day_of_month)` via `calendar.monthrange`. Leap years handled (`dump_2024_02 → 2024-02-29`, `dump_2028_02 → 2028-02-29`). Sort order is preserved — end-of-month dates sort identically to start-of-month dates within the same month-sequence, so `ORDER BY dump_date` still gives chronological ordering.
+
+**Pre-D36 history**: ingests before 2026-05-16 landed dump_date on the 1st of the month. Existing warehouses must run `diamond migrate-dump-dates [--save NAME]` once to update every `dump_date` column on every base table. Idempotent via `_diamond_settings.dump_date_convention='end_of_month'` setting marker; subsequent calls bail in O(1). Not auto-run on warehouse open — a full migration on a large save (45+ dumps × 80+ snapshot tables × millions of rows) takes 10-15 minutes, opt-in only.
+
+## VARCHAR-vs-BIGINT in scope filters (D36, 2026-05-16)
+
+DuckDB's `read_csv_auto` doesn't always infer the type we expect. The Fathers' L0 had several ID + date columns parked as VARCHAR where the Sox save had BIGINT/DATE — string-quoted ints (`'10'`, `'307'`) and ISO-formatted dates (`'2026-06-24'`). The CSV-inference fallback fires when adjacent column variance confuses the type-detector.
+
+**Affected columns (observed on The Fathers)**:
+
+| L0 table | VARCHAR columns | Sox type |
+|---|---|---|
+| `l0_trade_history` | `team_id_0`, `team_id_1`, `player_id_0_*`, `player_id_1_*` (20 cols), `message_id`, `date` | BIGINT / TIMESTAMP |
+| `l0_league_playoff_fixtures` | `league_id`, `team_id0`, `team_id1` | BIGINT |
+
+**Defense**: every scope filter in `l1_event.py` wraps its LHS in `TRY_CAST(... AS BIGINT)`:
+
+```python
+_SCOPE_PLAYER       = "TRY_CAST(player_id AS BIGINT) IN (SELECT player_id FROM _scoped_players)"
+_SCOPE_TEAM         = "TRY_CAST(team_id AS BIGINT) IN (SELECT team_id FROM _scoped_teams)"
+_SCOPE_LEAGUE_HARDCODED_15 = "TRY_CAST(league_id AS BIGINT) IN (203, 204, ...)"
+_SCOPE_TRADE        = "(TRY_CAST(team_id_0 AS BIGINT) IN (...) OR TRY_CAST(team_id_1 AS BIGINT) IN (...))"
+```
+
+`f_trade_participant` builder TRY_CASTs every team_id, player_id (in UNNEST), message_id, and `date` (→ DATE). Downstream consumers (movements page, cockpit) get a type-stable L3 fact table regardless of L0 inference quirks.
+
+**Pattern for new code**: when a new L1 or L3 builder JOINs a foreign-key column from an L0 table to anything else, wrap the L0-side column in `TRY_CAST(... AS BIGINT)`. NULL-on-failure semantics safely excludes any non-numeric rows from the join.
+
 ## File rollover behavior
 
 | File family | Behavior | Implication |

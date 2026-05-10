@@ -6,6 +6,62 @@
 
 ---
 
+## ✅ Multi-save productionization (D36) — SHIPPED 2026-05-16 end-of-day
+
+**Status**: drove the Padres save (`The Fathers.lg`, audit_team_id=23,
+29 dumps 2026_03 → 2028_07) end-to-end through Diamond. Five distinct
+issues surfaced + fixed in three commits:
+
+- ✅ **AI prompt save-awareness** (`95c13ce`) — `_resolve_org_context`
+  reads active SaveConfig + `MLB_TEAMS_BY_ID` + warehouse-probes
+  latest/earliest seasons; substitutes team city/name/org_id into the
+  system prompt. No more "Boston Red Sox" hardcoding.
+- ✅ **Desktop chrome save-awareness** (`95c13ce`) — new
+  `diamond.saves.get_active_window_title()` is the single source of
+  truth for `WINDOW_TITLE`. Both `launcher.py` and `single_instance.py`
+  (used by `FindWindowW`) import from it. Splash HTML substitutes
+  the active save name at load time.
+- ✅ **VARCHAR-defensive scope filters** (`95c13ce`) — every scope
+  filter in `l1_event.py` + `f_trade_participant` builder wraps ID +
+  date columns in `TRY_CAST(... AS BIGINT)` / `TRY_CAST(... AS DATE)`.
+  Fixes The Fathers' L0 inferring VARCHAR for several columns where
+  Sox had BIGINT/DATE.
+- ✅ **JS local-TZ date parsing** (`101573e`) — `fmtDate` now detects
+  date-only ISO strings and constructs via `new Date(y, m-1, d)` to
+  avoid the UTC-midnight off-by-one display bug. Three pages patched.
+- ✅ **dump_date end-of-month convention** (`5b66839`) —
+  `dump_name_to_date()` returns last-day-of-month (was 1st). New
+  `migrate_dump_dates_to_eom()` + `diamond migrate-dump-dates` CLI
+  command for existing warehouses. Idempotent via setting marker;
+  not auto-run (10-15min stall on big saves).
+
+**Migration status**:
+- `The Fathers.lg`: ✓ MIGRATED.
+- `Building the Green Monster.lg`: pending — run
+  `diamond migrate-dump-dates --save "Building the Green Monster.lg"`
+  when ready (expect 10-15 min).
+
+### D36 follow-ups — DEFERRED
+
+- [ ] **L0 type-coercion at ingest** — currently we defend with
+      `TRY_CAST` at every consumption site. A cleaner design would
+      pass explicit `columns={'team_id_0': 'BIGINT', ...}` overrides
+      to `read_csv_auto` so the L0 tables are typed correctly from
+      the start. Touches `l0.py` + every `L0Spec` definition. ~1
+      day.
+- [ ] **Sox warehouse migration** — opt-in CLI step; user runs when
+      ready. Will eventually want to run.
+- [ ] **`_resolve_org_context` cache** — every chat request
+      recomputes the org context (cheap warehouse probe + dict
+      construction, ~5ms). Could memoize per save. Probably not
+      worth it; would add complexity around save-switch invalidation.
+- [ ] **Save-config UI hardening** — `/settings/save` works but the
+      discovery UI doesn't show save-config status (configured /
+      needs-config). Would help users self-serve when they add a
+      new save mid-session. ~half day.
+
+---
+
 ## ✅ L_REF reference layer (D26 + D27) — analytical + cosmetic layer SHIPPED across D29 + D30
 
 **Status as of 2026-05-15**: 9 of 10 slices fully shipped (1 / 2 / 3 / 4 / 5

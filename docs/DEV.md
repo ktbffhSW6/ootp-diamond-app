@@ -127,6 +127,32 @@ Diamond in sync:
 CLI introspection: `diamond status` prints the same gap the badge
 shows (no work done — pure read of `_diamond_ingests`). Add
 `--save NAME` to inspect a non-active save.
+
+### Migrating dump_date convention (D36, one-time per save)
+
+Pre-2026-05-16 ingests parked `dump_date` on the 1st of the month;
+the convention is now end-of-month (per D36 — `dump_YYYY_MM` is
+exported when OOTP advances *into* MM+1, so its data is stats
+through the LAST day of MM, not the first). New ingests after
+2026-05-16 land EOM directly. Existing warehouses need:
+
+```bash
+diamond migrate-dump-dates --save "<save_name>.lg"
+```
+
+Idempotent — re-running on an already-migrated warehouse is cheap
+(a `_diamond_settings.dump_date_convention='end_of_month'` setting
+marker short-circuits). On a small warehouse (~28 dumps) this
+completes in under a minute. On a large one (45+ dumps with deep
+snapshot history) it can take 10-15 minutes — the WHERE-filter
+optimization (`WHERE dump_date <> LAST_DAY(dump_date)`) keeps
+subsequent runs from re-doing finished work, but the first full
+pass still rewrites every row of every dump_date-carrying base
+table.
+
+**Not auto-run** on warehouse open — stalling the API's first
+request 10+ minutes would be unacceptable. Migrations are explicit
+CLI steps, run on your schedule.
 (save header + warehouse stats + Sox division standings + top-3 MLB
 promotion/pressure pairs + 6 spotlight cards with sparkline + auto-
 generated insight + last 8 movement-ledger rows). Three demo paths:
