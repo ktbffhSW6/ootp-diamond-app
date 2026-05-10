@@ -228,6 +228,143 @@ def _describe_table(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
     }
 
 
+def _get_career_arc(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+    """Return season-by-season WAR with **deterministic age computation**.
+
+    Designed to eliminate two recurring LLM bugs:
+
+    1. **Age-from-year hallucination** — "Nolan Ryan in 1969 at age 30"
+       (he was 22; turned 30 in 1977). LLMs are bad at year arithmetic
+       when DOBs aren't trivially in their training data. This tool
+       computes age = season_year - dob.year with month adjustment so
+       the model never has to guess.
+
+    2. **Career-total hallucination** — when asked "what's player X's
+       career WAR?" without an actual SQL run, models make up numbers.
+       This tool returns the warehouse-aggregated total alongside the
+       seasonal breakdown, so any total the model cites is grounded
+       in the same payload it sees.
+
+    Age convention: OOTP uses "age as of July 1 of the season". We
+    follow that — if the player's birthday is after July 1, we
+    subtract 1 from the simple year-difference.
+    """
+    pid = args.get("player_id")
+    kind = (args.get("kind") or "auto").lower()
+    if pid is None:
+        return {"ok": False, "error": "player_id is required."}
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": f"Invalid player_id: {pid!r}"}
+    if kind not in ("auto", "pitching", "batting"):
+        return {
+            "ok": False,
+            "error": "kind must be one of: auto, pitching, batting.",
+        }
+
+    cur = ctx.cursor
+    bio = cur.execute(
+        """
+        SELECT
+            first_name || ' ' || last_name AS name,
+            date_of_birth,
+            retired,
+            position
+        FROM players_current
+        WHERE player_id = ?
+        """,
+        [pid],
+    ).fetchone()
+    if not bio:
+        return {"ok": False, "error": f"No player with id {pid}."}
+    name, dob, retired, position = bio
+    if dob is None:
+        return {"ok": False, "error": f"{name} has no DOB on file."}
+
+    def _age_in_year(yr: int) -> int:
+        # OOTP age = year - dob.year, minus 1 if birthday is after July 1.
+        age = yr - dob.year
+        if (dob.month, dob.day) > (7, 1):
+            age -= 1
+        return age
+
+    pitch_rows = cur.execute(
+        """
+        SELECT year, ROUND(p_war, 2), ROUND(p_ra9_war, 2),
+               ROUND(era_plus, 1), ROUND(fip, 2), ip_display
+        FROM f_player_season_advanced_pitching
+        WHERE player_id = ? AND level_id = 1
+        ORDER BY year
+        """,
+        [pid],
+    ).fetchall()
+    bat_rows = cur.execute(
+        """
+        SELECT year, ROUND(b_war, 2), ROUND(ops_plus, 1),
+               ROUND(wrc_plus, 1), pa
+        FROM f_player_season_advanced_batting
+        WHERE player_id = ? AND level_id = 1
+        ORDER BY year
+        """,
+        [pid],
+    ).fetchall()
+
+    has_pitch = any(r[1] is not None and r[1] != 0 for r in pitch_rows)
+    has_bat = any(r[1] is not None and r[1] != 0 for r in bat_rows)
+
+    if kind == "auto":
+        kind = "pitching" if has_pitch and not has_bat else "batting"
+
+    pitching: list[dict[str, Any]] = [
+        {
+            "year": r[0],
+            "age": _age_in_year(r[0]),
+            "p_war": _to_jsonable(r[1]),
+            "p_ra9_war": _to_jsonable(r[2]),
+            "era_plus": _to_jsonable(r[3]),
+            "fip": _to_jsonable(r[4]),
+            "ip": _to_jsonable(r[5]),
+        }
+        for r in pitch_rows
+    ]
+    batting: list[dict[str, Any]] = [
+        {
+            "year": r[0],
+            "age": _age_in_year(r[0]),
+            "b_war": _to_jsonable(r[1]),
+            "ops_plus": _to_jsonable(r[2]),
+            "wrc_plus": _to_jsonable(r[3]),
+            "pa": _to_jsonable(r[4]),
+        }
+        for r in bat_rows
+    ]
+
+    career_p_war = round(
+        sum(float(r[1]) for r in pitch_rows if r[1] is not None), 2
+    )
+    career_b_war = round(
+        sum(float(r[1]) for r in bat_rows if r[1] is not None), 2
+    )
+
+    out: dict[str, Any] = {
+        "ok": True,
+        "player_id": pid,
+        "name": name,
+        "dob": str(dob),
+        "retired": bool(retired),
+        "position": position,
+        "career_p_war": career_p_war,
+        "career_b_war": career_b_war,
+        "kind_returned": kind,
+    }
+    if kind == "pitching" or kind == "auto":
+        out["pitching_seasons"] = pitching
+    if kind == "batting" or kind == "auto":
+        out["batting_seasons"] = batting
+    return out
+
+
 def _get_player(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
     pid = args.get("player_id")
     if pid is None:
@@ -503,6 +640,39 @@ TOOLS: dict[str, Tool] = {
             "required": ["table_name"],
         },
         handler=_describe_table,
+    ),
+    "get_career_arc": Tool(
+        name="get_career_arc",
+        description=(
+            "Return season-by-season WAR with **deterministically-"
+            "computed age per year** (year - dob.year, minus 1 if "
+            "birthday > July 1, OOTP convention). Use this for ANY "
+            "comparison or question involving age (e.g. 'compare X to "
+            "Y at age 30', 'when was Z's peak season'). Do NOT compute "
+            "ages from your training-data knowledge of player birth "
+            "years — those are wrong often enough that you should "
+            "always call this tool first. Also returns career WAR "
+            "totals so you can cite the warehouse-aggregated number "
+            "rather than estimating."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "player_id": {"type": "integer"},
+                "kind": {
+                    "type": "string",
+                    "enum": ["auto", "pitching", "batting"],
+                    "default": "auto",
+                    "description": (
+                        "'auto' returns whichever side has data; "
+                        "'pitching' or 'batting' to force one side "
+                        "(useful for two-way players)."
+                    ),
+                },
+            },
+            "required": ["player_id"],
+        },
+        handler=_get_career_arc,
     ),
     "get_player": Tool(
         name="get_player",
