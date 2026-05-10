@@ -864,3 +864,83 @@ Frontend: `/history/hof` (inductees view) gets a horizontal-scroll plaque galler
 - Pitcher-side handedness in park-factor application (still uses Overall; needs (pitcher_throws, league-year) opposing-batter mix model).
 - xISO classifier via `lref_xiso_table` 6-zone LSA mapping.
 - Inline plaque thumbnails per inductee row (each plaque is 5-8 MB; the gallery approach keeps initial-render bandwidth manageable).
+
+
+## D31 — Metabase as Diamond's chart-building / BI surface (Pattern A)
+
+*2026-05-15*
+
+**Decision**: Embed Metabase (self-hosted, free, OSS) inside Diamond as the modern chart-building / BI workshop. Metabase runs as a local Java process at `localhost:3000` (or `:3001` to avoid the Next.js port collision); Diamond's `/explore` page has a new **Workshop** tab that iframes it. Metabase reads the same DuckDB warehouse Diamond does via the community DuckDB driver (MotherDuck-maintained).
+
+**Architecture: Pattern A — single Database connection follows the active save**.
+
+Metabase has exactly one Database registered (id=1). Its `details.database_file` always points at the **active save's** DuckDB. When the user switches saves in Diamond's UI (`POST /api/saves/active`), the handler also calls `repoint_active_save()` in `src/diamond/api/metabase.py` which:
+
+1. PUTs the new path to Metabase's Database 1
+2. POSTs to `/sync_schema` to refresh field fingerprints
+
+Schema stability is the load-bearing assumption — every Diamond save has the same warehouse schema (L0 → L_REF identical), so Metabase's field IDs (which cards reference) stay valid across save swaps. Cards continue to work; only the underlying data changes.
+
+**Why Pattern A over Pattern B (per-save Databases)**:
+- Solo workflow: one save active at a time, never side-by-side comparison
+- Cards / dashboards built once, work for every save
+- Pattern B is the escape hatch for genuine multi-save analysis — manually register a second Database in Metabase admin; the two patterns coexist
+
+**Why Metabase over alternatives** (full thread in conversation log):
+
+- **Power BI** would need either Azure Embedded ($) or "publish to web" (cloud upload). Both violate D16 ("local-first; your save data never leaves your machine"). Metabase self-hosts.
+- **SQL Server warehouse** would lose D2 (per-save portability) and D27 (freeze-at-first ingest). The clean per-save DuckDB file is non-negotiable. Pure cost; no benefit since DuckDB ODBC works for Power BI / Tableau / Excel anyway.
+- **Custom Vega-Lite chart builder** is ~6 days of work and doesn't beat Metabase for general BI. Metabase has 30+ chart types, drag-and-drop encoding shelves, calculated fields (DAX-equivalent), drill-through, dashboards, parameters, etc., all built. Metabase's API also lets Claude build dashboards programmatically — versionable, reproducible.
+- **Metabase**: free (OSS), self-hosted, embeds via iframe (with proper sandbox attrs), connects to DuckDB via community driver, full BI surface.
+
+**Implementation summary**:
+
+1. **`~/.diamond/metabase/`** install location (alongside `active_save.toml`, AI keys, etc.)
+   - `metabase.jar` (Metabase OSS 0.59.10, ~520 MB)
+   - `plugins/duckdb.metabase-driver.jar` (driver 1.5.2.0, ~84 MB)
+   - `data/` (H2 metadata DB — cards, dashboards, user accounts; save-agnostic)
+   - `logs/`
+   - `metabase.bat` launcher with safety env vars (localhost-bind, telemetry-off, update-check-off, sample-content-off, 2GB heap)
+
+2. **`src/diamond/api/metabase.py`** — coordination module
+   - `_get_session()` reuses cached session token at `~/.diamond/metabase_session.txt`, refreshes on 401
+   - `_load_credentials()` reads email/password from `~/.diamond/metabase_credentials.toml`
+   - `repoint_active_save(save)` — PUTs the new database_file + triggers sync; **best-effort**, never raises, returns a status dict for logging
+
+3. **`src/diamond/api/routes/saves.py`** — extended `POST /api/saves/active`:
+   - After `set_active_save()`, calls `repoint_active_save()` and logs the result
+   - If Metabase isn't running or credentials are missing, save switch still succeeds; Metabase coordination is opt-in
+
+4. **`web/app/explore/page.tsx`** — refactored to two modes:
+   - `?mode=quick` (default) — Diamond's existing curated `ChartBuilderClient` (scatter / histogram, ~38 stat catalog)
+   - `?mode=workshop` — `MetabaseWorkshop` component iframes Metabase
+   - `ExploreModeTabs` pill component for switching
+
+5. **`web/components/MetabaseWorkshop.tsx`** — client component:
+   - Liveness probe via `fetch('/api/health', mode: 'no-cors')`
+   - On Metabase down: renders cold-start guide with `metabase.bat /b` instructions
+   - On up: renders iframe with proper sandbox attrs (`allow-forms allow-scripts allow-same-origin allow-popups allow-downloads`), 85vh height, "Open full-screen" link
+
+6. **`docs/METABASE.md`** — install, config, ops, troubleshooting, threat model, AI-assisted dashboard workflow
+
+**Coverage notes**:
+
+- **Save-aware queries**: cards filtered by year / level / league_id / position / age work across saves (these are save-stable concepts).
+- **Player-specific cards**: hardcoded `player_id` references break across saves (player IDs aren't stable). Build save-specific drill-downs in Diamond's existing player page; build save-agnostic cards in Metabase.
+- **Don't ingest while Metabase has the DB open**: read lock can collide with `diamond ingest`'s write lock. Documented in METABASE.md ops section.
+- **Port collision**: Diamond's Next.js dev server uses `:3000` by default; Metabase also defaults to `:3000`. Override `MB_JETTY_PORT=3001` in `metabase.bat` and set `NEXT_PUBLIC_METABASE_URL=http://localhost:3001` in `web/.env.local` to resolve.
+
+**Threat model** (single-user local):
+
+- Bound to `127.0.0.1` only — no remote attack surface
+- Telemetry off, update-check off — zero outbound calls
+- DB connection in read-only mode
+- OOTP video game stats, no PII / financial data
+- Realistic worst case: "Metabase has a bug and crashes" (annoying, not dangerous)
+
+**Future v2 deferrals**:
+- `diamond metabase deploy` CLI subcommand reading YAML dashboard specs and POSTing to Metabase API. Source-controlled dashboards. Currently dashboards live only in Metabase's H2 metadata DB (which survives save switches but isn't repo-tracked).
+- Pre-built starter dashboards (leaderboards, distributions, career arcs, team summary, pressure cohort, rookie tracker) shipped as YAML in the repo + auto-deployed on first run.
+- AI-assisted "build me a chart" workflow — Claude POSTs to Metabase API directly, returning question/dashboard URLs. Already proven in spike (5 cards + 1 dashboard built in ~8 min).
+
+**Cross-references**: D2 (per-save warehouse), D3 v2 (save switcher), D16 (local-first), D24 (revalidation pattern reused), D27 (per-save freeze model — Metabase's metadata is parallel: per-user, never frozen).

@@ -139,7 +139,21 @@ def set_active_save_endpoint(body: ActiveSaveUpdate) -> SavesListResponse:
         )
 
     save_active_save_name(body.save_name)
-    set_active_save(build_save_config(body.save_name))
+    new_active = build_save_config(body.save_name)
+    set_active_save(new_active)
+
+    # Pattern A: best-effort re-point Metabase at the new save's warehouse.
+    # Always succeeds the save-switch; Metabase coordination is opt-in
+    # and silent on failure (Metabase down, no creds, etc.). See
+    # `src/diamond/api/metabase.py` for the contract.
+    from diamond.api.metabase import repoint_active_save
+    mb_status = repoint_active_save(new_active)
+    if mb_status.get("synced"):
+        import logging
+        logging.getLogger(__name__).info(
+            "Save switched to %r; Metabase synced", body.save_name
+        )
+
     return list_saves_endpoint()
 
 
