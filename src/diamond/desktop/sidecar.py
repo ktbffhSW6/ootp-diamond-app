@@ -48,10 +48,41 @@ log = logging.getLogger(__name__)
 
 
 # Windows: hide the console window of spawned children.
-# 0x08000000 = CREATE_NO_WINDOW. Equivalent to start /b for cmd, but
-# applied to the actual CreateProcess call so even a child that tries
-# to AllocConsole gets nothing.
+#
+# CREATE_NO_WINDOW (0x08000000) prevents the OS from allocating a
+# console for the child. That's the canonical flag, but for
+# console-subsystem executables (`node.exe`, `java.exe`) Windows can
+# still briefly flash a window during CreateProcess on some versions
+# (Win10 builds < 1903, Win11 with certain DPI settings). The
+# bulletproof recipe combines:
+#
+#   creationflags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+#   startupinfo with STARTF_USESHOWWINDOW + wShowWindow = SW_HIDE
+#
+# CREATE_NEW_PROCESS_GROUP isolates the child's signal handling
+# (Ctrl+C in our process doesn't propagate to children, which we
+# want so the user closing Diamond doesn't accidentally orphan
+# anything).
 _CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
+_CREATE_NEW_PROCESS_GROUP = 0x00000200 if sys.platform == "win32" else 0
+_HIDDEN_FLAGS = _CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP
+
+
+def _hidden_startupinfo():
+    """Build a STARTUPINFO that fully suppresses any window flash.
+
+    Combined with CREATE_NO_WINDOW in creationflags, this is the
+    Win32 recipe for "really, truly no window — not even briefly".
+    Returns None on non-Windows where the field is unused.
+    """
+    if sys.platform != "win32":
+        return None
+    si = subprocess.STARTUPINFO()
+    # STARTF_USESHOWWINDOW = 0x00000001
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    # SW_HIDE = 0
+    si.wShowWindow = 0
+    return si
 
 
 @dataclass
@@ -219,7 +250,8 @@ def _start_next_subprocess(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
-            creationflags=_CREATE_NO_WINDOW,
+            creationflags=_HIDDEN_FLAGS,
+            startupinfo=_hidden_startupinfo(),
         )
     except FileNotFoundError as exc:
         raise RuntimeError(
@@ -377,7 +409,8 @@ def _start_metabase_subprocess(
             stdout=log_fh,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
-            creationflags=_CREATE_NO_WINDOW,
+            creationflags=_HIDDEN_FLAGS,
+            startupinfo=_hidden_startupinfo(),
         )
     except Exception as exc:
         log.warning("metabase: spawn failed (%s) — Workshop tab unaffected", exc)
