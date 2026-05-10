@@ -1,40 +1,177 @@
 # Backlog
 
-> Open work items, prioritized. Phases: **Schema & Ingest** (current), **Analysis
-> Layer**, **UI**. Phase 1 (Audit) closed 2026-05-04 — remaining open audit items
-> are carry-forward research, not blockers.
+> Open work items, prioritized. Phases per D40 commitment (2026-05-17 evening):
+> **Phase 4a (Audit Closure)** → **Phase 4b (Maximize Warehouse)** → **Phase 5 (Almanac)**
+> → **Phase 6 (Multi-save)** → **Phase 7 (AI analyst)** → **Phase 8 (Distribution)**.
+> See DECISIONS.md D40 for the full architectural commitment.
 
 ---
 
-## 🎯 Active priority — Almanac architecture (D40+)
+## 🎯 Active priority — Phase 4a: Audit Closure (~2-3 dev-days)
 
-D39 closed Statcast reconciliation 2026-05-17 evening — see PROJECT_STATUS.md "Active priority ladder" for the four-part scorecard. **D40 unblocked.**
+**Goal**: close the carry-forward audit queue before adding new warehouse capability. Each deliverable resolves a specific open research item. No new code on Phase 4b until Phase 4a exits cleanly.
 
-**Step 1 — Baseball Almanac architecture (D40+)**
+### Phase 4a deliverables (in execution order)
 
-Build the save-agnostic complete-history layer per the 17-item phase plan committed 2026-05-17:
+- [ ] **#1 — L0 inventory pass** (~2 hrs)
+  New script `scripts/inventory_l0_coverage.py`: enumerates every column in every L0 table, greps for references across `src/diamond/{api,schema,advanced,audit}`, outputs `audit_output/l0_column_coverage.md`. Definitive answer to "what we ingest but never use." **Closes**: ambiguity about what was missed at the start.
 
-1. HoF Lahman drop — `lref_master.lahmanID` swap (~2 hrs)
-2. `lref_player_*` ingest (Lahman batting/pitching/fielding/hof/awards, frozen per save, 12/31/2025 cutoff enforced)
-3. `lref_statcast_*` ingest (Baseball Savant 2015-2025, real-MPH scale)
-4. Unified player resolver (`/api/players/{key}` accepts OOTP int + Lahman string)
-5. Era-agnostic views (`v_player_season_*`, `v_player_game_*`, `v_game_log`)
-6. `lref_game_log` (Retrosheet GL files — every MLB game 1871+)
-7. `f_game_log` from OOTP sim dumps
-8. First Almanac page `/history/year/[YYYY]`
-9. `lref_game_player_*` (Retrosheet events via Chadwick tools)
-10. `f_player_game_*` from OOTP per-PA data
-11. Stretch comparator (Mantle vs Merrill flagship)
-12. Streak engine / calendar heatmap / park-trip splits
+- [ ] **#2 — Authoritative team-stat columns wired** (~0.5 day)
+  Already in L0: `l0_team_batting_stats.{woba,ops,iso,rc,rc27}` + `l0_team_pitching_stats.{fip,whip,babip,era,gbfbp,kbb,ws}`. Never surfaced. Add to L1 views. Also new L2 facts for: `players_value` (OOTP internal ratings), `players_league_leader` (authoritative leaderboards), `players_individual_batting_stats` (vs-opponent matchup history), `players_salary_history` (full salary history). **Closes**: unused-authoritative-data class of bugs.
 
-Source-attribution tooltips + Statcast scale labels as cross-cutting work.
+- [ ] **#3 — MiLB levels 5-8 advanced-stats backfill** (~0.5 day)
+  Investigate `lref_era_stats_minors` coverage for Short-Season A / Complex / DSL / AFL (currently NULL for pre-2026 player-seasons at these levels). Either close gap or document as permanent limitation. **Closes**: minor-league pre-2026 rows rendering "—".
 
-**Architectural commitment** (per the 2026-05-17 design pass):
+- [ ] **#4 — EV-bucket OOTP-canonical calibration** (~0.5 day)
+  Grid-search Soft%/Avg%/Solid% cutoffs against IE display values across Padres corpus; replace empirical 75/95 cutoffs with OOTP-canonical. **Closes**: DATA_NOTES "OOTP EV cutoffs unknown."
 
-- Pre-2026 = static reference data (lref_* from OOTP install + Lahman + Retrosheet + Baseball Savant), frozen with the save
+- [ ] **#5 — `hit_loc` semantic decoding** (~0.5 day)
+  Map every hit_loc code (0-77 + 87 + 98-105) to a field zone. Unlocks `IFH%` reconciliation. Becomes input to Phase 4b per-player spray refinement. **Closes**: `IFH%` permanently NULL.
+
+- [ ] **#6 — Multi-level OPS+/ERA+ formula refinement** (~0.5 day)
+  ~5-10pp error on ~12 players who split MLB/AAA in one season. Hypothesis: OOTP applies level-weighted park factor. Either fix or document. **Closes**: carry-forward item #1.
+
+- [x] **#7 — Permanent-limitation writeup in DATA_NOTES.md** — landed in the D40 docs commit (2026-05-17 evening). DATA_NOTES.md now has a "Permanent limitations" section consolidating `leader.category` codes 44+49, OOTP developed-pitch state, F-tier pitch-tracking 36 cols, and `players_pitching.csv` scouting-mode zeros. These items are no longer tracked as "open" in BACKLOG.
+
+### Phase 4a exit criteria
+
+- `Audit phase — carry-forward` section (below) is either resolved, re-classified to Phase 5+, or marked permanent
+- Zero open audit research items without an explicit owner-phase
+- Inventory output committed to `audit_output/l0_column_coverage.md`
+
+---
+
+## 🚀 Phase 4b — Maximize the Warehouse (~5-6 dev-days)
+
+Starts after Phase 4a closes. Save-agnostic by construction (every builder reads `<save>/diamond/diamond.duckdb`, no IDs hardcoded). See DECISIONS.md D40 for full design.
+
+### Tier A — Game-grain fact tables (~0.5 day)
+
+- [ ] `f_player_game_batting` — PK `(player_id, year, game_id)` — built from `l0_players_game_batting` JOIN `games_event` for date denormalization, DuckDB sort key `(player_id, date)`
+- [ ] `f_player_game_pitching` — same shape from `l0_players_game_pitching_stats`
+- [ ] `f_player_game_fielding` — same shape from `l0_players_career_fielding_stats`
+
+Unblocks: "last 12 days Merrill", calendar heatmaps, streak engine, Phase 5 stretch comparator.
+
+### D40 invariants watchdog (~1 day)
+
+- [ ] New table `_diamond_invariants` (dump_date, scope_type, scope_id, year, level_id, metric, dump_value, derived_value, delta, tolerance, status)
+- [ ] Initial 10 invariants: team wOBA/OPS/ISO/AVG/OBP/SLG, team FIP/ERA/WHIP/BABIP, league wOBA, event-count consistency (PA/K/HR/AB)
+- [ ] CLI: end-of-ingest Rich summary table (green/amber/red)
+- [ ] API: `GET /api/admin/invariants` endpoint
+- [ ] UI: cockpit drift status pill
+- [ ] History trends visible across dumps
+
+### Tier B — Per-dump derived-stat history snapshots (~1 day)
+
+- [ ] `f_player_season_advanced_batting_history` — SCD Type 2 on the L3 layer
+- [ ] `f_player_season_advanced_pitching_history`
+- [ ] `f_player_season_statcast_batting_history` + `_pitching_history`
+- [ ] `f_player_season_xstats_batting_history` + `_pitching_history`
+- [ ] Current L3 tables become `_current` views filtered to `MAX(dump_date)`
+
+Unblocks: trajectory queries, real sparklines, engine-patch detection, reconciliation history.
+
+### Tier C — Per-dump leaderboard snapshots (~0.5 day)
+
+- [ ] `f_record_player_history` — as-of leaderboard membership per dump_date
+- [ ] `f_award_race_history` — running award-race standings per dump_date
+
+Unblocks: "who was leading on June 1?"
+
+### Tier D — Rolling-window materialized views (~0.5 day)
+
+- [ ] `v_player_last_7_batting`, `v_player_last_15_batting`, `v_player_last_30_batting`
+- [ ] `v_player_last_5_starts_pitching`, `v_player_last_10_starts_pitching`
+- [ ] `v_player_calendar_heatmap` (per-game stat-line, all players)
+
+### Per-player calibration improvements (~0.5 day)
+
+- [ ] **Spray**: ingest `players_ratings.batting_pull` + `lref_pt_ballparks.{lh_max,rh_max}`; build per-player Pull/Cent/Oppo boundary instead of flat hit_xy<114. Target: 40% → 70-80% match.
+- [ ] **xBA**: piecewise EV-bucket scalers replacing flat ×1.22 (calibrated against Padres corpus). Target: 89% → 95%+.
+
+### UI rollout (~1 day)
+
+- [ ] Cockpit drift status pill (consumes `_diamond_invariants`)
+- [ ] Player page "Last 7 / 15 / 30 days" toggle on stats tables (consumes Tier D)
+- [ ] Spotlight cards switch to real Tier B sparklines (currently faked from raw stats)
+- [ ] `/settings/invariants` admin page surfaces full per-ingest drift report
+
+### Phase 4b exit criteria
+
+- Padres recon at 98%+ on Padres corpus
+- "Last 12 days Merrill" returns in <100ms
+- Every monthly ingest emits a self-validation report
+- Every screen has a path to a time-windowed view
+
+---
+
+## 📖 Phase 5 — The Baseball Almanac (~10-14 dev-days)
+
+Save-agnostic complete-history layer. **Pre-2026 = static reference** (lref_* + Lahman + Retrosheet + Baseball Savant), 12/31/2025 boundary machine-enforced. **2026+ = pure OOTP sim** from monthly dumps. Era-agnostic views bridge the two halves.
+
+### Sequence
+
+1. [ ] HoF Lahman drop — `lref_master.lahmanID` swap (~2 hrs)
+2. [ ] `lref_player_*` ingest — Lahman batting/pitching/fielding/hof/awards, frozen per save (~1 day)
+3. [ ] `lref_statcast_*` ingest — Baseball Savant 2015-2025, real-MPH scale labeled (~1 day)
+4. [ ] Unified player resolver `/api/players/{key}` accepts OOTP int + Lahman string (~1 day)
+5. [ ] Era-agnostic views (`v_player_season_*`, `v_player_game_*`, `v_game_log`) (~1 day)
+6. [ ] `lref_game_log` — Retrosheet GL files, every MLB game 1871+ (~1 day)
+7. [ ] `f_game_log` from OOTP — already built in Phase 4b Tier A, JOIN only (~free)
+8. [ ] First Almanac page `/history/year/[YYYY]` MVP (~1-2 days)
+9. [ ] `lref_game_player_*` — Retrosheet events via Chadwick tools (~2-3 days)
+10. [ ] **Stretch comparator (Mantle vs Merrill flagship)** — built on Tier A (~2-3 days)
+11. [ ] Streak engine / calendar heatmap / park-trip splits (~1 day each)
+
+### Cross-cutting
+
+- Source-attribution tooltips (which data source backs each number)
+- Statcast scale labels (real-MPH vs OOTP-sim ~5mph low)
+
+### Architectural commitments
+
+- Pre-2026 = static reference data, frozen with the save
 - 2026+ = pure OOTP sim from monthly dumps
 - 12/31/2025 boundary machine-enforced via year filters on unified views + smoke-test invariant
 - Save-agnostic by construction: any new save gets the same baseline depth on first ingest
+
+---
+
+## 🌐 Phase 6 — Multi-save scaffolding (~3-5 dev-days)
+
+Multi-save is a workflow, not just a setup wizard. Summer of many saves needs ergonomics.
+
+- [ ] Save-comparison views ("Padres-me at year 4 vs Sox-me at year 4") (~1 day)
+- [ ] Cross-save player tracker (same real player, different sim universes) (~0.5 day)
+- [ ] Reconciliation-as-CI across all saves with control data (~0.5 day)
+- [ ] Save archive/restore + diff tooling (~1 day)
+- [ ] Multi-save overlays on cockpit (~1 day)
+
+Exit criteria: 5+ concurrent saves runnable through summer with no manual switching pain.
+
+---
+
+## 🤖 Phase 7 — AI as analytical layer (~3-5 dev-days)
+
+Leverages Phase 4b Tier A (game-grain facts) + Tier B (derived history) + Phase 5 era-agnostic views.
+
+- [ ] Trajectory tools — `get_player_trend`, `get_hot_cold`, `get_streak` (~0.5 day)
+- [ ] Calendar / window-aware natural language — "Cabrera last month vs season" (~0.5 day)
+- [ ] Almanac comparator tool — Mantle/Merrill via NL prompt (~1 day)
+- [ ] Trade recommendation engine — uses pressure board + leverage stats (~1-2 days)
+- [ ] Hot/cold streak narrative generation (~0.5 day)
+
+---
+
+## 📦 Phase 8 — Polish + distribution (deferred)
+
+Gated on "ready to share Diamond beyond solo use." Scope decided post-summer. Possible items:
+- [ ] Code signing + Inno Setup MSI installer (~1 day) — see Desktop shell v2 follow-ups below
+- [ ] Auto-update (~1 day)
+- [ ] Bundle Node.js (~0.5 day)
+- [ ] Mac/Linux ports (~2-3 days each)
+- [ ] Web-share path (its own decision per D16)
 
 ---
 
@@ -978,41 +1115,56 @@ players) and documented as such. Safe to design schema.
 
 **Phase 2 (Schema & Ingest) closed.** Move on to UI phase.
 
-## Audit phase — carry-forward (non-blocking)
+## Audit phase — carry-forward (recategorized 2026-05-17 evening per D40)
 
 Items that surfaced during Phase 1 but didn't need to be closed for the schema
-to proceed. Pick up opportunistically.
+to proceed. Per D40, each is now assigned a closing phase. **Phase 4a closes
+the must-resolve subset; Phase 5+ inherits orthogonal items; permanent
+limitations move to DATA_NOTES.md.**
+
+### Closes in Phase 4a (Audit Closure)
 
 - [ ] **Multi-level OPS+/ERA+ refinement** — ~5-10pp error on ~12 players who
   split a season between MLB and AAA. Hypothesis: OOTP applies a level-weighted
   park factor. To investigate: extract per-level slash + park factors, compute
-  weighted average, compare to IE.
-- [ ] **hit_loc-based spray classification** — Pull/Cent/Oppo% currently 6-29%
-  match. Grid-search confirmed hit_xy x-binning doesn't fit; OOTP likely uses
-  per-event spray logic involving hit_loc + hit_xy + something else. Open-ended
-  research item; current naive bins stay as best approximation.
-- [x] **Verify 13 unmapped `leader.category` codes** — done 2026-05-05.
-  Resolved 11 of 13: 21=RC (Bill James technical w/ IBB-corrected B-factor),
-  22=RC/27, 24=wOBA (calibrated), 26=OPS+/wRC+ (close match, ambiguous formula),
-  31=Win%, 41=Opp_BABIP, 46=HA/9, 51=GF (Games Finished), 53=QS%, 55=CG%,
-  57=GB%. Coverage now 58/60 (97%). Codes 44 (pitching rate ~8-10) and
-  49 (pitching rate ~47-70) remain unidentified — see DATA_NOTES.md for the
-  candidates ruled out. Updated `LeaderCategory` IntEnum in constants.py.
-- [x] **Investigate `Shea Sprague` PIT mismatch** — confirmed 2026-05-05 as
-  structurally inaccessible. Exhaustive investigation ruled out rating
-  thresholds, position/role, age/experience, rating-talent gaps,
-  evolution patterns, and other CSVs. OOTP's "developed pitch" state is
-  internal and not exposed in any dump column. Permanent 1/220 (99.5%
-  match) limitation; count-non-zero rule stays. Full investigation logged
-  in DATA_NOTES.md.
+  weighted average, compare to IE. **Phase 4a deliverable #6.**
+
+- [ ] **hit_loc semantic decoding** — Pull/Cent/Oppo% jumped to 38-56% in D39
+  but the residual gap requires (stadium handedness × pull-tendency × pitch-type).
+  Phase 4a #5 decodes every hit_loc code (0-77 + 87 + 98-105) to a field zone
+  for the IFH% unlock + Phase 4b per-player spray refinement input. **Phase 4a
+  deliverable #5.**
+
+### Closes in Phase 5 (Almanac) — orthogonal to Phase 4 work
+
 - [ ] **Decode `<entity:type#id>` tags** in `trade_history.summary` for richer
   structured parsing (`<Houston Astros:team#12>`, `<Bryan King:player#20728>`).
-  Lower priority now that trade attribution lands without it (99.6%
-  participant coverage from structured columns alone). Useful for
-  surfacing 3-team trade narrative, draft-pick / cash / IAFA flows, and
-  PR copy generation.
+  99.6% trade-participant coverage already lands via structured columns. The
+  tag decode unlocks 3-team trade narrative, draft-pick / cash / IAFA flows,
+  and PR copy generation — natural fit alongside the Almanac trade-history
+  pages in Phase 5.
+
+### Marked as permanent limitations (see DATA_NOTES.md)
+
+- [x] **`leader.category` codes 44 + 49** — 11/13 resolved 2026-05-05 (coverage
+  58/60 = 97%). Codes 44 (pitching rate ~8-10) and 49 (pitching rate ~47-70)
+  remain unidentified after exhaustive candidate ruling-out. **Permanent
+  limitation** — accepting 97% category coverage.
+- [x] **OOTP "developed pitch" state** — Shea Sprague PIT mismatch confirmed
+  2026-05-05 as structurally inaccessible. Rating thresholds, position/role,
+  age/experience, rating-talent gaps, evolution patterns, and other CSVs all
+  ruled out. **Permanent 1/220 (99.5%) limitation.**
+- [x] **F-tier pitch-tracking columns** — 36 columns across `batting_superstats_2`
+  + `pitching_superstats_2` (WH%, CH%, Z%, CL%, OS%, ZS%, SW%, OC%, ZC%, CTC%,
+  FF%, BR%, OFF%, RV-FB, RV-BR, RV-OFF, RV) require per-pitch zone/type data
+  that OOTP doesn't expose in any dump. **Permanent limitation — F-tier in
+  DECISIONS.md D8.**
+
+### Deferred / out-of-scope
+
 - [ ] **Personality "Type" archetype** (Captain/Selfish/Humble/Sparkplug/etc.) —
-  derived from 5 traits + scouting accuracy; out of scope for v1.
+  derived from 5 traits + scouting accuracy; out of scope for v1. Revisit if
+  Phase 5 / Almanac surfaces a UX need.
 
 ## Analysis layer
 

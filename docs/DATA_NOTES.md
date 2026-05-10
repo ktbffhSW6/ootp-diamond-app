@@ -2137,3 +2137,53 @@ The codebase was tested entirely against ONE save (Sox / Building the Green Mons
 4. **Any new feature that depends on the active save's specific data shape should be tested against both saves before shipping.** Document in the PR description: "verified on Sox + Padres warehouses."
 
 The patterns above generalize: **any single-input test suite hides assumptions until a second input arrives**. The fix is to maintain at least two test corpora as part of the project's quality bar, not as a debug exercise after a regression.
+
+## Permanent limitations (consolidated 2026-05-17 evening, D40)
+
+Items with **no path to close** — exhausted investigation, no surface in any dump column. These are documented here once and stop being tracked in BACKLOG.md's `Audit phase — carry-forward`. Future sessions should not re-investigate without new evidence.
+
+### `leader.category` codes 44 + 49 (2026-05-05)
+
+Coverage: 58 of 60 league-leader category codes mapped (97%). Remaining:
+- **Code 44** — pitching rate stat, observed range ~8-10
+- **Code 49** — pitching rate stat, observed range ~47-70
+
+Candidates ruled out: K%, BB%, OPS, WHIP, FIP, ERA, RA, BABIP-allowed, GB%, FB%, K/9, BB/9, HR/9, K/BB, all standard rate variants. Codes appear sparse in the data and don't cleanly align with any computed Diamond metric. Likely OOTP-internal rate categories with no public formula.
+
+**Decision**: accept 97% category coverage. The unidentified categories are not surfaced in any UI; their absence doesn't affect any display. If a future OOTP patch adds documentation, revisit.
+
+### OOTP "developed pitch" state — Shea Sprague PIT mismatch (2026-05-05)
+
+Pitcher Shea Sprague's IE `PIT` (number of distinct pitches in arsenal) is 4; Diamond's count-non-zero across rating columns gives 5. Exhaustive investigation ruled out:
+- Rating thresholds (>=20, >=30, >=40)
+- Position / role filters
+- Age / experience filters
+- Rating-talent gap thresholds
+- Talent column inheritance / evolution patterns
+- Other CSVs (`players_pitches`, `players_pitching`, `players_individual_pitches`)
+
+OOTP's "developed pitch" state is internal — a pitch can have non-zero rating but not be marked as "developed" in OOTP's player object. No public column exposes this flag.
+
+**Decision**: permanent 1/220 = 99.5% match on the PIT column. Count-non-zero stays as the best-available proxy.
+
+### F-tier pitch-tracking columns (36 cols total, formalized D8)
+
+Across `batting_superstats_2` (17 cols) + `pitching_superstats_2` (5 cols) + related tables:
+- `WH%` (whiff %), `CH%` (chase %), `Z%` (zone %)
+- `CL%` (close %), `OS%` (out-of-zone swing), `ZS%` (zone swing)
+- `SW%` (swing %), `OC%` (out-of-zone contact), `ZC%` (zone contact)
+- `CTC%` (contact %), `FF%` (foul ball %), `BR%` (barrel ratio variant)
+- `OFF%` (offspeed %)
+- `RV-FB` / `RV-BR` / `RV-OFF` / `RV` (run values)
+
+Plus pitching analogs `SW` (swings), `WH` (whiffs).
+
+All 36 columns require per-pitch zone + type tracking which OOTP **does not write to any dump**. The per-PA `players_at_bat_batting_stats.csv` records `result + hit_loc + hit_xy + exit_velo + launch_angle + sprint_speed` — no pitch-level zone or pitch-type fields. The per-game tables don't have it either.
+
+**Decision**: permanent F-tier per D8 (formalized D40). These will always render as `—` in the recon report and are not surfaced in UI.
+
+### Players_pitching.csv rating columns (zeroed by scouting mode)
+
+`players_pitching.csv` is in the dump but all rating columns are zeroed in scouting mode (the standard save config). D19 confirmed empirically; the table is therefore not in L0. If a save runs without scouting mode (rare), the data would be useful but ingesting on demand is deferred.
+
+**Decision**: file is not in L0. If a future save needs it (scouting mode OFF), revisit. Documented in D19, CLAUDE.md gotchas section.

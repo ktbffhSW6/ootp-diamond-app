@@ -1643,3 +1643,280 @@ The D38 retrospective ("single-instance testing hides assumptions") applies here
 - Modified: `src/diamond/audit/reconcile.py` — spray classification (1D batter-relative), LA bucket recalibration, x-stats + xERA wiring, save-aware report header. Added `f_player_season_xstats_batting/_pitching` to warehouse passthrough aliases.
 - Modified: `src/diamond/schema/l3_advanced.py` — `_F_PA_EVENT_XSTATS_SQL` integer-EV fix + `game_type=0` filter, batting/pitching x-stats builders use IE-style denominators + empirical scalers (×1.22 xBA, ×1.09 xSLG), Statcast cohort builders gain `WHERE game_type=0`.
 - Verified: Perez (28026), Merrill (52256), Cabrera (1618) — all within recon tolerance on x-stats; Cabrera xERA 3.96 vs IE 3.73 (Δ 0.23, within 0.40 tolerance).
+
+
+## D40 — Phase 4 commitment: Audit Closure + Warehouse Maximization (then Almanac, Multi-save, AI-as-analyst, Distribution)
+
+**Date**: 2026-05-17 (late evening)
+**Status**: Committed.
+**Context**: D39 closed the Statcast reconciliation gaps to 95% (Padres 2028 corpus). User pushed on three orthogonal architectural questions in sequence: (1) "how do we get the numbers tighter, and are there dump fields we missed?", (2) "are we ingesting enough granular data for time-series analysis like 'last 12 days Merrill'?", (3) "should we consider storing more snapshots to maximize richness/accuracy/flexibility?", and (4) "are we really done with the audit — there were research items still open." The four questions landed at the same root: **we under-applied the snapshot pattern, never built a game-grain fact, never used the authoritative dump fields OOTP writes for derived stats, and prematurely declared Phase 1 closed while a dozen research items remained**. D40 commits to a structured close-out + maximization pass before continuing to the Almanac.
+
+### Decision
+
+Phase 4 is split into **4a (Audit Closure)** and **4b (Maximize the Warehouse)**. Phases 5–8 are sketched concretely so the summer-of-saves arc is visible end-to-end.
+
+```
+Phase 1 — Audit (initial pass)            ✓ 2026-05-04 (milestone close, residual research carried fwd)
+Phase 2 — Warehouse + analytics           ✓ 2026-05-06
+Phase 3 — UI implementation               ✓ ~85% shipped, residuals fold into 4b UI work
+─────────────────────────────────────────
+Phase 4a — Audit closure                  ← next, ~2-3 dev-days
+Phase 4b — Maximize the warehouse         ← then, ~5-6 dev-days
+Phase 5  — The Baseball Almanac           ← ~10-14 dev-days
+Phase 6  — Multi-save scaffolding         ← ~3-5 dev-days
+Phase 7  — AI as analytical layer         ← ~3-5 dev-days
+Phase 8  — Polish + distribution          ← deferred post-summer
+```
+
+**Why not gut-and-rebuild**: User raised the question explicitly. Analysis: the L0/L1/L2/L3 + L_REF + History layer architecture is sound; bugs we've found (D36/D37/D38/D39) were formula and missing-connection bugs, not structural failures. A rebuild costs 3-5 weeks before the system works again and discards the working reconcile harness, dictionary, and UI surface. An additive pass costs ~3 dev-days for audit closure + ~5-6 dev-days for maximization and unblocks every later phase. **The foundation is good; we missed connections to existing data, not the architecture itself.**
+
+### The maximization framework — richness × accuracy × flexibility
+
+Three optimization axes, each maximized by specific Phase 4 deliverables:
+
+**Richness** — how much information we capture:
+- Per-game player fact tables (`f_player_game_*`) — already-ingested L0 data, never materialized as a fact layer
+- Per-dump snapshots of derived stats (`f_*_history` tables) — current architecture collapses time dimension on L3 (only the latest dump is queryable)
+- Per-dump leaderboard snapshots — "who was leading on June 1" is impossible today
+- Authoritative dump fields surfaced — `l0_team_*_stats.{woba,fip,babip,whip,gbfbp,kbb}`, `players_value`, `players_league_leader`, `players_individual_batting_stats`, `players_salary_history` — ingested but unused
+- L0 inventory pass formalizes "what we have but don't expose"
+
+**Accuracy** — fidelity to OOTP's truth:
+- Per-ingest invariants watchdog (`_diamond_invariants`) — every monthly ingest self-validates against OOTP-authoritative team/league dump columns
+- Team-page displays read directly from `l0_team_*_stats` instead of player-level aggregation (removes a class of drift entirely)
+- Per-player calibration for the D39 residuals (spray, xSLG tail) — replaces flat scalers with player-rating-driven boundaries
+- MiLB levels 5-8 (Short-Season A / Complex / DSL / AFL) advanced-stats backfill — currently NULL
+- `hit_loc` semantic decoding — unblocks `IFH%`, sharper spray classification
+
+**Flexibility** — query patterns supported:
+- Time-window queries — "last 12 days Merrill", "Cabrera's last 5 starts" — currently impossible (no `date` on `f_pa_event`, no `f_player_game_*`)
+- Trajectory queries — "Cabrera's FIP per dump in 2028" — currently impossible (only latest)
+- As-of queries — "what did the standings look like on July 4" — currently impossible
+- Rolling-window aggregates (last 7 / 15 / 30 days) — materialized for sub-100ms response
+- Era-agnostic comparators (Phase 5 stretch comparator depends on this foundation)
+
+### Phase 4a — Audit Closure (~2-3 dev-days)
+
+Concrete deliverables, each closing a specific open research item from the (lengthy) carry-forward queue:
+
+| # | Deliverable | Effort | Closes |
+|---|---|---|---|
+| 1 | **L0 inventory pass** — automated script enumerates every column in every L0 table + checks references across `src/diamond/{api,schema,advanced,audit}`; outputs `audit_output/l0_column_coverage.md` | 2 hrs | Definitive answer to "what did we miss at the start" |
+| 2 | **Wire authoritative team-stat columns** — `l0_team_batting_stats.{woba,ops,iso,rc,rc27}` + `l0_team_pitching_stats.{fip,whip,babip,era,gbfbp,kbb,ws}` exposed via new L1 views; new L2 facts for `players_value`, `players_league_leader`, `players_individual_batting_stats`, `players_salary_history` | 0.5 day | Unused-authoritative-data class of bugs |
+| 3 | **MiLB levels 5-8 advanced-stats backfill** — investigate `lref_era_stats_minors` coverage for Short-Season A / Complex / DSL / AFL; either close gap or document as permanent limitation | 0.5 day | Pre-2026 minor-league rows rendering "—" everywhere |
+| 4 | **EV-bucket OOTP-canonical calibration** — grid-search Soft%/Avg%/Solid% cutoffs against IE display values across Padres corpus; replace empirical 75/95 with OOTP-canonical values | 0.5 day | DATA_NOTES "OOTP EV cutoffs unknown" |
+| 5 | **`hit_loc` semantic decoding** — map every hit_loc code (0-77 + 87 + 98-105) to a field zone; unlock `IFH%` reconciliation + per-player spray-refinement input | 0.5 day | `IFH%` permanently NULL, sharper-spray blocker |
+| 6 | **Multi-level OPS+/ERA+ formula refinement** — investigate ~5-10pp error on ~12 players who split MLB/AAA in one season; likely level-weighted park factor | 0.5 day | BACKLOG carry-forward item #1 |
+| 7 | **Permanent-limitation writeup** — `DATA_NOTES.md` section consolidating items with no path to close: `leader.category` codes 44+49 (97% coverage post-D5), OOTP "developed pitch" state (Shea Sprague PIT), F-tier pitch-tracking columns (whiff%/zone%/chase%, 36 cols across superstats_2). Stop tracking these as "open" | 0.5 hr | Audit-list hygiene |
+
+**Exit criteria**: BACKLOG.md `Audit phase — carry-forward` section either resolved or explicitly re-classified as "permanent limitation" or "deferred to Phase 5+". Zero ambiguity about what's still open after Phase 4a.
+
+### Phase 4b — Maximize the Warehouse (~5-6 dev-days)
+
+Adds the four snapshot tiers + invariants watchdog + per-player calibration. All save-agnostic by construction (every builder reads `<save>/diamond/diamond.duckdb`, no save_name / team_id hardcoded).
+
+**Tier A — Game-grain fact tables (the time-series foundation)** *(~0.5 day)*
+
+```
+f_player_game_batting     PK = (player_id, year, game_id)
+f_player_game_pitching    PK = (player_id, year, game_id)
+f_player_game_fielding    PK = (player_id, year, game_id, position)
+```
+
+Built from existing `l0_players_game_batting` + `l0_players_game_pitching_stats` + `l0_players_career_fielding_stats` JOINed to `games_event` to denormalize `date` directly into each row. DuckDB sort key on `(player_id, date)`. Unblocks:
+- "Last 12 days Merrill" — `WHERE player_id=52256 AND date BETWEEN MAX(date)-12 AND MAX(date)`
+- "Cabrera's last 5 starts" — `ORDER BY date DESC LIMIT 5`
+- Calendar heatmaps, park-trip splits, streak engine inputs
+- Phase 5 stretch comparator (Mantle vs Merrill flagship)
+
+**D40 invariants watchdog (`_diamond_invariants`)** *(~1 day)*
+
+New L3 builder writes drift report after every `diamond ingest`:
+
+```sql
+CREATE TABLE _diamond_invariants (
+    dump_date     DATE,
+    scope_type    VARCHAR,    -- 'team' | 'league' | 'player'
+    scope_id      BIGINT,
+    year          INT,
+    level_id      INT,
+    metric        VARCHAR,    -- 'woba' | 'fip' | 'babip' | 'pa_count' | ...
+    dump_value    DOUBLE,     -- OOTP's authoritative value
+    derived_value DOUBLE,     -- Diamond's derivation
+    delta         DOUBLE,
+    tolerance     DOUBLE,
+    status        VARCHAR     -- 'green' | 'amber' | 'red'
+);
+```
+
+Initial 10 invariants (high leverage, O(seconds) compute):
+- Team wOBA, OPS, ISO, AVG, OBP, SLG via `l0_team_batting_stats`
+- Team FIP, ERA, WHIP, BABIP via `l0_team_pitching_stats`
+- League wOBA via `l0_league_history_batting_stats`
+- Event-count consistency: `f_pa_event` PA/K/HR/AB counts must match `career_bat` aggregates
+
+Surfaces:
+- CLI: end-of-ingest Rich-rendered summary table (green/amber/red)
+- API: `GET /api/admin/invariants` returns latest report
+- UI: cockpit header drift status pill — green ✓ / amber ⚠ / red ✗
+- History: every ingest appends rows so drift trends are visible over time
+
+**Tier B — Per-dump derived-stat history snapshots** *(~1 day)*
+
+```
+f_player_season_advanced_batting_history     PK = (player_id, year, league_id, level_id, dump_date)
+f_player_season_advanced_pitching_history
+f_player_season_statcast_batting_history
+f_player_season_statcast_pitching_history
+f_player_season_xstats_batting_history
+f_player_season_xstats_pitching_history
+```
+
+Each ingest writes a new row per `(player, year, dump_date)` with all derived stats. Current non-history tables become `_current` views filtered to `MAX(dump_date)`. Slowly-changing-dimension Type 2 applied to the derived layer.
+
+Unblocks:
+- Trajectory queries ("Cabrera's FIP per dump in 2028")
+- Spotlight-card sparklines become real-derived-stat (we've been faking with raw)
+- Engine-patch detection (visible discontinuities in snapshot history)
+- Reconciliation history ("why did Merrill's wOBA shift between dumps?")
+
+**Tier C — Per-dump leaderboard snapshots** *(~0.5 day)*
+
+```
+f_record_player_history     PK = (scope, discipline, category, source, dump_date, rank_in_source)
+f_award_race_history        PK = (year, league_id, award_id, dump_date, rank)
+```
+
+Enables "who was leading the NL in HR on June 1" — impossible today since `f_record_player` is regenerated from the latest state only.
+
+**Tier D — Rolling-window views** *(~0.5 day)*
+
+Materialized views built on Tier A for fast UI rendering:
+- `v_player_last_7_batting / _15 / _30`
+- `v_player_last_5_starts_pitching / _10 / _15`
+- `v_player_calendar_heatmap` (per-game stat-line)
+
+**Per-player calibration improvements** *(~0.5 day)*
+
+Replaces D39 flat constants with player-rating-aware functions:
+- Spray classification: `players_ratings.batting_pull` + `lref_pt_ballparks.{lh_max,rh_max}` → per-player Pull/Cent/Oppo boundary instead of flat hit_xy<114. Target: spray match 40% → 70-80%.
+- xBA piecewise scaler: replace flat ×1.22 with EV-bucket-conditional scalers calibrated against Padres corpus. Target: xBA match 89% → 95%+.
+
+**UI rollout** *(~1 day)*
+
+- Cockpit header drift pill (consumes `_diamond_invariants`)
+- Player page "Last 7 / 15 / 30 days" toggle on stats tables (consumes Tier D)
+- Spotlight cards switch to real Tier B sparklines
+- Admin `/settings/invariants` page surfaces full per-ingest drift report
+
+**Exit criteria for Phase 4b**:
+- Padres recon at 98%+ on Padres corpus
+- "Last 12 days Merrill" returns in <100ms
+- Every monthly ingest emits a self-validation report
+- Every screen has a path to a time-windowed view
+
+### Phase 5 — The Baseball Almanac (~10-14 dev-days)
+
+Save-agnostic complete-history layer per the 17-item plan committed during the pre-D40 design pass. Architectural contract:
+- **Pre-2026 = static reference** (lref_* from OOTP install + Lahman + Retrosheet + Baseball Savant), frozen with the save
+- **2026+ = pure OOTP sim** from monthly dumps
+- **12/31/2025 boundary machine-enforced** via year filters on unified views + smoke-test invariant
+- **Save-agnostic by construction**: any new save gets the same baseline depth on first ingest
+
+Sequence (`f_player_game_*` from Phase 4b is consumed throughout):
+1. HoF Lahman drop — `lref_master.lahmanID` swap (~2 hrs)
+2. `lref_player_*` ingest (Lahman batting/pitching/fielding/hof/awards) (~1 day)
+3. `lref_statcast_*` ingest (Baseball Savant 2015-2025, real-MPH scale labeled) (~1 day)
+4. Unified player resolver `/api/players/{key}` (~1 day)
+5. Era-agnostic views (`v_player_season_*`, `v_player_game_*`, `v_game_log`) (~1 day)
+6. `lref_game_log` (Retrosheet GL files, every MLB game 1871+) (~1 day)
+7. `f_game_log` from OOTP — already built in Phase 4b, JOIN only (~free)
+8. First Almanac page `/history/year/[YYYY]` MVP (~1-2 days)
+9. `lref_game_player_*` (Retrosheet events via Chadwick tools) (~2-3 days)
+10. **Stretch comparator (Mantle vs Merrill flagship)** — built on Tier A (~2-3 days)
+11. Streak engine / calendar heatmap / park-trip splits (~1 day each)
+
+Cross-cutting: source-attribution tooltips + Statcast scale labels (real-MPH vs OOTP-sim ~5mph low).
+
+### Phase 6 — Multi-save scaffolding (~3-5 dev-days)
+
+Premise: multi-save isn't just a setup wizard — it's a workflow. Summer of many saves needs ergonomics.
+
+| Deliverable | Effort |
+|---|---|
+| Save-comparison views ("Padres-me at year 4 vs Sox-me at year 4") | 1 day |
+| Cross-save player tracker (same real player, different sim universes) | 0.5 day |
+| Reconciliation-as-CI across all saves with control data | 0.5 day |
+| Save archive/restore + diff tooling | 1 day |
+| Multi-save overlays on cockpit | 1 day |
+
+Exit criteria: 5+ concurrent saves runnable through summer with no manual switching pain.
+
+### Phase 7 — AI as analytical layer (~3-5 dev-days)
+
+Premise: AI sidebar (D33-D35) exists and is general. Phase 4-5 give it a much richer toolkit. AI becomes the time-series narrator and analytical companion.
+
+| Deliverable | Effort |
+|---|---|
+| Trajectory tools (`get_player_trend`, `get_hot_cold`, `get_streak`) | 0.5 day |
+| Calendar / window-aware natural language ("Cabrera last month vs season") | 0.5 day |
+| Almanac comparator tool (Mantle/Merrill via NL prompt) | 1 day |
+| Trade recommendation engine (uses pressure board + leverage stats) | 1-2 days |
+| Hot/cold streak narrative generation | 0.5 day |
+
+### Phase 8 — Polish + distribution (deferred decision)
+
+Gated on "ready to share Diamond beyond solo use" — not committing scope until post-summer.
+Possible: code signing + MSI installer (~1 day), auto-update (~1 day), Mac/Linux ports (~2-3 days each), web-share path per D16 (its own decision).
+
+### Dependency chain
+
+```
+Phase 4a ─→ Phase 4b ─┬─→ Phase 5  (Almanac needs game-grain facts + drift surface)
+                      ├─→ Phase 6  (multi-save needs invariants per save)
+                      └─→ Phase 7  (AI narratives need time-series + snapshots)
+
+Phase 5 ─┬─→ Phase 7  (Almanac comparator needs era-agnostic views)
+         └─→ Phase 6  (cross-save comparison meaningful only with rich data)
+
+Phase 8 — independent, gated on "ready to share"
+```
+
+**Phase 4 is the bottleneck. Every later phase benefits from it.**
+
+### Storage projection (per save)
+
+Phase 4b adds substantial snapshot history. Projected per-save totals after 100 dumps (~8 years sim):
+- Tier A (game-grain): ~5-10M rows × 3 tables ≈ 1-2 GB
+- Tier B (derived-stat history): ~5M rows × 6 tables ≈ 1-1.5 GB
+- Tier C (leaderboard history): negligible (<50MB)
+- Tier D (rollup views): negligible (computed)
+- Plus existing L0/L1/L2/L3/L_REF: ~2-3 GB
+- **Total per save: ~4-7 GB**
+
+For 5-10 concurrent summer saves: 20-70 GB. Modern SSD, no concern.
+
+### Non-goals (explicit) — NOT in Phase 4-7 scope
+
+- Re-ingesting any save from scratch (no L0 rewrites)
+- Migrating off DuckDB (it's the right engine — columnar, vectorized, no daemon)
+- Replacing the L0/L1/L2/L3/L_REF layer model
+- Adding a database server / daemon
+- Authentication or multi-user
+- Cloud hosting / sync
+
+### Cross-cutting commitments (every phase)
+
+- **D15 dictionary stays the single source of truth** for stat labels. Every new column in Phase 4-5 = a dictionary entry.
+- **Reconcile harness runs on every code change**, ideally with all saves' control corpora (multi-save CI lands in Phase 6).
+- **Save-agnostic by construction** — every Phase 4+5 builder reads `<save>/diamond/diamond.duckdb`, never hardcodes save / team / league IDs.
+- **Theme system + IA stay stable** — no top-level nav changes in Phases 4-7.
+
+### Wiring (when ready to execute)
+
+- Phase 4a deliverable 1 — new script `scripts/inventory_l0_coverage.py`
+- Phase 4a deliverable 2 — new L1 views in `src/diamond/schema/l1_event.py`, possibly new module
+- Phase 4b Tier A — new builder in `src/diamond/schema/l2.py` (or split to `l2_game.py`)
+- Phase 4b Tier B — new builders in `src/diamond/schema/l3_history.py` (new module)
+- Phase 4b Tier C — additions to `src/diamond/schema/l3.py` (records / awards modules)
+- D40 watchdog — new module `src/diamond/schema/invariants.py` + new API route + new UI components
