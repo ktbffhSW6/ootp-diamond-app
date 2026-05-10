@@ -38,8 +38,23 @@ saved keys go missing."""
 UseLevel = Literal["off", "on_demand", "smart", "always_on"]
 SUPPORTED_PROVIDERS: tuple[str, ...] = ("anthropic", "openai")
 DEFAULT_MODELS: dict[str, str] = {
-    "anthropic": "claude-3-5-haiku-20241022",
+    # Use the rolling alias rather than a pinned snapshot so we don't
+    # bit-rot when Anthropic retires older snapshots (the original
+    # D14 default `claude-3-5-haiku-20241022` 404'd starting 2026-05).
+    # Users can pin a specific snapshot in /settings/ai if they want
+    # determinism.
+    "anthropic": "claude-haiku-4-5",
     "openai": "gpt-4o-mini",
+}
+
+# Models we know are retired or otherwise broken — auto-migrated to
+# their replacement at settings-load time so existing user configs
+# don't keep 404'ing.
+RETIRED_MODELS: dict[str, str] = {
+    # 3.5 Haiku snapshot retired by Anthropic 2026-05; rolling
+    # alias lives on as the canonical Haiku 4.5.
+    "claude-3-5-haiku-20241022": "claude-haiku-4-5",
+    "claude-3-5-haiku-latest": "claude-haiku-4-5",
 }
 
 
@@ -100,6 +115,21 @@ def load_settings() -> AISettings:
     if provider not in SUPPORTED_PROVIDERS:
         provider = "anthropic"
     model = data.get("model") or DEFAULT_MODELS.get(provider, "")
+    # Auto-migrate retired models in-place. We persist the new value
+    # so subsequent loads short-circuit. Failures are silent — worst
+    # case the API surfaces the upstream 404 again next call.
+    if model in RETIRED_MODELS:
+        replacement = RETIRED_MODELS[model]
+        model = replacement
+        try:
+            migrated = AISettings(
+                provider=provider,
+                model=replacement,
+                use_level=data.get("use_level", "on_demand"),
+            )
+            save_settings(migrated)
+        except Exception:
+            pass
     use_level = data.get("use_level", "on_demand")
     if use_level not in ("off", "on_demand", "smart", "always_on"):
         use_level = "on_demand"
