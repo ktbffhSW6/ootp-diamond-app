@@ -45,6 +45,11 @@ const MODE_LABELS: Record<Mode, { label: string; hint: string }> = {
   draft: { label: "Draft", hint: "Class review" },
 };
 
+// localStorage key for the verbose toggle. Persists across sessions
+// so a user who turns on tool-call visibility for debugging keeps
+// it on between launches.
+const VERBOSE_KEY = "diamond.ai.verbose";
+
 export function AISidebar() {
   const [open, setOpen] = useState(false);
   const [thread, setThread] = useState<ChatTurn[]>([]);
@@ -52,8 +57,30 @@ export function AISidebar() {
   const [mode, setMode] = useState<Mode>("chat");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [verbose, setVerbose] = useState(false);
   const pathname = usePathname();
   const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  // Load verbose pref from localStorage on mount.
+  useEffect(() => {
+    try {
+      setVerbose(localStorage.getItem(VERBOSE_KEY) === "1");
+    } catch {
+      // localStorage can throw in some embed contexts; ignore.
+    }
+  }, []);
+
+  const toggleVerbose = () => {
+    setVerbose((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem(VERBOSE_KEY, next ? "1" : "0");
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
 
   // Auto-scroll to bottom when new turns arrive.
   useEffect(() => {
@@ -141,6 +168,22 @@ export function AISidebar() {
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={toggleVerbose}
+              className={`rounded border px-2 py-1 text-xs transition ${
+                verbose
+                  ? "border-accent bg-accent/10 text-accent"
+                  : "border-border text-content-secondary hover:bg-surface-card"
+              }`}
+              title={
+                verbose
+                  ? "Hide tool calls (default)"
+                  : "Show tool calls (debug)"
+              }
+            >
+              {verbose ? "Tools ✓" : "Tools"}
+            </button>
+            <button
+              type="button"
               onClick={reset}
               className="rounded border border-border px-2 py-1 text-xs text-content-secondary hover:bg-surface-card"
               title="New conversation"
@@ -164,7 +207,7 @@ export function AISidebar() {
             <EmptyState onPrompt={(t, m) => send(t, m)} />
           )}
           {thread.map((turn, i) => (
-            <Turn key={i} turn={turn} />
+            <Turn key={i} turn={turn} verbose={verbose} />
           ))}
           {loading && (
             <div className="my-2 flex items-center gap-2 px-2 py-2 text-xs text-content-muted">
@@ -312,8 +355,9 @@ function pickSuggestions(
 // Turn renderer
 // ─────────────────────────────────────────────────────────────────────
 
-function Turn({ turn }: { turn: ChatTurn }) {
+function Turn({ turn, verbose }: { turn: ChatTurn; verbose: boolean }) {
   const isUser = turn.role === "user";
+
   // User turns can be either a free-form text message OR tool_result
   // blocks (the route's tool loop emits user-side tool_result turns).
   // The latter renders compactly without the "user message" pill.
@@ -322,14 +366,32 @@ function Turn({ turn }: { turn: ChatTurn }) {
     turn.content.every((b) => b.type === "tool_result");
 
   if (onlyToolResults) {
+    // Even when verbose is off, show tool_result blocks that produced
+    // a user-facing artifact (Metabase card link). Errors also stay
+    // visible so the user knows when something failed silently.
+    const visibleResults = turn.content.filter(
+      (b) => verbose || isMetabaseCardResult(b) || b.is_error,
+    );
+    if (visibleResults.length === 0) return null;
     return (
       <div className="my-1.5 space-y-1.5">
-        {turn.content.map((b, i) => (
+        {visibleResults.map((b, i) => (
           <ToolResultBlock key={i} block={b} />
         ))}
       </div>
     );
   }
+
+  // Filter assistant-side blocks: text always shown, tool_use only in
+  // verbose mode. If everything got filtered, hide the turn entirely.
+  const visibleBlocks = turn.content.filter((b) => {
+    if (b.type === "text") return true;
+    if (b.type === "tool_use") return verbose;
+    if (b.type === "tool_result")
+      return verbose || isMetabaseCardResult(b) || b.is_error;
+    return false;
+  });
+  if (visibleBlocks.length === 0) return null;
 
   return (
     <div
@@ -342,7 +404,7 @@ function Turn({ turn }: { turn: ChatTurn }) {
       >
         {isUser ? "You" : "Diamond"}
       </div>
-      {turn.content.map((b, i) => {
+      {visibleBlocks.map((b, i) => {
         if (b.type === "text") return <TextBlock key={i} block={b} />;
         if (b.type === "tool_use") return <ToolUseBlock key={i} block={b} />;
         if (b.type === "tool_result")
@@ -350,6 +412,18 @@ function Turn({ turn }: { turn: ChatTurn }) {
         return null;
       })}
     </div>
+  );
+}
+
+function isMetabaseCardResult(b: ChatContentBlock): boolean {
+  // Metabase card results are useful in non-verbose mode — the green
+  // "Open in Workshop" link is the actionable artifact of the chat.
+  const c = b.content;
+  return (
+    !b.is_error &&
+    !!c &&
+    typeof c === "object" &&
+    "card_url" in (c as Record<string, unknown>)
   );
 }
 

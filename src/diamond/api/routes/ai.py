@@ -67,6 +67,7 @@ def _settings_response(s: AISettings) -> AISettingsResponse:
         provider=s.provider,
         model=s.model,
         use_level=s.use_level,
+        persona=s.persona,
         providers=[
             AIProviderInfo(name=p, has_key=has_api_key(p))
             for p in SUPPORTED_PROVIDERS
@@ -114,9 +115,15 @@ def update_ai_settings(body: AISettingsUpdate) -> AISettingsResponse:
         new_model = body.model or current.model or DEFAULT_MODELS[target_provider]
 
     new_use_level = body.use_level or current.use_level
+    # persona: None = leave alone, "" = clear, str = set. Differs from
+    # the rest because empty string is a valid clear command.
+    new_persona = body.persona if body.persona is not None else current.persona
 
     new = AISettings(
-        provider=target_provider, model=new_model, use_level=new_use_level
+        provider=target_provider,
+        model=new_model,
+        use_level=new_use_level,
+        persona=new_persona,
     )
     try:
         save_settings(new)
@@ -346,7 +353,11 @@ _MODE_PROMPTS: dict[str, str] = {
 }
 
 
-def _build_system_prompt(mode: str, page_context: dict | None) -> str:
+def _build_system_prompt(
+    mode: str,
+    page_context: dict | None,
+    persona: str = "",
+) -> str:
     base = (
         "You are Diamond's analytical co-pilot — a sabermetrics-fluent "
         "assistant for an OOTP 27 dynasty. The user is the GM of the "
@@ -379,6 +390,14 @@ def _build_system_prompt(mode: str, page_context: dict | None) -> str:
     )
     if mode in _MODE_PROMPTS:
         base = base + "\n\nMode-specific guidance: " + _MODE_PROMPTS[mode]
+
+    persona_clean = (persona or "").strip()
+    if persona_clean:
+        base += (
+            "\n\nUser-set personality / style preferences (these "
+            "override defaults where they conflict):\n"
+            + persona_clean
+        )
 
     if page_context:
         path = page_context.get("pathname")
@@ -470,7 +489,8 @@ def chat(
     frontend appends these to its existing thread.
     """
     try:
-        client = get_active_client(load_settings())
+        settings = load_settings()
+        client = get_active_client(settings)
     except AIConfigError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -481,6 +501,7 @@ def chat(
     system = _build_system_prompt(
         body.mode,
         body.page_context.model_dump() if body.page_context else None,
+        persona=settings.persona,
     )
 
     tools_native = [

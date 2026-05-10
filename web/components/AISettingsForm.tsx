@@ -16,8 +16,9 @@ import type { AISettingsResponse } from "@/lib/types/api";
 
 const MODELS_BY_PROVIDER: Record<string, string[]> = {
   anthropic: [
-    "claude-3-5-haiku-20241022",
-    "claude-3-5-sonnet-20241022",
+    // Rolling aliases — survive snapshot retirements (D33 fix).
+    "claude-haiku-4-5",
+    "claude-sonnet-4-5",
     "claude-opus-4-5",
   ],
   openai: ["gpt-4o-mini", "gpt-4o", "gpt-4.1"],
@@ -47,11 +48,35 @@ interface Props {
   initial: AISettingsResponse;
 }
 
+const PERSONA_PRESETS: { label: string; text: string }[] = [
+  {
+    label: "Default",
+    text: "",
+  },
+  {
+    label: "Terse analyst",
+    text: "Be terse. Lead with the answer. Use bullet points. Skip preamble like \"I'll look up...\". One paragraph max for explanations.",
+  },
+  {
+    label: "Hardboiled scout",
+    text: "Talk like a 1970s baseball scout — gruff, direct, anecdotal. Compare players to old-timers when it fits. Don't sugarcoat. Numbers still matter, but lead with feel.",
+  },
+  {
+    label: "Stats nerd",
+    text: "Lean heavily on advanced stats. Cite specific numbers (xwOBA, FIP, RE24, leverage index) and explain what they mean. Show the math when it matters.",
+  },
+  {
+    label: "GM coach",
+    text: "Frame everything as actionable GM decisions. End every analysis with \"so here's what I'd do.\" Talk roi, opportunity cost, and contract leverage. No fluff.",
+  },
+];
+
 export function AISettingsForm({ initial }: Props) {
   const router = useRouter();
   const [provider, setProvider] = useState(initial.provider);
   const [model, setModel] = useState(initial.model);
   const [useLevel, setUseLevel] = useState(initial.use_level);
+  const [persona, setPersona] = useState(initial.persona ?? "");
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [providers, setProviders] = useState(initial.providers);
@@ -69,6 +94,7 @@ export function AISettingsForm({ initial }: Props) {
       setProvider(next.provider);
       setModel(next.model);
       setUseLevel(next.use_level);
+      setPersona(next.persona ?? "");
       setMessage({ kind: "ok", text: "Saved." });
     } catch (e) {
       setMessage({
@@ -83,6 +109,9 @@ export function AISettingsForm({ initial }: Props) {
 
   function onSavePrefs() {
     save({ provider, model, use_level: useLevel });
+  }
+  function onSavePersona() {
+    save({ persona });
   }
   function onSaveKey() {
     if (!apiKey) return;
@@ -173,6 +202,64 @@ export function AISettingsForm({ initial }: Props) {
         <p className="text-xs text-content-muted">
           {USE_LEVELS.find((u) => u.value === useLevel)?.blurb}
         </p>
+      </section>
+
+      {/* Persona / personality */}
+      <section className="space-y-4 rounded-lg border border-border bg-surface-card p-5">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-content-secondary">
+          Personality
+        </h2>
+        <p className="text-xs text-content-muted">
+          Free-form instructions appended to the AI sidebar&apos;s
+          system prompt on every chat. Use it to set tone, format
+          preferences, or domain quirks. Empty = default analyst
+          voice.
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {PERSONA_PRESETS.map((p) => (
+            <button
+              key={p.label}
+              type="button"
+              onClick={() => setPersona(p.text)}
+              className="rounded border border-border bg-surface-page px-2 py-1 text-xs text-content-secondary transition hover:border-accent hover:text-content-primary"
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <textarea
+          value={persona}
+          onChange={(e) => setPersona(e.target.value)}
+          rows={6}
+          placeholder="e.g. Be terse. Lead with the answer. Use bullet points. Cite specific numbers."
+          className="w-full resize-y rounded border border-border bg-surface-page px-3 py-2 font-mono text-xs text-content-primary placeholder:text-content-muted focus:border-accent focus:outline-none"
+        />
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onSavePersona}
+            disabled={saving}
+            className="rounded bg-accent px-4 py-1.5 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
+          >
+            Save personality
+          </button>
+          {persona && (
+            <button
+              type="button"
+              onClick={() => {
+                setPersona("");
+                save({ persona: "" });
+              }}
+              disabled={saving}
+              className="rounded border border-rose-500/50 px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
+            >
+              Clear
+            </button>
+          )}
+          <span className="text-xs text-content-muted">
+            {persona.length} chars
+          </span>
+        </div>
       </section>
 
       {/* API key */}

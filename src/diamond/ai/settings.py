@@ -68,15 +68,23 @@ class AISettings:
     """User-facing AI configuration.
 
     `provider` selects which adapter handles requests. `model` is
-    provider-specific (e.g., "claude-3-5-haiku-20241022" for
-    Anthropic, "gpt-4o-mini" for OpenAI). `use_level` reserves the
-    D14 four-tier API surface; v1 only acts on "off" (gates all calls)
-    vs anything else (allows on-demand calls).
+    provider-specific (e.g., "claude-haiku-4-5" for Anthropic,
+    "gpt-4o-mini" for OpenAI). `use_level` reserves the D14
+    four-tier API surface; v1 only acts on "off" (gates all calls) vs
+    anything else (allows on-demand calls).
+
+    `persona` (D33 follow-up) is a free-form personality / style
+    instruction the user can set in the Settings page. If non-empty,
+    it gets appended to the chat system prompt verbatim. Lets users
+    iterate on tone without code changes — anything from "be terse,
+    bullet-list everything" to "respond as a hardboiled scout from
+    the 70s".
     """
 
     provider: str = "anthropic"
     model: str = DEFAULT_MODELS["anthropic"]
     use_level: UseLevel = "on_demand"
+    persona: str = ""
 
     def to_dict(self) -> dict[str, str]:
         """JSON-friendly dict for the API surface (no secrets)."""
@@ -133,7 +141,13 @@ def load_settings() -> AISettings:
     use_level = data.get("use_level", "on_demand")
     if use_level not in ("off", "on_demand", "smart", "always_on"):
         use_level = "on_demand"
-    return AISettings(provider=provider, model=model, use_level=use_level)
+    persona = str(data.get("persona", "") or "")
+    return AISettings(
+        provider=provider,
+        model=model,
+        use_level=use_level,
+        persona=persona,
+    )
 
 
 def save_settings(settings: AISettings) -> None:
@@ -150,14 +164,31 @@ def save_settings(settings: AISettings) -> None:
     if settings.use_level not in ("off", "on_demand", "smart", "always_on"):
         raise ValueError(f"Unsupported use_level '{settings.use_level}'")
 
+    # TOML basic-string escapes: backslash, double-quote, and the
+    # control chars (newline, carriage return, tab). Persona is free-
+    # form and likely multi-line, so we escape newlines as \n rather
+    # than switching to TOML multi-line strings — keeps the file
+    # diff-friendly.
+    persona_escaped = (
+        settings.persona
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+        if settings.persona
+        else ""
+    )
     body = (
-        "# Diamond AI settings (D14). API keys live in the OS keyring,\n"
-        "# not this file. Edit via the Diamond Settings page or write\n"
-        "# directly here — the app reloads on every API call.\n"
+        "# Diamond AI settings (D14 + D33 persona). API keys live in\n"
+        "# the OS keyring, not this file. Edit via the Diamond\n"
+        "# Settings page or write directly here — the app reloads on\n"
+        "# every API call.\n"
         "[ai]\n"
         f'provider = "{settings.provider}"\n'
         f'model = "{settings.model}"\n'
         f'use_level = "{settings.use_level}"\n'
+        f'persona = "{persona_escaped}"\n'
     )
     _settings_path().write_text(body, encoding="utf-8")
 

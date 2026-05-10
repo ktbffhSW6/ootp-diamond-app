@@ -26,12 +26,15 @@ export interface AIProviderInfo {
  *
  * `provider` / `model` / `use_level` mirror the on-disk settings;
  * `providers` lists all supported providers + their key-set state
- * for the picker UI.
+ * for the picker UI. `persona` (D33 follow-up) is the user-set
+ * personality / style instruction appended to the chat system
+ * prompt.
  */
 export interface AISettingsResponse {
   provider: string;
   model: string;
   use_level: "off" | "on_demand" | "smart" | "always_on";
+  persona?: string;
   providers: AIProviderInfo[];
 }
 /**
@@ -40,12 +43,14 @@ export interface AISettingsResponse {
  * Any subset of fields is allowed. `api_key` is write-only — it's
  * stored in the OS keyring under the matching `provider` and never
  * returned. To clear a key, send `api_key=""` and the route deletes
- * the keyring entry.
+ * the keyring entry. `persona` is the chat-system-prompt addendum;
+ * empty string clears it.
  */
 export interface AISettingsUpdate {
   provider?: string | null;
   model?: string | null;
   use_level?: ("off" | "on_demand" | "smart" | "always_on") | null;
+  persona?: string | null;
   /**
    * API key (write-only; stored in OS keyring)
    */
