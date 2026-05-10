@@ -11,6 +11,16 @@ and ops.
 
 ---
 
+> **Embedding note (2026-05-15 update)**: We pivoted from full-iframe
+> embedding to a **launcher** pattern. Metabase OSS sends
+> `X-Frame-Options: DENY` and the "interactive embedding" feature that
+> would allow it is paid Metabase Pro only. The Workshop tab in
+> `/explore` now opens Metabase in a new browser tab — same warehouse,
+> same Pattern A save-switching, just a separate window. This is the
+> same shape as Tableau Desktop / Power BI Desktop integrations
+> against any web app. See "Why launcher, not iframe" in
+> `web/components/MetabaseWorkshop.tsx` for the rationale.
+
 ## Architecture — Pattern A
 
 | Layer | Process | Source of truth |

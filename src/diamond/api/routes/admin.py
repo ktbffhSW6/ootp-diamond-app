@@ -177,6 +177,69 @@ kill_port(8000)
 """
 
 
+@router.get("/admin/metabase-status")
+def metabase_status() -> dict[str, object]:
+    """Liveness + config probe for Metabase. Frontend uses this for
+    the Workshop tab's status check (avoids cross-origin fetch quirks
+    on localhost).
+
+    Returns:
+        {
+          "running": bool,             # is Metabase reachable on the configured URL
+          "configured": bool,          # do we have credentials cached for save-switch sync
+          "active_save_db": str|None,  # what file Metabase Database 1 currently points at
+          "message": str,
+        }
+
+    Best-effort + non-blocking — completes in ≤5s even when Metabase
+    is down or auth fails.
+    """
+    from diamond.api.metabase import (
+        METABASE_URL,
+        METABASE_DATABASE_ID,
+        _get_session,
+        _is_metabase_reachable,
+    )
+    import httpx
+
+    out: dict[str, object] = {
+        "running": False,
+        "configured": False,
+        "active_save_db": None,
+        "message": "",
+    }
+
+    if not _is_metabase_reachable():
+        out["message"] = f"Metabase not running at {METABASE_URL}"
+        return out
+    out["running"] = True
+
+    session = _get_session()
+    if session is None:
+        out["message"] = (
+            "Metabase running but credentials missing or invalid; "
+            "create ~/.diamond/metabase_credentials.toml to enable "
+            "save-aware sync"
+        )
+        return out
+    out["configured"] = True
+
+    try:
+        resp = httpx.get(
+            f"{METABASE_URL}/api/database/{METABASE_DATABASE_ID}",
+            headers={"X-Metabase-Session": session},
+            timeout=5.0,
+        )
+        if resp.status_code == 200:
+            db = resp.json()
+            out["active_save_db"] = db.get("details", {}).get("database_file")
+            out["message"] = f"Metabase synced to '{db.get('name')}'"
+    except httpx.HTTPError as exc:
+        out["message"] = f"Metabase metadata read error: {exc}"
+
+    return out
+
+
 @router.post("/admin/shutdown")
 def shutdown_app() -> dict[str, object]:
     """Kill the Next.js dev server (:3000) and this FastAPI process (:8000).

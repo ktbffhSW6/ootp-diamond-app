@@ -1,18 +1,23 @@
-// MetabaseWorkshop — embedded Metabase iframe.
+// MetabaseWorkshop — launcher card for Metabase (separate window).
 //
-// The user's Metabase instance runs at http://localhost:3000 (Pattern A
-// — single Database #1 follows the active Diamond save). We iframe it
-// directly. The user's existing Metabase login cookie carries through,
-// so they don't auth twice.
+// **Why launcher, not iframe**: Metabase OSS sends `X-Frame-Options:
+// DENY` and `frame-ancestors 'none'`. Allowing iframe embedding from a
+// different origin requires Metabase Pro's "interactive embedding"
+// feature (paid). Diamond's local-first model is incompatible with
+// upgrading to Pro for a single-user OOTP tool.
 //
-// Liveness probe: client-side fetch to /api/health on mount. If
-// Metabase isn't running, we render a cold-start guide instead of the
-// iframe (avoids the broken-iframe state where the embed shows a
-// "can't connect" browser page).
+// The pragmatic path is the same shape as every other BI-sidecar
+// integration (Power BI Desktop, Tableau Desktop alongside any web
+// app): Metabase opens full-screen in its own window. Diamond stays
+// the curated UI, Metabase is the analyst console — same warehouse,
+// two surfaces.
 //
-// Why client component: the iframe URL is fixed but we want a runtime
-// check on Metabase liveness, and we want graceful "not running" UX
-// without round-tripping through FastAPI.
+// This component:
+//   - Probes Metabase liveness via Diamond's FastAPI (same-origin,
+//     no CORS dance).
+//   - On up: shows the launcher (links to Metabase home, sample
+//     spike-built dashboard, recent questions).
+//   - On down: shows the cold-start guide (run metabase.bat /b).
 
 "use client";
 
@@ -24,19 +29,46 @@ import { useEffect, useState } from "react";
 const METABASE_URL =
   process.env.NEXT_PUBLIC_METABASE_URL ?? "http://localhost:3001";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
 type LivenessState = "checking" | "up" | "down";
+
+interface MetabaseStatus {
+  running: boolean;
+  configured: boolean;
+  active_save_db?: string | null;
+  message?: string | null;
+}
 
 export function MetabaseWorkshop() {
   const [state, setState] = useState<LivenessState>("checking");
+  const [status, setStatus] = useState<MetabaseStatus | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     const check = async () => {
       try {
-        const r = await fetch(`${METABASE_URL}/api/health`, {
-          // No-cors mode: we can't read the response body but a successful
-          // fetch (any status) means Metabase responded. If Metabase is
-          // down, the fetch rejects with a TypeError.
+        // Probe via Diamond's FastAPI — same-origin, reliable. The
+        // FastAPI hits Metabase server-side and returns the result.
+        // Falls back to direct probe (no-cors, may be unreliable on
+        // localhost across ports) if Diamond's endpoint isn't there
+        // yet.
+        const r = await fetch(`${API_URL}/api/admin/metabase-status`, {
+          cache: "no-store",
+        });
+        if (cancelled) return;
+        if (r.ok) {
+          const data: MetabaseStatus = await r.json();
+          setStatus(data);
+          setState(data.running ? "up" : "down");
+          return;
+        }
+      } catch {
+        // Diamond's API is also down — fall through to direct probe.
+      }
+      // Last-resort direct probe.
+      try {
+        await fetch(`${METABASE_URL}/api/health`, {
           mode: "no-cors",
           cache: "no-store",
         });
@@ -54,7 +86,7 @@ export function MetabaseWorkshop() {
   if (state === "checking") {
     return (
       <div className="rounded-md border border-border bg-surface-card p-6 text-sm text-content-muted">
-        Probing Metabase at {METABASE_URL}...
+        Checking Metabase status…
       </div>
     );
   }
@@ -63,38 +95,97 @@ export function MetabaseWorkshop() {
     return <ColdStartGuide />;
   }
 
+  return <Launcher status={status} />;
+}
+
+function Launcher({ status }: { status: MetabaseStatus | null }) {
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between text-xs text-content-muted">
-        <span>
-          Embedded Metabase ·{" "}
-          <a
-            href={METABASE_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-link hover:text-link-hover hover:underline"
-          >
-            Open full-screen ↗
-          </a>
-        </span>
-        <span className="font-mono text-[10px]">
-          localhost:3000 · same DuckDB as Diamond · save-aware
-        </span>
+    <div className="space-y-4">
+      {/* Headline launcher */}
+      <a
+        href={METABASE_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="block rounded-lg border border-border bg-surface-card p-6 transition hover:border-accent hover:bg-surface-elevated"
+      >
+        <div className="flex items-baseline justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-content-primary">
+              Open Metabase Workshop ↗
+            </h2>
+            <p className="mt-1 text-sm text-content-secondary">
+              Full BI surface — drag-and-drop chart builder, every chart
+              type, dashboards, save + share. Opens in a new tab.
+            </p>
+          </div>
+          <div className="text-right text-xs text-content-muted">
+            <div className="font-mono">localhost:3001</div>
+            <div>same DuckDB · save-aware</div>
+          </div>
+        </div>
+      </a>
+
+      {/* Quick links to specific places in Metabase */}
+      <div className="grid gap-2 sm:grid-cols-3">
+        <DeepLink
+          href={`${METABASE_URL}/question/new`}
+          title="New question"
+          hint="Empty editor → drag fields"
+        />
+        <DeepLink
+          href={`${METABASE_URL}/dashboard/1`}
+          title="Sample dashboard"
+          hint="2029 MLB Production · 5 cards"
+        />
+        <DeepLink
+          href={`${METABASE_URL}/browse/databases/1`}
+          title="Browse warehouse"
+          hint="All ~220 tables · drill in"
+        />
       </div>
-      {/* Tall iframe — Metabase's UI is dense and benefits from height.
-          85vh leaves a sliver of Diamond chrome visible at the top so
-          you don't lose context. */}
-      <iframe
-        src={`${METABASE_URL}/`}
-        title="Metabase"
-        className="w-full rounded-md border border-border bg-surface-card"
-        style={{ height: "85vh" }}
-        // Allow forms (login), scripts (Metabase's React app), same-origin
-        // for cookie-based auth. No top-navigation so the iframe can't
-        // navigate the parent window away.
-        sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-downloads"
-      />
+
+      {/* Architecture footnote */}
+      <div className="rounded-md border border-border bg-surface-elevated p-3 text-xs text-content-muted">
+        <p>
+          <strong className="text-content-secondary">
+            Why a separate window, not iframe:
+          </strong>{" "}
+          Metabase OSS blocks iframe embedding from other origins
+          (interactive embedding is a paid Pro feature). The launcher
+          pattern is functionally equivalent — same warehouse via
+          Pattern A, same save-switch wiring, just a separate browser
+          tab. Mirrors how Tableau Desktop / Power BI Desktop integrate
+          with web apps.
+        </p>
+        {status?.active_save_db && (
+          <p className="mt-2 font-mono text-[10px] text-content-muted">
+            Active save DB: {status.active_save_db}
+          </p>
+        )}
+      </div>
     </div>
+  );
+}
+
+function DeepLink({
+  href,
+  title,
+  hint,
+}: {
+  href: string;
+  title: string;
+  hint: string;
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="block rounded-md border border-border bg-surface-card p-3 transition hover:border-border-strong hover:bg-surface-elevated"
+    >
+      <div className="text-sm font-medium text-link">{title} ↗</div>
+      <div className="mt-0.5 text-xs text-content-muted">{hint}</div>
+    </a>
   );
 }
 
@@ -103,9 +194,9 @@ function ColdStartGuide() {
     <div className="space-y-3 rounded-md border border-amber-300 bg-amber-50 p-5 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
       <h2 className="text-base font-semibold">Metabase isn&apos;t running</h2>
       <p>
-        The Workshop tab embeds Metabase at{" "}
+        The Workshop launches Metabase at{" "}
         <code className="rounded bg-amber-100 px-1 font-mono dark:bg-amber-900/60">
-          http://localhost:3000
+          {METABASE_URL}
         </code>
         . Start it once and it stays up across Diamond reloads.
       </p>
