@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from diamond.config import OOTP_SAVED_GAMES
@@ -171,6 +171,30 @@ def load_active_save_name() -> str | None:
     if isinstance(name, str) and name:
         return name
     return None
+
+
+def get_active_save_display_name() -> str:
+    """Return the active save's display name (no `.lg` suffix).
+
+    Reads `~/.diamond/active_save.toml` directly — does NOT depend on
+    the API warehouse module so the desktop launcher (which boots
+    before any FastAPI machinery) can use it for window titles.
+    Falls back to ``"Building the Green Monster"`` (the legacy default
+    save) when no active save is persisted yet.
+    """
+    name = load_active_save_name() or "Building the Green Monster.lg"
+    return name.removesuffix(".lg")
+
+
+def get_active_window_title() -> str:
+    """Compute the desktop-window title for the active save.
+
+    Used by ``diamond.desktop.launcher`` (`setWindowTitle`) and by
+    ``diamond.desktop.single_instance`` (`FindWindowW`). Both must
+    return the same value or the focus-existing-instance flow breaks,
+    so they share this helper.
+    """
+    return f"Diamond — {get_active_save_display_name()}"
 
 
 def save_active_save_name(name: str) -> None:

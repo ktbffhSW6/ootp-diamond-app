@@ -71,37 +71,47 @@ def _build_f_trade_participant(con: duckdb.DuckDBPyConnection) -> int:
     the *player*-participant surface. Add `f_trade_pick` etc. later if
     we ever want pick-flow analysis.
     """
+    # TRY_CAST every ID + date column up front so the rest of the query
+    # is type-stable regardless of save-specific CSV inference. Observed
+    # on The Fathers.lg 2026-05-16: every team_id_X / player_id_X_Y
+    # column in l0_trade_history landed as VARCHAR (string-quoted ints),
+    # AND the `date` column landed as VARCHAR (ISO-formatted strings).
+    # The naive `WHERE player_id > 0` then died with a Binder Error,
+    # and `trade_date BETWEEN ... TIMESTAMP ...` in player_movements
+    # downstream died with another. TRY_CAST insulates both sides.
     con.execute("""
         CREATE OR REPLACE TABLE f_trade_participant AS
         WITH side_0 AS (
             SELECT
-                message_id  AS trade_id,
-                date        AS trade_date,
-                team_id_0   AS from_org_id,
-                team_id_1   AS to_org_id,
-                CAST(0 AS INTEGER) AS side,
-                player_id
+                TRY_CAST(message_id AS BIGINT)  AS trade_id,
+                TRY_CAST(date AS DATE)          AS trade_date,
+                TRY_CAST(team_id_0 AS BIGINT)   AS from_org_id,
+                TRY_CAST(team_id_1 AS BIGINT)   AS to_org_id,
+                CAST(0 AS INTEGER)              AS side,
+                TRY_CAST(player_id AS BIGINT)   AS player_id
             FROM trade_event,
                  UNNEST([
                      player_id_0_0, player_id_0_1, player_id_0_2, player_id_0_3,
                      player_id_0_4, player_id_0_5, player_id_0_6, player_id_0_7,
                      player_id_0_8, player_id_0_9
                  ]) AS t(player_id)
-            WHERE player_id > 0
+            WHERE TRY_CAST(player_id AS BIGINT) > 0
         ),
         side_1 AS (
             SELECT
-                message_id, date,
-                team_id_1, team_id_0,
+                TRY_CAST(message_id AS BIGINT),
+                TRY_CAST(date AS DATE),
+                TRY_CAST(team_id_1 AS BIGINT),
+                TRY_CAST(team_id_0 AS BIGINT),
                 CAST(1 AS INTEGER),
-                player_id
+                TRY_CAST(player_id AS BIGINT)
             FROM trade_event,
                  UNNEST([
                      player_id_1_0, player_id_1_1, player_id_1_2, player_id_1_3,
                      player_id_1_4, player_id_1_5, player_id_1_6, player_id_1_7,
                      player_id_1_8, player_id_1_9
                  ]) AS t(player_id)
-            WHERE player_id > 0
+            WHERE TRY_CAST(player_id AS BIGINT) > 0
         )
         SELECT * FROM side_0
         UNION ALL

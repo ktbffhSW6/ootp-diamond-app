@@ -77,13 +77,20 @@ class L1EventSpec:
 # Scope filter fragments. The `IN (SELECT ...)` form is what DuckDB optimizes
 # into a hash join — fast. Each is a stable WHERE-clause snippet referencing
 # the relevant l0 source columns by name.
-_SCOPE_PLAYER       = "player_id IN (SELECT player_id FROM _scoped_players)"
-_SCOPE_TEAM         = "team_id IN (SELECT team_id FROM _scoped_teams)"
+#
+# All three filters TRY_CAST their LHS to BIGINT so they survive saves where
+# DuckDB's auto-inference parked an ID column as VARCHAR. Observed on
+# `The Fathers.lg` 2026-05-16: l0_trade_history.team_id_0/1 + l0_league_
+# playoff_fixtures.{league_id, team_id0, team_id1} all came in as VARCHAR
+# (string-quoted ints — `'10'`, `'307'`). TRY_CAST returns NULL on a
+# non-numeric input which excludes that row from scope — safe behavior.
+_SCOPE_PLAYER       = "TRY_CAST(player_id AS BIGINT) IN (SELECT player_id FROM _scoped_players)"
+_SCOPE_TEAM         = "TRY_CAST(team_id AS BIGINT) IN (SELECT team_id FROM _scoped_teams)"
 _SCOPE_LEAGUE_HARDCODED_15 = (
     # The 15 scoped league_ids per SaveConfig.league_ids. Inlined here so
     # this module doesn't import SaveConfig (the league_id list is also a
     # decision per D11 — once a league is in scope it stays in scope).
-    "league_id IN (203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, "
+    "TRY_CAST(league_id AS BIGINT) IN (203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, "
     "252, 217, 218, 234, 70)"
 )
 _SCOPE_NONE         = "TRUE"   # human_manager_history et al — single user, no filter
@@ -91,9 +98,19 @@ _SCOPE_NONE         = "TRUE"   # human_manager_history et al — single user, no
 
 # Trade scope: a trade is in-scope if ANY participating team is scoped.
 # trade_history.csv has team_id_0 and team_id_1 (each side of the trade).
+#
+# TRY_CAST is needed because some saves' `trade_history.csv` produces a
+# wide row count that pushes DuckDB's auto-inference toward VARCHAR for
+# these columns (observed first in 2026-05-16 on `The Fathers.lg`,
+# where every team_id_0 / team_id_1 value was a string-quoted int —
+# `'10'`, `'307'`, etc.). Without the cast the IN clause raises
+# `Binder Error: Cannot compare values of type VARCHAR and BIGINT`
+# and the whole L1 event build fails. TRY_CAST returns NULL on a
+# non-numeric input, which excludes that row from the trade scope —
+# safe behavior since a non-numeric team_id can't match a real one.
 _SCOPE_TRADE = (
-    "(team_id_0 IN (SELECT team_id FROM _scoped_teams) "
-    "OR team_id_1 IN (SELECT team_id FROM _scoped_teams))"
+    "(TRY_CAST(team_id_0 AS BIGINT) IN (SELECT team_id FROM _scoped_teams) "
+    "OR TRY_CAST(team_id_1 AS BIGINT) IN (SELECT team_id FROM _scoped_teams))"
 )
 
 

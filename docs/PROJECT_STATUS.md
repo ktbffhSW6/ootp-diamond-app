@@ -4,7 +4,23 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-16 (later) — **D35 AI sidebar polish: Claude.ai-style rendering + SSE streaming.** Four-tier rebuild of the AI sidebar fixing the "table renders as raw `| Stat | ... |` text" gap visible in the post-D33 screenshots. The model was producing perfect GFM markdown the whole time; the sidebar was just `whitespace-pre-wrap`-dumping it. Plus new SSE streaming endpoint so the model writes character-by-character with an animated cursor.
+**Last updated**: 2026-05-16 (latest) — **D36 Save-aware AI prompt + desktop chrome.** Tested D35 by transitioning to a Padres save (`The Fathers.lg`, audit_team_id=23, 28 dumps 2026_03 → 2028_06) and surfaced three places where the "Boston Red Sox / Building the Green Monster" identity was hardcoded:
+
+1. **AI system prompt** (`src/diamond/api/routes/ai.py`) — opening sentence said "the user is the GM of the Boston Red Sox (organization_id=4, MLB league_id=203) in the 'Building the Green Monster' save"; org-structure block enumerated Worcester / Portland / Greenville / Salem affiliates by name. New `_resolve_org_context(cursor, save)` reads the active SaveConfig + `MLB_TEAMS_BY_ID` to substitute team city/name + organization_id; warehouse-probes the latest+earliest seasons for the "current season" sentence; falls back gracefully on empty warehouse. Org-structure block is now generic ("filter by `organization_id={team_id}` for the org pyramid; query `teams` table for affiliate names"). Both the sync `/api/ai/chat` and streaming `/api/ai/chat/stream` handlers wire it in.
+
+2. **Desktop window title** — `launcher.py` set `WINDOW_TITLE = "Diamond — Building the Green Monster"` and `single_instance.py` used the same string for `FindWindowW` (so the focus-existing-instance flow only worked for Sox). New `diamond.saves.get_active_window_title()` reads `~/.diamond/active_save.toml` directly (no API dep — boots before FastAPI). Both modules now import from the helper, so they always agree on the title even after a save switch.
+
+3. **Splash HTML** — `assets/splash.html` had a hardcoded `<div class="title">Building the Green Monster</div>`. Now reads `>Loading…<` as a placeholder; `splash.py` substitutes the active save's display name on the way to QtWebEngine.
+
+**Padres ingest results**: 28 monthly dumps (2026_03 → 2028_06) → 288 MB warehouse. Verification queries pending the L3 build finishing.
+
+**Hardcoded leftovers intentionally kept**:
+- `BUILDING_THE_GREEN_MONSTER` singleton in `config.py` — fallback default for `_resolve_initial_save()` when `~/.diamond/active_save.toml` is missing (first-launch case).
+- `audit/reconcile.py` — Sox-specific IE roster CSV reconciliation; the audit harness is for the legacy Sox save and isn't user-facing.
+
+---
+
+**2026-05-16 (later) — D35 AI sidebar polish: Claude.ai-style rendering + SSE streaming.** Four-tier rebuild of the AI sidebar fixing the "table renders as raw `| Stat | ... |` text" gap visible in the post-D33 screenshots. The model was producing perfect GFM markdown the whole time; the sidebar was just `whitespace-pre-wrap`-dumping it. Plus new SSE streaming endpoint so the model writes character-by-character with an animated cursor.
 
 **D35 four-tier delivery**:
 

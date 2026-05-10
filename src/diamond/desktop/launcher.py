@@ -92,12 +92,17 @@ def _ensure_stdio() -> Path | None:
 _LAUNCHER_LOG_PATH = _ensure_stdio()
 
 
-from diamond.desktop import paths, sidecar, splash  # noqa: E402  (after _ensure_stdio)
+from diamond.desktop import sidecar, splash  # noqa: E402  (after _ensure_stdio)
+from diamond.saves import get_active_window_title  # noqa: E402
 
 
 log = logging.getLogger("diamond.desktop")
 
-WINDOW_TITLE = "Diamond — Building the Green Monster"
+# Resolved at launcher start from ``~/.diamond/active_save.toml``.
+# Both this module and ``single_instance`` import the same helper so
+# the title used by ``setWindowTitle`` matches the one
+# ``FindWindowW`` searches for (single-instance focus relies on it).
+WINDOW_TITLE = get_active_window_title()
 
 
 # ---- platform-specific helpers (Windows job object + single-instance) -------

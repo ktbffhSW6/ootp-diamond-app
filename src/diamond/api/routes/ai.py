@@ -52,7 +52,9 @@ from diamond.api.schemas import (
     AISummarizeRequest,
     AISummarizeResponse,
 )
-from diamond.api.warehouse import get_cursor
+from diamond.api.warehouse import get_active_save, get_cursor
+from diamond.config import SaveConfig
+from diamond.mlb_teams import MLB_TEAMS_BY_ID
 
 router = APIRouter()
 log = logging.getLogger("diamond.ai")
@@ -354,17 +356,109 @@ _MODE_PROMPTS: dict[str, str] = {
 }
 
 
+def _resolve_org_context(
+    cursor: duckdb.DuckDBPyConnection | None,
+    save: SaveConfig,
+) -> dict[str, object]:
+    """Compute save-aware context for the AI system prompt.
+
+    Reads the active save's audit_team_id + display name, looks up the
+    MLB team metadata, and (best-effort) probes the warehouse for the
+    latest + earliest seasons currently ingested. Robust to a missing
+    or unconfigured warehouse: falls back to safe placeholders.
+    """
+    team = MLB_TEAMS_BY_ID.get(save.audit_team_id) if save.audit_team_id else None
+    save_display = save.save_name.removesuffix(".lg").replace("_", " ")
+
+    latest_year: int | None = None
+    earliest_year: int | None = None
+    if cursor is not None:
+        try:
+            row = cursor.execute(
+                "SELECT MAX(year), MIN(year) FROM f_player_season_batting"
+            ).fetchone()
+            if row:
+                latest_year = row[0]
+                earliest_year = row[1]
+        except Exception:
+            # Warehouse may be empty / freshly created — skip silently.
+            pass
+
+    if team:
+        team_label = (
+            f"the {team.city} {team.name} (organization_id="
+            f"{save.audit_team_id})"
+        )
+        team_short = team.name
+    elif save.audit_team_id:
+        team_label = f"organization_id={save.audit_team_id}"
+        team_short = f"team {save.audit_team_id}"
+    else:
+        team_label = "an unconfigured organization"
+        team_short = "your team"
+
+    return {
+        "save_display": save_display,
+        "team_label": team_label,
+        "team_short": team_short,
+        "team_id": save.audit_team_id,
+        "latest_year": latest_year,
+        "earliest_year": earliest_year,
+    }
+
+
 def _build_system_prompt(
     mode: str,
     page_context: dict | None,
     persona: str = "",
+    org_context: dict[str, object] | None = None,
 ) -> str:
+    # Default to a fully unconfigured context if none is supplied —
+    # callers always pass one in production; the default here keeps
+    # tests + the legacy code path safe.
+    org = org_context or _resolve_org_context(None, get_active_save())
+
+    team_label = org["team_label"]
+    team_short = org["team_short"]
+    team_id = org["team_id"]
+    save_display = org["save_display"]
+    latest_year = org["latest_year"]
+    earliest_year = org["earliest_year"]
+
+    if latest_year and earliest_year:
+        season_block = (
+            f"Current (latest ingested) season is {latest_year}; "
+            f"data covers {earliest_year}-{latest_year} plus pre-"
+            f"{earliest_year} real-history baselines."
+        )
+    elif latest_year:
+        season_block = f"Current (latest ingested) season is {latest_year}."
+    else:
+        season_block = (
+            "The warehouse is empty or not yet ingested — recommend "
+            "the user run `diamond ingest` if they ask for save data."
+        )
+
+    if team_id:
+        org_block = (
+            f"Org structure: filter by `organization_id={team_id}` to "
+            f"get the whole pyramid (MLB + AAA + AA + A+ + A + Complex "
+            f"+ DSL when present); `team_id={team_id}` for MLB only. "
+            f"Affiliate names + level_ids vary across saves — query "
+            f"`teams` (filter `organization_id={team_id}`) the first "
+            f"time you need them, then reuse."
+        )
+    else:
+        org_block = (
+            "No team configured for this save yet — direct the user "
+            "to `/settings/save` to pick their MLB team before asking "
+            "org-scoped questions."
+        )
+
     base = (
-        "You are Diamond's analytical co-pilot — a sabermetrics-fluent "
-        "assistant for an OOTP 27 dynasty. The user is the GM of the "
-        "Boston Red Sox (organization_id=4, MLB league_id=203) in the "
-        "'Building the Green Monster' save. Current season is 2029; "
-        "data covers 2026-2029 plus pre-2026 real-history baselines.\n\n"
+        f"You are Diamond's analytical co-pilot — a sabermetrics-fluent "
+        f"assistant for an OOTP 27 dynasty. The user is the GM of "
+        f"{team_label} in the '{save_display}' save. {season_block}\n\n"
         "**Default to ACTING, not asking.** When the user asks a "
         "concrete question, your first instinct should be to query "
         "the warehouse and return a specific answer with numbers. "
@@ -398,20 +492,16 @@ def _build_system_prompt(
         "`describe_table` first** when you're not sure what columns "
         "exist — guessing column names produces Binder Errors. Use "
         "`get_glossary` if you're unsure what a stat means.\n\n"
-        "Org structure (use these directly, no need to look up): "
-        "Sox MLB team_id=4 (level_id=1). AAA Worcester Red Sox "
-        "(level_id=2), AA Portland Sea Dogs (level_id=3), High-A "
-        "Greenville Drive (level_id=4), A Salem Red Sox (level_id=5). "
-        "Filter by `organization_id=4` to get the whole pyramid; "
-        "`team_id=4` for MLB only.\n\n"
+        f"{org_block}\n\n"
         "Be direct and quantitative. Cite specific numbers from the "
         "warehouse, not vibes. When you produce a recommendation, "
-        "state it plainly with names + stats backing it.\n\n"
+        f"state it plainly with names + stats backing the call. When "
+        f"the user says 'my team' or 'us', they mean the {team_short}.\n\n"
         "Stat conventions: OPS+/wRC+/ERA+ are 100-relative (>100 is "
         "above average). WAR is OOTP-canonical (b_war for batters, "
         "p_war for pitchers — IE-A-tier reconciled). League scope is "
-        "MLB + affiliated minors + DSL + AFL. Pre-2026 player-seasons "
-        "have real-history baselines from L_REF (D29).\n\n"
+        "MLB + affiliated minors + DSL + AFL when present. Pre-save "
+        "player-seasons have real-history baselines from L_REF (D29).\n\n"
         "When the user might want to revisit an analysis, offer to "
         "create a Metabase card via `create_metabase_card` — those "
         "live in the user's Workshop tab and can be saved to "
@@ -527,10 +617,12 @@ def chat(
     working: list[dict] = _to_provider_messages(body.messages)
     working.append({"role": "user", "content": body.user_input})
 
+    org_context = _resolve_org_context(cursor, get_active_save())
     system = _build_system_prompt(
         body.mode,
         body.page_context.model_dump() if body.page_context else None,
         persona=settings.persona,
+        org_context=org_context,
     )
 
     tools_native = [
@@ -677,10 +769,12 @@ def _stream_chat(
     working: list[dict] = _to_provider_messages(body.messages)
     working.append({"role": "user", "content": body.user_input})
 
+    org_context = _resolve_org_context(cursor, get_active_save())
     system = _build_system_prompt(
         body.mode,
         body.page_context.model_dump() if body.page_context else None,
         persona=settings.persona,
+        org_context=org_context,
     )
     tools_native = [
         {

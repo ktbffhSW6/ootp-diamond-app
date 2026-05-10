@@ -26,7 +26,14 @@ log = logging.getLogger(__name__)
 # Stable across versions; bump only if a future major rev needs to
 # coexist with an older one (we don't anticipate that).
 MUTEX_NAME = "Local\\Diamond.OOTP.Desktop.SingleInstance"
-WINDOW_TITLE = "Diamond — Building the Green Monster"
+
+# Resolved from the active save's display name so the FindWindow
+# lookup matches what launcher.py stamped via setWindowTitle. Both
+# modules MUST stay in sync — the focus-existing-instance flow
+# searches the OS window list by exact title.
+from diamond.saves import get_active_window_title  # noqa: E402
+
+WINDOW_TITLE = get_active_window_title()
 
 ERROR_ALREADY_EXISTS = 183
 SW_RESTORE = 9

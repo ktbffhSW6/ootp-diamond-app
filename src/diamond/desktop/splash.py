@@ -14,15 +14,28 @@ launcher stays focused.
 from __future__ import annotations
 
 from diamond.desktop import paths
+from diamond.saves import get_active_save_display_name
 
 
 def html() -> str:
     """Return the splash HTML, with a small inline fallback if the
     asset file is missing (frozen-bundle hiccup).
+
+    Substitutes the active save's display name into the title so the
+    splash matches the window title (D36 — was hardcoded to
+    "Building the Green Monster" pre-D36).
     """
     asset = paths.assets_dir() / "splash.html"
     if asset.exists():
-        return asset.read_text(encoding="utf-8")
+        raw = asset.read_text(encoding="utf-8")
+        # Cheap text substitution — the asset has the placeholder
+        # `>Loading…<` in the title element so we swap in the save
+        # display name on the way out.
+        return raw.replace(
+            '>Loading…<',
+            f'>{get_active_save_display_name()}<',
+            1,
+        )
     return _FALLBACK_HTML
 
 
