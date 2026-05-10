@@ -235,36 +235,92 @@ def _start_next_subprocess(
     return proc
 
 
+def _resolve_java_exe(metabase_dir: Path) -> Optional[Path]:
+    """Find java.exe. Tries, in order:
+
+    1. ``JDK_HOME`` env var + ``\\bin\\java.exe``
+    2. ``JAVA_HOME`` env var + ``\\bin\\java.exe``
+    3. The ``set "JDK_HOME=..."`` line parsed out of metabase.bat
+       (so the user's bat is the single source of truth)
+    4. ``java`` / ``java.exe`` resolved via ``shutil.which`` on PATH
+    """
+    candidates: list[Path] = []
+    for env_key in ("JDK_HOME", "JAVA_HOME"):
+        v = os.environ.get(env_key)
+        if v:
+            candidates.append(Path(v) / "bin" / "java.exe")
+
+    metabase_bat = metabase_dir / "metabase.bat"
+    if metabase_bat.exists():
+        try:
+            for line in metabase_bat.read_text(encoding="utf-8", errors="ignore").splitlines():
+                # `set "JDK_HOME=C:\Program Files\Microsoft\jdk-21..."`
+                stripped = line.strip()
+                if stripped.lower().startswith("set ") and "jdk_home=" in stripped.lower():
+                    # Extract value between first `=` and trailing `"`
+                    try:
+                        kv = stripped.split("=", 1)[1]
+                        if kv.endswith('"'):
+                            kv = kv[:-1]
+                        candidates.append(Path(kv) / "bin" / "java.exe")
+                    except Exception:
+                        pass
+                    break
+        except Exception:
+            pass
+
+    import shutil
+
+    on_path = shutil.which("java") or shutil.which("java.exe")
+    if on_path:
+        candidates.append(Path(on_path))
+
+    for c in candidates:
+        if c.exists():
+            return c
+    return None
+
+
 def _start_metabase_subprocess(
     *,
     job_handle: Optional[object] = None,
 ) -> Optional[subprocess.Popen[bytes]]:
-    """Spawn Metabase via ``~/.diamond/metabase/metabase.bat``.
+    """Spawn Metabase by invoking ``java.exe`` directly.
 
-    Returns ``None`` (without raising) in any of these cases:
+    We deliberately don't go through ``metabase.bat`` because:
 
-    - Metabase isn't installed (the .bat doesn't exist) — the user
-      hasn't gone through the one-time D31 setup. Workshop tab will
-      show the install guide.
-    - Port 3001 is already in use — something is already listening,
-      most likely a Metabase from a prior session the user kept up.
-      We assume that's intentional and don't double-spawn.
-    - Spawn fails for any other reason — logged at WARNING; rest of
-      Diamond boots normally.
+    - The .bat's ``/b`` mode uses ``start /b ...`` which detaches Java
+      from our process tree (defeats Job Object inheritance).
+    - The .bat's foreground mode runs Java as a child of cmd.exe with
+      stdout going to the inherited stdout — when we set DEVNULL,
+      Java's startup messages are lost and we have no visibility into
+      what's happening if it doesn't come up.
 
-    When successful, returns the Popen handle. The bat is invoked
-    WITHOUT the ``/b`` flag (which would `start /b` and detach Java
-    from our process tree). Foreground invocation keeps Java as a
-    descendant of our launcher, so the Job Object kill-on-close can
-    take it down with Diamond.
+    Direct invocation gives us:
+      - Java as a direct child of our Python launcher (clean Job
+        Object inheritance)
+      - Java's stdout+stderr captured to ``logs/diamond-launcher.log``
+        so the user / future-us can debug startup failures
+      - Identical env vars to what metabase.bat sets (we mirror the
+        config rather than parse the .bat for them — easier to reason
+        about than line-by-line .bat parsing)
+
+    Returns None (no raise) when:
+      - Metabase isn't installed yet (no metabase.jar) — the Workshop
+        tab will show the install guide
+      - Port 3001 already in use — assume user kept Metabase running
+        from a prior session; don't double-spawn
+      - Java not found — spawn fails gracefully
+      - Any other exception — logged, Diamond boots normally
     """
     metabase_dir = Path.home() / ".diamond" / "metabase"
-    metabase_bat = metabase_dir / "metabase.bat"
+    metabase_jar = metabase_dir / "metabase.jar"
 
-    if not metabase_bat.exists():
+    if not metabase_jar.exists():
         log.info(
-            "metabase: %s not found — skipping (Workshop tab will show install guide)",
-            metabase_bat,
+            "metabase: %s not found — skipping (run `metabase.bat` once "
+            "manually for first-time setup, see docs/METABASE.md)",
+            metabase_jar,
         )
         return None
 
@@ -272,17 +328,54 @@ def _start_metabase_subprocess(
         log.info("metabase: already running on :3001 — skipping spawn")
         return None
 
-    log.info("metabase: starting via %s (foreground; joins Job Object)", metabase_bat)
+    java_exe = _resolve_java_exe(metabase_dir)
+    if java_exe is None:
+        log.warning(
+            "metabase: no java.exe found (set JDK_HOME or JAVA_HOME, or "
+            "install Microsoft OpenJDK 21) — skipping spawn"
+        )
+        return None
+
+    logs_dir = metabase_dir / "logs"
     try:
-        # cmd /c invokes the .bat synchronously inside cmd.exe; java
-        # spawns as a child of cmd. Both end up as descendants of our
-        # Python launcher and inherit Job Object membership — so
-        # KILL_ON_JOB_CLOSE takes the entire tree down with Diamond.
+        logs_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    metabase_log = logs_dir / "diamond-launcher.log"
+
+    # Mirror the env config from metabase.bat. The launcher is the
+    # single source of truth for these from D32 forward; the .bat
+    # remains as a fallback for users running Metabase manually.
+    env = os.environ.copy()
+    env.update({
+        "MB_JETTY_HOST": "127.0.0.1",
+        "MB_JETTY_PORT": "3001",
+        "MB_DB_TYPE": "h2",
+        "MB_DB_FILE": str(metabase_dir / "data" / "metabase"),
+        "MB_PLUGINS_DIR": str(metabase_dir / "plugins"),
+        "MB_ANON_TRACKING_ENABLED": "false",
+        "MB_CHECK_FOR_UPDATES": "false",
+        "MB_LOAD_SAMPLE_CONTENT": "false",
+    })
+
+    cmd = [str(java_exe), "-Xmx2g", "-jar", str(metabase_jar)]
+    log.info(
+        "metabase: starting java directly (jar=%s, log=%s)",
+        metabase_jar,
+        metabase_log,
+    )
+
+    try:
+        # Open the log in append mode so successive Diamond launches
+        # accumulate history (truncated by metabase itself if it grows
+        # too large via its own log4j rotation).
+        log_fh = open(metabase_log, "ab", buffering=0)
         proc = subprocess.Popen(  # noqa: S603 — argv list, no shell
-            ["cmd.exe", "/c", str(metabase_bat)],
+            cmd,
             cwd=str(metabase_dir),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            env=env,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             creationflags=_CREATE_NO_WINDOW,
         )
