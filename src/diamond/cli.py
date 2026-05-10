@@ -254,6 +254,75 @@ def ingest(
         con.close()
 
 
+@app.command("migrate-dump-dates")
+def migrate_dump_dates(
+    save: str = typer.Option(
+        None,
+        "--save",
+        help=(
+            "Save folder name (with '.lg' suffix). Defaults to the active "
+            "save from ~/.diamond/active_save.toml."
+        ),
+    ),
+) -> None:
+    """Migrate `dump_date` columns from 1st-of-month → end-of-month (one-shot).
+
+    Pre-2026-05-10 ingests parked the canonical `dump_date` on the 1st of
+    the month for `dump_YYYY_MM`, but OOTP exports a dump at the END of
+    each simulated month — so the data inside `dump_2028_07` is "stats
+    through 7/31/2028", not 7/1/2028. The cockpit's "Last sync" label
+    exposed the gap.
+
+    This command runs DuckDB's ``LAST_DAY()`` over every `dump_date`
+    column in every base table (~80-110 tables in a real warehouse).
+    Idempotent — re-running on an already-migrated warehouse is cheap
+    (a setting marker in `_diamond_settings` short-circuits).
+
+    On a small warehouse (~28 dumps) this completes in under a minute.
+    On a large warehouse (45+ dumps with deep snapshot history) it can
+    take 5-15 minutes — the WHERE-filter optimization keeps subsequent
+    runs from re-doing finished work, but the first full pass still
+    rewrites every row of every dump_date-carrying table.
+    """
+    from diamond.api.warehouse import build_save_config
+    from diamond.saves import list_saves, load_active_save_name
+    from diamond.schema.build import migrate_dump_dates_to_eom, open_warehouse_db
+
+    requested = save or load_active_save_name()
+    if requested is None:
+        save_config = BUILDING_THE_GREEN_MONSTER
+    else:
+        if not requested.endswith(".lg"):
+            requested = requested + ".lg"
+        available = {s.name for s in list_saves()}
+        if requested not in available:
+            _console.print(
+                f"[red]Save '{requested}' not found.[/red] Available: "
+                f"{sorted(available)}"
+            )
+            raise typer.Exit(1)
+        save_config = build_save_config(requested)
+
+    _console.print(
+        f"[bold]Migrating dump_date columns in[/bold] {save_config.save_name}"
+    )
+    con = open_warehouse_db(save_config)
+    try:
+        n = migrate_dump_dates_to_eom(con)
+    finally:
+        con.close()
+    if n == 0:
+        _console.print(
+            "[green]✓[/green] Already migrated (setting "
+            "[cyan]dump_date_convention=end_of_month[/cyan] is set)."
+        )
+    else:
+        _console.print(
+            f"[green]✓[/green] Migrated [cyan]{n}[/cyan] tables to "
+            "end-of-month dump_date convention."
+        )
+
+
 @app.command()
 def status(
     save: str = typer.Option(
@@ -333,7 +402,7 @@ def status(
         if len(pending) > 10:
             _console.print(f"  … and {len(pending) - 10} more")
         _console.print(
-            f"\n[dim]Run[/dim] [cyan]diamond ingest --all"
+            "\n[dim]Run[/dim] [cyan]diamond ingest --all"
             + (f" --save \"{save_config.save_name}\"" if save else "")
             + "[/cyan] [dim]to catch up.[/dim]"
         )

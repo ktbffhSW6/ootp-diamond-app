@@ -184,16 +184,116 @@ def record_ingest_done(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# dump_date convention migration (2026-05-10)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+_DUMP_DATE_MIGRATION_KEY = "dump_date_convention"
+_DUMP_DATE_CONVENTION_EOM = "end_of_month"
+
+
+def migrate_dump_dates_to_eom(con: duckdb.DuckDBPyConnection) -> int:
+    """Migrate every `dump_date` column from 1st-of-month to end-of-month.
+
+    Pre-2026-05-10, ``dump_name_to_date()`` returned the 1st of the
+    month as the canonical key for `dump_YYYY_MM`. The semantic was
+    wrong: OOTP exports a dump at the END of each simulated month, so
+    the data inside `dump_2028_07` is "stats through 7/31/2028" — not
+    7/1/2028. The cockpit's "Last sync" label exposed the gap.
+
+    This migration runs DuckDB's ``LAST_DAY()`` over every column
+    named `dump_date` in every table (111 carriers in a real save,
+    plus the `_diamond_ingests` admin table). LAST_DAY of an
+    end-of-month date is itself, so the operation is idempotent;
+    re-running this on an already-migrated warehouse is a no-op.
+
+    Records `_diamond_settings.dump_date_convention = 'end_of_month'`
+    so subsequent opens skip the work.
+
+    Returns the count of (table, dump_date) pairs touched.
+
+    Safe to call inside a regular RW connection — runs every UPDATE
+    in one DuckDB transaction so a crash mid-migration leaves the
+    warehouse in a consistent prior state.
+    """
+    if get_setting(con, _DUMP_DATE_MIGRATION_KEY) == _DUMP_DATE_CONVENTION_EOM:
+        return 0
+
+    # Find every BASE TABLE with a dump_date column. Views (e.g.
+    # `players_current`, `team_record_current`) inherit dump_date
+    # from their underlying snapshot tables, so we only need to UPDATE
+    # the snapshots; the views see the new values automatically.
+    targets = con.execute(
+        """
+        SELECT c.table_name
+        FROM information_schema.columns c
+        JOIN information_schema.tables t
+          ON t.table_schema = c.table_schema
+         AND t.table_name   = c.table_name
+        WHERE c.table_schema = 'main'
+          AND c.column_name  = 'dump_date'
+          AND t.table_type   = 'BASE TABLE'
+        ORDER BY c.table_name
+        """
+    ).fetchall()
+    target_names = [r[0] for r in targets]
+
+    # _diamond_ingests is always present in a real warehouse; include
+    # it explicitly in case the schema lookup misses it (e.g. system
+    # table filtering).
+    if "_diamond_ingests" not in target_names:
+        try:
+            con.execute("SELECT 1 FROM _diamond_ingests LIMIT 1")
+            target_names.append("_diamond_ingests")
+        except duckdb.Error:
+            pass
+
+    touched = 0
+    con.execute("BEGIN TRANSACTION")
+    try:
+        for tbl in target_names:
+            # WHERE-filter: only touch rows that aren't already EOM.
+            # On a fresh-from-scratch warehouse this matches every row;
+            # on a partially-migrated warehouse (e.g. previous run died
+            # mid-table), this skips the rows the previous run already
+            # finished. DuckDB's MVCC + delete-rewrite cost on UPDATE is
+            # nontrivial, so the filter pays for itself even on full work.
+            con.execute(
+                f"UPDATE {tbl} SET dump_date = LAST_DAY(dump_date) "
+                f"WHERE dump_date <> LAST_DAY(dump_date)"
+            )
+            touched += 1
+        # Stamp the convention so we don't re-run.
+        set_setting(con, _DUMP_DATE_MIGRATION_KEY, _DUMP_DATE_CONVENTION_EOM)
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+
+    return touched
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Dump-name parsing
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def dump_name_to_date(dump_name: str) -> date:
-    """Convert ``dump_2029_11`` → ``date(2029, 11, 1)``.
+    """Convert ``dump_2029_11`` → ``date(2029, 11, 30)``.
 
-    Dump folders are named `dump_YYYY_MM`. We use the 1st of the month as
-    the canonical dump_date so it sorts naturally and uniquely identifies
-    the dump.
+    Dump folders are named `dump_YYYY_MM`. OOTP exports a dump at the
+    **end** of each simulated month (when the user advances time past
+    the month boundary), so the stats inside `dump_YYYY_MM` are
+    "season-to-date through the LAST day of MM". The canonical
+    `dump_date` therefore stamps the last day of the month, not the
+    first — both for accurate display ("Last sync: Jul 31, 2028") and
+    for correct semantics in any "as of" query. End-of-month dates
+    sort identically to start-of-month dates, so the natural
+    chronological ordering of `dump_*` folder names is preserved.
+
+    Pre-2026-05 ingests used 1st-of-month; ``migrate_dump_dates_to_eom``
+    upgrades them in place. New ingests after this change land
+    end-of-month directly.
     """
     parts = dump_name.split("_")
     if len(parts) != 3 or parts[0] != "dump":
@@ -207,7 +307,10 @@ def dump_name_to_date(dump_name: str) -> date:
         raise ValueError(f"Could not parse year/month from {dump_name!r}") from e
     if not (1 <= month <= 12):
         raise ValueError(f"Invalid month in {dump_name!r}: {month}")
-    return date(year, month, 1)
+    # Last day of (year, month) via calendar.monthrange.
+    import calendar
+    last_day = calendar.monthrange(year, month)[1]
+    return date(year, month, last_day)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -344,6 +447,13 @@ def open_warehouse_db(save: SaveConfig) -> duckdb.DuckDBPyConnection:
     Per Decision D2, each save gets its own warehouse DB alongside its
     `dump/` and `import_export/` folders. The `diamond/` subdirectory is
     created if missing.
+
+    Does NOT auto-run migrations — historically that was tempting, but a
+    full ``migrate_dump_dates_to_eom()`` on a large warehouse can take
+    10+ minutes (it rewrites every row of every dump_date-carrying base
+    table), and stalling the API's first request that long is unacceptable.
+    Migrations are explicit CLI steps (``diamond migrate-dump-dates``)
+    so the user can run them on their own schedule.
     """
     db_dir = save.save_dir / "diamond"
     db_dir.mkdir(parents=True, exist_ok=True)
