@@ -12,9 +12,11 @@
 // Workshop is the power tool. Both run against the same DuckDB
 // warehouse, so the data is identical.
 //
-// Per D16 architecture, the embedded Metabase runs on localhost:3000.
-// If it's not running, the workshop tab shows a cold-start guide
-// (`metabase.bat /b` from `~/.diamond/metabase/`).
+// Implementation note: keep all data-fetching at the top of the page
+// component (single async server component). Avoid inline async
+// child components — those compose oddly with conditional rendering
+// in App Router and can produce ssr-time errors that surface as
+// "server-side exception" toast.
 
 import { ChartBuilderClient } from "@/components/ChartBuilderClient";
 import { ExploreModeTabs } from "@/components/ExploreModeTabs";
@@ -38,40 +40,25 @@ export default async function ExplorePage(
   props: { searchParams: Promise<SearchParams> },
 ) {
   const sp = await props.searchParams;
-  const mode = sp.mode === "workshop" ? "workshop" : "quick";
+  const mode: "quick" | "workshop" =
+    sp.mode === "workshop" ? "workshop" : "quick";
 
-  return (
-    <div className="space-y-4">
-      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border pb-2">
-        <div className="flex items-baseline gap-3">
-          <p className="text-[10px] font-medium uppercase tracking-wider text-content-muted">
-            Explore
-          </p>
-          <h1 className="text-xl font-semibold tracking-tight text-content-primary">
-            {mode === "workshop" ? "Workshop · Metabase" : "Quick chart"}
-          </h1>
-        </div>
-        <p className="text-xs text-content-muted">
-          Diamond&apos;s scatter / histogram for fast cohort answers ·{" "}
-          Metabase Workshop for full BI · same warehouse, different surfaces
-        </p>
-      </header>
-
-      <ExploreModeTabs current={mode} />
-
-      {mode === "workshop" ? (
+  // Workshop mode: pure client-side iframe, no API fetch needed.
+  // Render early to avoid spending a chart-builder API round-trip
+  // we won't use.
+  if (mode === "workshop") {
+    return (
+      <div className="space-y-4">
+        <ExploreHeader mode={mode} />
+        <ExploreModeTabs current={mode} />
         <MetabaseWorkshop />
-      ) : (
-        <QuickChart sp={sp} />
-      )}
-    </div>
-  );
-}
+      </div>
+    );
+  }
 
-async function QuickChart({ sp }: { sp: SearchParams }) {
-  // Defaults: a "show me something interesting" landing — wRC+ vs bWAR
-  // is the canonical "production vs value" scatter and looks great
-  // cold. The user can swap in any pair from the picker.
+  // Quick mode: pre-fetch the dataset for the requested (or default)
+  // (X, Y, color, level, year, qualifier) so the chart paints
+  // server-side and the picker hydrates with real data.
   const x = sp.x ?? "wRC_plus";
   const y = sp.y ?? "bWAR";
   const color = sp.color || undefined;
@@ -95,10 +82,33 @@ async function QuickChart({ sp }: { sp: SearchParams }) {
   ]);
 
   return (
-    <ChartBuilderClient
-      options={optionsRes.options}
-      initial={dataRes}
-      initialQualifierMin={qualifierMin}
-    />
+    <div className="space-y-4">
+      <ExploreHeader mode={mode} />
+      <ExploreModeTabs current={mode} />
+      <ChartBuilderClient
+        options={optionsRes.options}
+        initial={dataRes}
+        initialQualifierMin={qualifierMin}
+      />
+    </div>
+  );
+}
+
+function ExploreHeader({ mode }: { mode: "quick" | "workshop" }) {
+  return (
+    <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border pb-2">
+      <div className="flex items-baseline gap-3">
+        <p className="text-[10px] font-medium uppercase tracking-wider text-content-muted">
+          Explore
+        </p>
+        <h1 className="text-xl font-semibold tracking-tight text-content-primary">
+          {mode === "workshop" ? "Workshop · Metabase" : "Quick chart"}
+        </h1>
+      </div>
+      <p className="text-xs text-content-muted">
+        Diamond&apos;s scatter / histogram for fast cohort answers ·{" "}
+        Metabase Workshop for full BI · same warehouse, different surfaces
+      </p>
+    </header>
   );
 }
