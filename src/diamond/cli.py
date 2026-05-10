@@ -71,9 +71,52 @@ def reconcile(
             "regression check per Decision D8."
         ),
     ),
+    save: str | None = typer.Option(
+        None,
+        help=(
+            "Save name to reconcile (with or without '.lg'). Defaults to "
+            "active save from ~/.diamond/active_save.toml."
+        ),
+    ),
+    ie_dir: Path | None = typer.Option(
+        None,
+        "--ie-dir",
+        help=(
+            "Override the import_export folder location. Defaults to "
+            "<save>/import_export/. Pass an explicit folder (e.g. "
+            "docs/helpful_files/recon/Padres/) to reconcile against "
+            "control-data snapshots stored outside the save. Filenames "
+            "match by org-agnostic suffix so any org's roster files "
+            "resolve via the same FileSpecs."
+        ),
+    ),
 ) -> None:
     """Reconcile import_export files against derivations from monthly dump CSVs."""
-    reconcile_mod.run(dump=dump, output_path=output, source=source)
+    from diamond.saves import list_saves, load_active_save_name
+    from diamond.api.warehouse import build_save_config
+
+    requested_save_name = save or load_active_save_name()
+    if requested_save_name is None:
+        save_config = BUILDING_THE_GREEN_MONSTER
+    else:
+        if not requested_save_name.endswith(".lg"):
+            requested_save_name = requested_save_name + ".lg"
+        available = {s.name for s in list_saves()}
+        if requested_save_name not in available:
+            _console.print(
+                f"[red]Save '{requested_save_name}' not found.[/red] "
+                f"Available: {sorted(available)}"
+            )
+            raise typer.Exit(2)
+        save_config = build_save_config(requested_save_name)
+
+    reconcile_mod.run(
+        save=save_config,
+        dump=dump,
+        output_path=output,
+        source=source,
+        ie_dir=ie_dir,
+    )
 
 
 @app.command()

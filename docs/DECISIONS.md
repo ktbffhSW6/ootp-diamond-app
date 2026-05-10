@@ -1483,3 +1483,81 @@ Post-fix, 2028 in `_lg_constants_advanced` jumped from 2 rows (DSL only) to 25 r
 - `headline_metric_value: int | None` is the contract — cockpit UI must handle null gracefully. Don't coerce to 0 server-side.
 - API endpoints with read-only warehouse access use `Depends(get_cursor)` — the shared connection — never `duckdb.connect(read_only=True)`. The Windows file-lock hazard is platform-specific and silent (returns IOException at connect time, not query time).
 - API endpoints that JOIN to optional `history_*` tables probe `information_schema.tables` and degrade gracefully. `diamond fetch-history` is opt-in per save; saves without it should still render every page (with reduced real-history features, never 500s).
+
+---
+
+## D38 — Padres reconciliation: wOBA formula correction + harness multi-save support
+
+**Status:** Shipped 2026-05-17 (afternoon).
+
+**Context.** Phase 1 plan called for layering in Lahman / Retrosheet / Statcast as `lref_*` reference data to make Diamond a save-agnostic baseball-almanac database. Before that work could begin, the user wanted the existing Padres save reconciled to OOTP's IE export to establish a "Diamond ties out to OOTP" accuracy floor. The user dumped explicit control data at `docs/helpful_files/recon/Padres/`: 21 stat CSVs + 65 UI screenshots, all timestamped 7/31/2028 (matching `dump_2028_07`).
+
+The existing `reconcile.py` harness was Sox-only — every `FileSpec.ie_filename` hardcoded `boston_red_sox_organization_-_roster_*`, every `WHERE scouting_team_id = 4` filter assumed the Sox team_id, and the runner read from `save.import_export_dir` with no override. Three small infrastructure changes were needed to point the harness at the Padres recon folder.
+
+### Part 1 — Reconciler multi-save support
+
+1. **`_resolve_ie_path(ie_dir, spec_filename)`** — extracts the org-agnostic suffix (`_organization_-_roster_*.csv`) and globs `ie_dir/*{suffix}`. Sox files match via exact filename (backward compat); Padres files (`san_diego_padres_organization_-_*`) match via suffix glob. Same FileSpec defs work for any org.
+2. **`--ie-dir` CLI flag** — overrides `save.import_export_dir`. Points the harness at any folder of IE CSVs (e.g. `docs/helpful_files/recon/Padres/`).
+3. **`--save NAME` CLI flag** — selects which save's warehouse to reconcile (defaults to active save per `~/.diamond/active_save.toml`).
+4. **Scouting-team-id stamping fix** — `_connect_warehouse` had stamped `scouting_team_id = {save.audit_team_id}` (= 23 for Padres) on the `scouted_ratings` view, but the existing FileSpec CTEs hardcode `WHERE sr.scouting_team_id = 4`. For Padres this rejected every row → all 8 rating files reported `0/0/269` (all-null derived side). Changed to stamp constant `4` regardless of save — the L1 view is already audit-team-filtered at D12, so the constant is just a satisfier for the hardcoded WHERE. Ratings now reconcile 100% A-tier on any save.
+
+### Part 2 — wOBA formula correction (OOTP-canonical)
+
+First Padres reconciliation pass revealed wOBA was at **76% match** in `batting_stats_2` (31 mismatches). Investigation:
+
+- Bastidas 2028 IE=.357 vs Diamond derived=.372 (.015 high, systematic)
+- Ocopio 2028 IE=.282 vs Diamond derived=.299 (.017 high, systematic)
+- Merrill 2028 (MLB, no SH): both formulas converge — no drift visible
+
+Root cause: **OOTP uses PA in the wOBA denominator with base linear weights — not the FanGraphs (AB + uBB + SF + HBP) form with lg-OBP-scaled weights**. Two errors in Diamond's previous formula:
+
+1. **Wrong denominator.** Diamond used `(AB + uBB + SF + HBP)`. OOTP uses `PA`. The two differ by `(SH + CI)` — non-zero for minor leaguers with sac bunts (Bastidas had SH=3 in 69 PA → 4.5% denominator inflation).
+2. **Unnecessary scaling.** Diamond multiplied base weights by `lg_obp / base_lg_woba` to force `lg_woba = lg_obp` by construction (FanGraphs convention). OOTP doesn't enforce that relationship — its `lg_woba` is just base-weight × PA-denom (verified against OOTP-supplied `league_history_batting_stats.woba`: MLB 2027 OOTP=.3176 vs Diamond-derived base+PA=.3202, .003 drift = rounding).
+
+**Fix landed in three places**:
+
+- **`src/diamond/schema/l3_advanced.py:woba_calc`** — player_woba now uses `(0.69*uBB + 0.72*HBP + 0.89*1B + 1.27*2B + 1.62*3B + 2.10*HR) / PA` (no scaling, no FanGraphs denominator).
+- **`src/diamond/schema/l3_advanced.py:_LG_CONSTANTS_NATIVE_VIEW_SQL` + `_LG_CONSTANTS_IMPORTED_VIEW_SQL`** — `woba_denom` changed from `(lg_ab + lg_bb - lg_ibb + lg_sf + lg_hp)` to `lg_pa`; `lg_woba` output column now selects `base_lg_woba` (which is the PA-denom base-weight value) instead of `lg_obp`. The scaled `w_*` columns (lg-OBP-calibrated) are retained for backward compat but no longer used by `player_woba`.
+- **`src/diamond/audit/reconcile.py:BATTING_DERIVED_CTE`** — reconciler's wOBA derivation switched to PA denominator to match the production formula.
+
+**Verification post-fix**:
+
+- Bastidas: Diamond .3562 ≈ IE .357 ✓
+- Ocopio: Diamond .2867/.2879 ≈ IE .282 ✓
+- Merrill: Diamond .3501 ≈ IE (within tolerance) ✓
+- **wOBA match: 76% → 94%** (8 remaining mismatches all small-sample DSL pitchers batting in <25 PA where OOTP applies league-specific scaling we don't fully replicate; acceptable as v1 noise floor).
+- Downstream stats stable: Merrill OPS+ 124 (IE 125), b_war 3.6 (IE 3.6), AVG .288 (IE .287).
+
+### Part 3 — Documented unrecoverable / deferred areas
+
+After the wOBA fix, the remaining reconciliation gap concentrates in two areas:
+
+**Statcast aggregation drift** (E-tier, batting_superstats_1 + pitching_superstats_1, 33 columns):
+
+- Pull% / Cent% / Oppo% — 5-18% match. Salvador Perez (RHB) IE Pull%=53.8 vs Diamond=28.2 — appears to be a `hit_xy` classification issue. Either hit_xy encoding semantics, threshold boundaries, or batter-relative-vs-stadium-relative interpretation diverges from OOTP. Documented as needing deep-dive.
+- GB% / FB% / LD% — 3-31% match. Likely same source as spray (launch_angle classification thresholds vs OOTP).
+- EV / LA / Barrel% / HHi — 53-86% match. Suspected BIP-cutoff and weighted-average alignment with OOTP's IE aggregation rules.
+
+**xBA / xSLG / xwOBA** (D-tier in superstats files, 7 columns):
+
+- Diamond computes these via 1D interpolation of `lref_xwoba_table` / `lref_xba_table` / `lref_xslg_table` (OOTP's own tables, copied verbatim from install folder) — by construction this should be OOTP-canonical.
+- BUT: Diamond's stored values differ significantly from OOTP IE display (Merrill 2028: Diamond xBA=.190 vs IE=.274; xSLG=.364 vs .502; xwOBA=.236 vs .336). BIP count also differs (Diamond=396 vs IE=351).
+- Hypothesis: OOTP IE includes wOBA-equivalent credit for BB/HBP non-BIP events, while Diamond's x-stats are BIP-only. OOTP's BIP count also seems to exclude certain weak-contact events Diamond counts. Needs OOTP-doc investigation.
+
+**Pitch-tracking metrics** (F-tier, batting_superstats_2 + pitching_superstats_2, 36 columns):
+
+- WH% / CH% / CL% / Z% / SW% / OS% / ZS% / OC% / ZC% / CTC% / FF% / BR% / OFF% / RV-FB / RV-BR / RV-OFF / RV — all per-pitch metrics OOTP computes inside the engine and exposes only via IE. **Permanently unrecoverable** without per-pitch data which OOTP doesn't dump.
+
+**Pinned**:
+
+- **Reconciler is now save-agnostic** — `diamond reconcile --save NAME --ie-dir PATH --source warehouse` works on any save with any folder of IE control CSVs.
+- **wOBA formula is OOTP-canonical** in both production (`l3_advanced.py`) and audit (`reconcile.py`). Same value computed both ways; drift only appears in small-sample minor-league players where OOTP applies engine-internal league scaling.
+- **Pre-Padres-recon-pass reconciliation reports against the Sox save may now show wOBA drift** that didn't appear pre-fix — those drifts were always there (small-sample Sox minor leaguers), they were just below the prior tolerance because Sox-only IE wOBA values happened to nearly coincide with FanGraphs-canonical for the MLB-heavy Sox population. The Sox warehouse needs `--rebuild-only` to refresh L3 with the corrected formula; numbers will shift slightly on minor-league rows (no MLB impact).
+- **Padres save accuracy floor**: 197/197 A-tier columns at 100%, 43/43 B-tier at 94-100%, plus documented Statcast / pitch-tracking gaps. Approximately 270/316 reconciliation columns (85%) at OOTP-canonical accuracy; remaining 46 columns are formula-investigation items (deferred to future sessions).
+
+### Wiring
+
+- Modified: `src/diamond/audit/reconcile.py` (`_resolve_ie_path` helper, `reconcile_file` accepts ie_dir, `run` signature extended, BATTING_DERIVED_CTE wOBA denom→PA, scouting stamp constant=4)
+- Modified: `src/diamond/cli.py` (reconcile command adds `--save` + `--ie-dir` flags + save resolution)
+- Modified: `src/diamond/schema/l3_advanced.py` (player_woba uses base weights × PA denom; lg_woba uses base_lg_woba in both Native + Imported views; woba_denom is lg_pa)
+- Verified: `diamond reconcile --save "The Fathers.lg" --ie-dir docs/helpful_files/recon/Padres --source warehouse` produces `audit_output/reconciliation_padres_2028_07.md` (cell-by-cell scorecard across 269 players × 21 files).

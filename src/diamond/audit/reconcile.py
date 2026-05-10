@@ -154,8 +154,10 @@ derived AS (
             / NULLIF((a.ab - a.h) + a.gdp + a.sh + a.sf + a.cs, 0),
             1
         ) AS rc27,
-        -- wOBA — Fangraphs standard linear weights, divided by PA-equivalent denom.
-        -- 1B = H - 2B - 3B - HR. uBB = BB - IBB.
+        -- wOBA — Fangraphs linear weights, divided by PA per OOTP convention
+        -- (NOT the FanGraphs (AB + uBB + SF + HBP) form). 1B = H - 2B - 3B - HR.
+        -- uBB = BB - IBB. See D38 — Padres reconciliation surfaced that OOTP
+        -- uses PA in the denominator; matters for players with SH > 0.
         ROUND(
             (0.69 * (a.bb - a.ibb)
              + 0.72 * a.hp
@@ -163,7 +165,7 @@ derived AS (
              + 1.27 * a.d
              + 1.62 * a.t
              + 2.10 * a.hr)::DOUBLE
-            / NULLIF(a.ab + a.bb - a.ibb + a.sf + a.hp, 0),
+            / NULLIF(a.pa, 0),
             3
         ) AS woba
     FROM agg a
@@ -1645,12 +1647,15 @@ def _connect_warehouse(
         )
 
     # `scouted_ratings` is special: D12 already filtered scouting_team_id=audit_team_id
-    # and dropped the column at L1. Reconcile.py's existing CTEs reference
-    # `scouting_team_id = 4` as a WHERE — we re-add the column as a constant
-    # so those filters still match (and stay no-ops).
-    con.execute(f"""
+    # at L1 (i.e. the L1 view IS already the audit team's perspective regardless
+    # of which save we're on). Reconcile.py's FileSpec CTEs hardcode
+    # `WHERE sr.scouting_team_id = 4` for historical Sox-era reasons. We stamp
+    # the constant 4 here regardless of save so those hardcoded filters pass.
+    # The actual data is the active save's audit-team view — the constant just
+    # satisfies the WHERE-clause sanity check that the CTEs were written for.
+    con.execute("""
         CREATE OR REPLACE VIEW scouted_ratings AS
-        SELECT * EXCLUDE (dump_date), {save.audit_team_id} AS scouting_team_id
+        SELECT * EXCLUDE (dump_date), 4 AS scouting_team_id
         FROM wh.players_ratings_snapshot
         WHERE dump_date = (SELECT MAX(dump_date) FROM wh.players_ratings_snapshot)
     """)
@@ -1755,15 +1760,59 @@ def _is_match(ie_val, derived_val, tol: float) -> bool | None:
     return abs(ie_f - dv_f) <= max(tol, 1e-9)
 
 
+def _resolve_ie_path(ie_dir: Path, spec_filename: str) -> Path | None:
+    """Locate IE file in ``ie_dir`` matching the FileSpec's filename.
+
+    FileSpec filenames are written with the Sox prefix
+    (``boston_red_sox_organization_-_roster_*.csv``) for historical reasons,
+    but the same FileSpec works for any org's roster export — column shapes
+    are identical across orgs. We try exact match first (Sox default), then
+    suffix-match on the org-agnostic tail (``_organization_-_roster_*.csv``)
+    so a Padres folder with ``san_diego_padres_organization_-_*`` files
+    resolves cleanly via the same spec.
+
+    Returns ``None`` if no match (caller logs a missing-file warning) or
+    if multiple matches (ambiguous — would need narrower filtering).
+    """
+    exact = ie_dir / spec_filename
+    if exact.exists():
+        return exact
+    # Extract the org-agnostic suffix and glob for it.
+    marker = "_organization_-_"
+    if marker not in spec_filename:
+        return None
+    suffix = marker + spec_filename.split(marker, 1)[1]
+    matches = sorted(ie_dir.glob(f"*{suffix}"))
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        console.print(
+            f"[yellow]Ambiguous IE filename match for {spec_filename!r} "
+            f"in {ie_dir}: {[m.name for m in matches]}[/yellow]"
+        )
+        return None
+    return None
+
+
 def reconcile_file(
     con: duckdb.DuckDBPyConnection,
     save: SaveConfig,
     spec: FileSpec,
+    ie_dir: Path | None = None,
 ) -> dict:
-    """Run reconciliation for a single import_export file. Returns scorecard dict."""
-    ie_path = save.import_export_dir / spec.ie_filename
-    if not ie_path.exists():
-        console.print(f"[red]Missing import_export file: {ie_path}[/red]")
+    """Run reconciliation for a single import_export file. Returns scorecard dict.
+
+    ``ie_dir`` overrides ``save.import_export_dir`` — used by the
+    ``--ie-dir`` CLI flag to point at an explicit control-data folder
+    (e.g. ``docs/helpful_files/recon/Padres/``) instead of the save's
+    own live IE folder.
+    """
+    resolved_dir = ie_dir if ie_dir is not None else save.import_export_dir
+    ie_path = _resolve_ie_path(resolved_dir, spec.ie_filename)
+    if ie_path is None:
+        console.print(
+            f"[red]Missing import_export file for {spec.short_name!r} in {resolved_dir}[/red]"
+        )
         return {"file": spec.short_name, "error": "missing"}
 
     # Build the derivation query (all aliases quoted to allow digits/special chars).
@@ -1963,6 +2012,7 @@ def run(
     dump: str | None = None,
     output_path: Path | None = None,
     source: str = "csv",
+    ie_dir: Path | None = None,
 ) -> Path:
     """Run per-column reconciliation.
 
@@ -1973,12 +2023,20 @@ def run(
                 which is the post-ingest regression check per Decision D8.
                 The warehouse mode catches any drift introduced by the
                 ingest pipeline (scope filters, dedup, type coercions).
+        ie_dir: Override the IE folder location. Defaults to
+                ``save.import_export_dir`` (the save's live IE export).
+                Pass an explicit folder (e.g.
+                ``docs/helpful_files/recon/Padres/``) to reconcile
+                against control-data snapshots stored outside the save.
+                Files match by org-agnostic suffix so any org's roster
+                files resolve via the existing Sox-prefixed FileSpecs.
     """
     dump = dump or save.latest_dump_name()
     output_path = output_path or Path("audit_output") / "reconciliation_report.md"
     src_label = "warehouse" if source == "warehouse" else f"{dump}/csv"
+    ie_label = f" / IE-dir={ie_dir}" if ie_dir is not None else ""
     console.rule(
-        f"[bold cyan]Reconciliation audit — {save.save_name} / {src_label}"
+        f"[bold cyan]Reconciliation audit — {save.save_name} / {src_label}{ie_label}"
     )
 
     if source == "warehouse":
@@ -1990,7 +2048,7 @@ def run(
     results = []
     for spec in ALL_FILES:
         console.print(f"  - {spec.short_name}")
-        results.append(reconcile_file(con, save, spec))
+        results.append(reconcile_file(con, save, spec, ie_dir=ie_dir))
 
     console.print()
     _print_console_summary(results)

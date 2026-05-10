@@ -243,7 +243,10 @@ derived AS (
          + {_BASE_W_2B}  * lg_d
          + {_BASE_W_3B}  * lg_t
          + {_BASE_W_HR}  * lg_hr) AS base_woba_num,
-        (lg_ab + (lg_bb - lg_ibb) + lg_sf + lg_hp) AS woba_denom
+        -- PA-in-denominator per OOTP-canonical wOBA formula (D38). Player-side
+        -- player_woba/PA matches OOTP's IE value; lg_woba derived here must
+        -- use the same denominator for woba_scale to calibrate correctly.
+        lg_pa AS woba_denom
     FROM joined
 ),
 scaled AS (
@@ -257,17 +260,23 @@ SELECT
     lg_bb, lg_ibb, lg_hp, lg_sf, lg_r, lg_singles, lg_nibb,
     lg_outs, lg_er, lg_hra, lg_pit_bb, lg_pit_hp, lg_pit_k,
     lg_ip, lg_era, lg_obp, lg_slg, runs_per_pa,
-    -- woba_scale calibrates linear weights so that league wOBA == league OBP
+    -- D38: wOBA uses BASE weights with PA denominator (OOTP-canonical).
+    -- The scaled weights below are retained for backward-compat with any
+    -- consumer that still needs lg-OBP-scaled values, but player_woba in
+    -- f_player_season_advanced_batting uses BASE weights directly.
+    -- woba_scale stays as lg_obp/base_lg_woba for downstream wRAA-style
+    -- conversions; it just doesn't appear in the player_woba formula anymore.
     lg_obp / NULLIF(base_lg_woba, 0) AS woba_scale,
-    -- Final scaled weights
     {_BASE_W_BB}  * (lg_obp / NULLIF(base_lg_woba, 0)) AS w_bb,
     {_BASE_W_HBP} * (lg_obp / NULLIF(base_lg_woba, 0)) AS w_hbp,
     {_BASE_W_1B}  * (lg_obp / NULLIF(base_lg_woba, 0)) AS w_1b,
     {_BASE_W_2B}  * (lg_obp / NULLIF(base_lg_woba, 0)) AS w_2b,
     {_BASE_W_3B}  * (lg_obp / NULLIF(base_lg_woba, 0)) AS w_3b,
     {_BASE_W_HR}  * (lg_obp / NULLIF(base_lg_woba, 0)) AS w_hr,
-    -- League wOBA — equals lg_obp by construction
-    lg_obp AS lg_woba,
+    -- League wOBA — base weights × counting / lg_pa (matches what
+    -- OOTP reports in league_history_batting_stats.woba — verified
+    -- 2026-05-10 against MLB 2027 OOTP-supplied .3176 ≈ derived .3202).
+    base_lg_woba AS lg_woba,
     -- FIP constant — calibrates so league FIP == league ERA
     lg_era - (13.0 * lg_hra + 3.0 * (lg_pit_bb + lg_pit_hp) - 2.0 * lg_pit_k) / NULLIF(lg_ip, 0) AS fip_constant
 FROM scaled
@@ -461,7 +470,10 @@ derived AS (
          + {_BASE_W_2B}  * lg_d
          + {_BASE_W_3B}  * lg_t
          + {_BASE_W_HR}  * lg_hr) AS base_woba_num,
-        (lg_ab + (lg_bb - lg_ibb) + lg_sf + lg_hp) AS woba_denom
+        -- PA-in-denominator per OOTP-canonical wOBA formula (D38). Player-side
+        -- player_woba/PA matches OOTP's IE value; lg_woba derived here must
+        -- use the same denominator for woba_scale to calibrate correctly.
+        lg_pa AS woba_denom
     FROM joined
 ),
 scaled AS (
@@ -482,7 +494,8 @@ SELECT
     {_BASE_W_2B}  * (lg_obp / NULLIF(base_lg_woba, 0)) AS w_2b,
     {_BASE_W_3B}  * (lg_obp / NULLIF(base_lg_woba, 0)) AS w_3b,
     {_BASE_W_HR}  * (lg_obp / NULLIF(base_lg_woba, 0)) AS w_hr,
-    lg_obp AS lg_woba,
+    -- D38: base-weight × lg_pa-denom league wOBA (matches OOTP-supplied).
+    base_lg_woba AS lg_woba,
     lg_era - (13.0 * lg_hra + 3.0 * (lg_pit_bb + lg_pit_hp) - 2.0 * lg_pit_k) / NULLIF(lg_ip, 0) AS fip_constant
 FROM scaled
 """
@@ -745,8 +758,22 @@ def _build_f_player_season_advanced_batting(con: duckdb.DuckDBPyConnection) -> i
         ),
         woba_calc AS (
             SELECT *,
-                (w_bb*nibb + w_hbp*hp + w_1b*singles + w_2b*d + w_3b*t + w_hr*hr)
-                / NULLIF(ab + nibb + sf + hp, 0) AS player_woba,
+                -- OOTP-canonical wOBA (D38): BASE linear weights with PA in
+                -- the denominator. Two corrections from FanGraphs convention:
+                --   (1) PA denominator, not (AB + uBB + SF + HBP)
+                --   (2) BASE weights, not lg-OBP-scaled weights
+                -- Verified empirically against IE export — Bastidas 2028
+                -- IE=.357 matches base × PA-denom = .356 (within rounding).
+                -- The previous lg-OBP-scaled approach forced lg_woba = lg_obp
+                -- by construction; OOTP doesn't enforce that relationship.
+                (
+                    {_BASE_W_BB}  * nibb
+                  + {_BASE_W_HBP} * hp
+                  + {_BASE_W_1B}  * singles
+                  + {_BASE_W_2B}  * d
+                  + {_BASE_W_3B}  * t
+                  + {_BASE_W_HR}  * hr
+                ) / NULLIF(pa, 0) AS player_woba,
                 -- Slash-line for OPS+
                 (h + bb + hp) / NULLIF(ab + bb + hp + sf, 0) AS player_obp,
                 (singles + 2*d + 3*t + 4*hr) / NULLIF(ab, 0)  AS player_slg

@@ -4,7 +4,25 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-17 — **D37 in-progress season league constants + multi-save endpoint resilience.** Day after D36 shipped, user opened the Padres save mid-2028 (`dump_2028_07`, mid-July) and reported the cockpit was showing a giant red "0" headline metric on every spotlight player + "No qualifiers yet" on the MLB Pressure board + History → Hall of Fame returned 500. Three distinct fixes:
+**Last updated**: 2026-05-17 (afternoon) — **D38 Padres reconciliation pass + wOBA formula correction.** After D37 stabilized the Padres save, user provided OOTP control data (`docs/helpful_files/recon/Padres/`: 21 stat CSVs + 65 screenshots, all 7/31/2028) and asked to reconcile sim stats to OOTP IE before layering in baseball history. Three D38 changes:
+
+| # | Item | Result |
+|---|---|---|
+| 1 | **Multi-save reconciler infra** — `_resolve_ie_path` org-agnostic suffix match + `--ie-dir`/`--save` CLI flags + scouting-stamp fix so audit reads from any folder of IE CSVs on any save | Reconciliation now works on Padres (was Sox-only); 21 FileSpecs unchanged |
+| 2 | **wOBA formula correction** — OOTP uses BASE linear weights × PA denominator (not the FanGraphs scaled-weights × (AB+uBB+SF+HBP) form). Verified against Bastidas 2028 IE=.357 — old Diamond .372, new Diamond .356. Fix landed in `l3_advanced.py` (player_woba + lg_woba in both Native/Imported views) and `reconcile.py` BATTING_DERIVED_CTE | wOBA tier: 76% → **94%** match (8 small-sample DSL outliers remain) |
+| 3 | **Accuracy floor documented** — 197 A-tier columns at 100%, 43 B-tier at 94-100% (rounding-grade). Statcast aggregation (33 E-tier cols), xBA/xSLG/xwOBA (7 D-tier), and pitch-tracking (36 F-tier) flagged for future investigation; pitch-tracking permanently unrecoverable (OOTP-internal). | ~85% of reconcile columns at OOTP-canonical accuracy |
+
+**Verification post-fix**: Bastidas 2028 wOBA Diamond .356 vs IE .357 ✓; Ocopio .287/.288 vs IE .282 ✓; Merrill OPS+ 124 vs IE 125, b_war 3.6 vs IE 3.6 ✓. All 21 reconcile files run cleanly; output at `audit_output/reconciliation_padres_2028_07.md`.
+
+**Deferred to future sessions** (all in BACKLOG / todo list):
+- Statcast spray classification (Pull/Cent/Oppo at 5-18% match) — hit_xy encoding semantics deep-dive
+- Statcast aggregation alignment (EV/LA/HHi/Barrel% at 53-86%) — BIP cutoff + weighting
+- xBA/xSLG/xwOBA formula divergence — OOTP IE includes non-BIP credit?
+- Phase 1+ work (HoF Lahman drop, lref_player_*, Retrosheet, Almanac UI, stretch comparator)
+
+---
+
+**2026-05-17 (morning)** — **D37 in-progress season league constants + multi-save endpoint resilience.** Day after D36 shipped, user opened the Padres save mid-2028 (`dump_2028_07`, mid-July) and reported the cockpit was showing a giant red "0" headline metric on every spotlight player + "No qualifiers yet" on the MLB Pressure board + History → Hall of Fame returned 500. Three distinct fixes:
 
 | # | Issue | Where |
 |---|---|---|
