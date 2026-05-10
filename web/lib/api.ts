@@ -433,16 +433,3 @@ export async function triggerIngest(): Promise<IngestRunResponse> {
   });
 }
 
-// Trigger a one-click shutdown of both dev servers (Next.js :3000 and
-// FastAPI :8000). Returns immediately; the actual kill happens ~1s
-// later in a detached subprocess so this response gets to flush first.
-// Windows-only — see `src/diamond/api/routes/admin.py`.
-export async function shutdownApp(): Promise<{
-  status: string;
-  ports: number[];
-}> {
-  return fetchJson<{ status: string; ports: number[] }>(
-    "/api/admin/shutdown",
-    { method: "POST" },
-  );
-}

@@ -1,9 +1,9 @@
 """Pydantic schemas for the admin endpoints.
 
-Backs three admin surfaces:
-- ``POST /api/admin/shutdown``   — no payload, no schema
-- ``GET  /api/admin/dump-status`` — counts + pending dump list (this file)
-- ``POST /api/admin/ingest``      — ingest result summary (this file)
+Backs the typed admin surfaces:
+- ``GET  /api/admin/dump-status``     — counts + pending dump list (this file)
+- ``POST /api/admin/ingest``          — ingest result summary (this file)
+- ``GET  /api/admin/metabase-status`` — untyped dict response (D31)
 """
 
 from __future__ import annotations

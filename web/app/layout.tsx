@@ -25,7 +25,6 @@ import Link from "next/link";
 
 import { AISidebar } from "@/components/AISidebar";
 import { PagePayloadProvider } from "@/components/PagePayloadProvider";
-import { QuitButton } from "@/components/QuitButton";
 import { RefreshButton } from "@/components/RefreshButton";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 
@@ -84,7 +83,6 @@ export default function RootLayout({
             <div className="flex items-center gap-1.5">
               <RefreshButton />
               <ThemeSwitcher />
-              <QuitButton />
             </div>
           </div>
         </header>
