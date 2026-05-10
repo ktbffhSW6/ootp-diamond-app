@@ -17,6 +17,11 @@
 
 PY := .venv/Scripts/python.exe
 
+# Export to all child processes — Rich + dictionary unicode glyphs
+# need UTF-8 stdio to render in cmd. Replaces the per-launcher env
+# var that used to live in api.bat (deleted in D34 launcher cleanup).
+export PYTHONIOENCODING := utf-8
+
 help:
 	@echo "Diamond — common tasks:"
 	@echo "  make api       Run FastAPI backend on http://localhost:8000"

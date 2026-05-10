@@ -73,52 +73,39 @@ make web
 
 Equivalent: `cd web && pnpm dev`
 
-### Windows without `make`
+### One-shot dev launcher
 
-If you don't have `make` installed (it's not part of base Windows),
-use the batch shortcuts at the repo root instead:
+`dev.bat` at the repo root is the one-shot convenience wrapper.
+Double-click from Explorer or run from cmd. Sequence:
 
-```cmd
-api.bat         :: same as `make api`
-web.bat         :: same as `make web`
-dev.bat         :: spawn both + open the browser at :3000 (one-shot launcher)
-kill-stale.bat  :: clear any process on :3000 / :8000 (recovery tool)
-```
-
-Both `api.bat` and `web.bat` `cd` to the right directory, set
-`PYTHONIOENCODING=utf-8` (needed for Rich box-drawing on the API
-side), and pause on error so the message is readable. Double-clicking
-either file from Explorer also works.
-
-`dev.bat` is the one-shot convenience wrapper. Sequence:
-
-1. `kill-stale.bat` — self-heal stale ports from a crashed prior session
-2. **`diamond ingest --all`** — picks up any new dumps OOTP wrote since
-   last launch. No-op (~2-3s) when nothing's new; runs the L0/L1/L2/L3
-   pipeline for each pending dump otherwise. Has to run BEFORE uvicorn
-   binds because uvicorn holds an RW lock on the DuckDB file. Skip with
-   `set DIAMOND_SKIP_AUTO_INGEST=1` in the parent shell.
-3. `start "Diamond API" cmd /k api.bat` — uvicorn :8000 in its own window
-4. `start "Diamond Web" cmd /k web.bat` — Next.js :3000 in its own window
+1. **Self-heal stale ports** — inline `netstat | findstr LISTENING |
+   taskkill` loop clears anything left over on :3000 / :8000 from a
+   crashed prior session. Required because if a prior `dev.bat` was
+   force-closed (machine sleep, console kill, OS reboot) and left
+   uvicorn or `next dev` orphaned, the next launch either fails to
+   bind, OR — worse — Next.js silently connects to the stale uvicorn
+   while you think you're running current code.
+2. **`diamond ingest --all`** — picks up any new dumps OOTP wrote
+   since last launch. No-op (~2-3s) when nothing's new; runs the
+   L0/L1/L2/L3 pipeline for each pending dump otherwise. Has to run
+   BEFORE uvicorn binds because uvicorn holds an RW lock on the
+   DuckDB file. Skip with `set DIAMOND_SKIP_AUTO_INGEST=1` in the
+   parent shell.
+3. `start "Diamond API" cmd /k make api` — uvicorn :8000 in its own window
+4. `start "Diamond Web" cmd /k make web` — Next.js :3000 in its own window
 5. After a 6-second pause, opens the default browser to localhost:3000
 
-If you only need to restart one side, use `api.bat` / `web.bat`
-directly. Those don't auto-ingest — quickest way to skip the ingest
-check is `api.bat` (or hit the in-app **↻ Refresh** button later, see
-below).
+If you only need to restart one side, run `make api` or `make web`
+directly in a terminal. Those don't auto-ingest — quickest way to
+skip the ingest check.
 
-`kill-stale.bat` exists for the recovery case the in-app **Quit**
-button can't help with: a prior session was force-closed (machine
-sleep, console window kill, OS reboot) and left a uvicorn or `next
-dev` orphaned on its port. The next launch then fails to bind, OR —
-worse — Next.js silently connects to the **stale uvicorn** while you
-think you're running current code. The Quit button needs a reachable
-API to receive the POST; this script doesn't, so it's the canonical
-side-channel cleanup. It uses `netstat -ano` + `taskkill /F /T` to
-clear anything holding :3000 / :8000 regardless of how it was
-launched. Double-clickable; also called automatically by `dev.bat`
-so the normal launch workflow self-heals without you having to
-remember it exists.
+History (D34 cleanup, 2026-05-16): the prior dev launcher was four
+files (`dev.bat` + `api.bat` + `web.bat` + `kill-stale.bat`).
+Collapsed into the single `dev.bat` above, calling Makefile targets
+directly. Saves 3 files at the repo root and ~85 LOC.
+
+For production / single-window experience without the dev consoles,
+use `Diamond.vbs` instead — see `docs/DESKTOP.md`.
 
 ### Keeping the warehouse fresh
 
@@ -245,19 +232,22 @@ copy its shape when adding new resources.
 - **`make types` fails**: confirm `pnpm install` ran successfully in
   `web/` and `web/node_modules/.bin/json2ts` exists.
 - **`uvicorn` fails to bind on :8000 / `next dev` fails on :3000**:
-  a prior session left a stale process holding the port. Run
-  `kill-stale.bat` (double-click or from cmd) and relaunch.
-  `dev.bat` calls this automatically so the normal workflow
-  self-heals — but `api.bat` / `web.bat` don't (they're per-side
-  shortcuts), so the recovery script is your friend if you only
-  restart one half.
+  a prior session left a stale process holding the port. Re-run
+  `dev.bat` — its inline self-heal step clears stale processes on
+  :3000 / :8000 before launch (D34). For a manual side-channel
+  cleanup if you don't want to relaunch dev.bat:
+  ```cmd
+  for /f "tokens=5" %I in ('netstat -ano ^| findstr ":3000.*LISTENING"') do taskkill /F /PID %I
+  for /f "tokens=5" %I in ('netstat -ano ^| findstr ":8000.*LISTENING"') do taskkill /F /PID %I
+  ```
 - **Code changes don't appear in the running app**: classic
   symptom of Next.js silently connecting to a stale uvicorn from a
   prior session. The browser hits the new Next, but Next's
   server-component fetches reach the OLD uvicorn (still on :8000).
-  Run `kill-stale.bat` and restart `dev.bat`. To confirm: hit
-  `http://localhost:8000/api/health` and check the response —
-  the `version` field bumps with each new schema-affecting commit.
+  Quit + relaunch `dev.bat` (the self-heal step kills stale
+  processes). To confirm: hit `http://localhost:8000/api/health` and
+  check the response — the `version` field bumps with each new
+  schema-affecting commit.
 
 ## What's not in scope (yet)
 
