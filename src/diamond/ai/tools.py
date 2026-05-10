@@ -18,13 +18,18 @@ Tier mapping (per CLAUDE.md tier table):
 
 Safety rails on ``query_warehouse``:
 - Read-only DuckDB cursor (FastAPI's ``get_cursor`` already gives us
-  this; we wrap with row + time limits).
+  this; we wrap with a row cap).
 - Hard ``LIMIT 1000`` injected if the model didn't provide one.
-- 5-second statement timeout.
 - Single statement only — split on ``;`` and reject if multiple
   non-empty statements.
 - Forbidden keywords: ``DROP``, ``DELETE``, ``UPDATE``, ``INSERT``,
   ``CREATE``, ``ALTER``, ``ATTACH``, ``COPY``, ``EXPORT``.
+
+Note on timeouts: DuckDB 1.5.x has no native ``statement_timeout``
+config parameter (Postgres has one; DuckDB doesn't). For v1 we rely
+on LIMIT + read-only + single-statement to bound runtime. A
+threading.Timer + ``con.interrupt()`` watchdog is a v2 followup if
+runaway queries show up in practice.
 
 Tools never raise to the caller. They return ``{"ok": False, "error":
 "..."}`` and let the model recover or apologize. A tool that raised
@@ -87,7 +92,6 @@ _FORBIDDEN_RE = re.compile(
 )
 _LIMIT_RE = re.compile(r"\bLIMIT\s+\d+\b", re.IGNORECASE)
 _DEFAULT_ROW_CAP = 1000
-_QUERY_TIMEOUT_MS = 5_000
 
 
 def _query_warehouse(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
@@ -128,8 +132,6 @@ def _query_warehouse(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
         sql = f"{sql.rstrip()} LIMIT {_DEFAULT_ROW_CAP}"
 
     try:
-        # DuckDB statement timeout — applied per-cursor.
-        ctx.cursor.execute(f"SET statement_timeout = '{_QUERY_TIMEOUT_MS}ms'")
         result = ctx.cursor.execute(sql)
         columns = [c[0] for c in result.description] if result.description else []
         rows = result.fetchall()
@@ -145,15 +147,13 @@ def _query_warehouse(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
             "sql": sql,
         }
     except duckdb.Error as exc:
+        # Log so failures show up in the launcher log; the model
+        # still gets the structured error so it can recover.
+        log.warning("query_warehouse DuckDB error: %s\n  sql: %s", exc, sql)
         return {"ok": False, "error": f"DuckDB error: {exc}", "sql": sql}
     except Exception as exc:  # pragma: no cover
         log.exception("query_warehouse unexpected error")
         return {"ok": False, "error": f"Internal: {exc}", "sql": sql}
-    finally:
-        try:
-            ctx.cursor.execute("SET statement_timeout = '0'")
-        except Exception:
-            pass
 
 
 def _to_jsonable(v: Any) -> Any:
