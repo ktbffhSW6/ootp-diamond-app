@@ -4,7 +4,41 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-16 — **Phase 3: D34 cleanup pass.** Three small commits on top of yesterday's D32 desktop shell + D33 AI sidebar work, removing pre-D32 vestigial code and tightening the surface. Plus six same-day D33 follow-ups landed: model auto-migration, DuckDB timeout fix, describe_table tool, persona setting + tool-plumbing hide, page-payload wiring, get_career_arc tool with cite-your-sources prompt.
+**Last updated**: 2026-05-16 (later) — **D35 AI sidebar polish: Claude.ai-style rendering + SSE streaming.** Four-tier rebuild of the AI sidebar fixing the "table renders as raw `| Stat | ... |` text" gap visible in the post-D33 screenshots. The model was producing perfect GFM markdown the whole time; the sidebar was just `whitespace-pre-wrap`-dumping it. Plus new SSE streaming endpoint so the model writes character-by-character with an animated cursor.
+
+**D35 four-tier delivery**:
+
+| Tier | What | Where |
+|---|---|---|
+| **A — Markdown rendering** | Assistant text now renders via `react-markdown` + `remark-gfm` + `rehype-katex` + `remark-math`. Tables get borders + zebra stripes, headings get hierarchy, lists indent properly, inline + block code get monospace + subtle bg. Per-text-block card chrome dropped — assistant prose flat against panel bg. | `web/components/ai/MarkdownMessage.tsx` (new, ~140 LOC) |
+| **B — Visual polish** | Consecutive assistant turns coalesce into one labeled response group (the tool loop produces 3-4 turns; the user perceives one answer, so we render one Diamond label). User messages: subtle right-aligned pill (`bg-surface-card`, max 85% width). Assistant: full-width flat with ✦ glyph + accent label. Hover-revealed copy button. Panel default width 440 → 520. | `AISidebar.tsx` rewrite (`Group` + `groupTurns`) |
+| **C — SSE streaming** | New `POST /api/ai/chat/stream` returns `text/event-stream`. Provider-agnostic event vocabulary: `text_delta`, `tool_use`, `tool_result`, `iteration`, `error`, `done`. Both adapters implement native streaming (Anthropic SSE + OpenAI delta-chunk SSE); `AIClient.chat_stream` has a default fallback that re-emits `chat()` results. Frontend `streamChat()` parses SSE incrementally with abort support. UI shows a blinking ▍ cursor at the end of streaming text + a Stop button replacing Send. | `src/diamond/api/routes/ai.py` (`_stream_chat`); `src/diamond/ai/adapters/{anthropic,openai}.py` (`chat_stream`); `web/lib/ai-chat.ts` (`streamChat`) |
+| **D — Chrome polish** | Mode pills moved into the header (no longer compete with input area). Drag-to-resize via 2px handle on left edge of panel; width persists to localStorage (380-900px range). "Jump to latest" button appears when scrolled away from bottom mid-stream. | `AISidebar.tsx` header + drag handlers + scroll observer |
+
+**Provider-agnostic streaming protocol** (Anthropic + OpenAI both speak this):
+
+```
+event: iteration\ndata: {"n": 1}\n\n
+event: text_delta\ndata: {"text": "Looking up "}\n\n
+event: text_delta\ndata: {"text": "Garrett Crochet..."}\n\n
+event: tool_use\ndata: {"id": "tu_01", "name": "get_career_arc", "input": {...}}\n\n
+event: tool_result\ndata: {"tool_use_id": "tu_01", "content": {...}, "is_error": false}\n\n
+event: iteration\ndata: {"n": 2}\n\n
+event: text_delta\ndata: {"text": "At age 30..."}\n\n
+event: done\ndata: {"stop_reason": "end_turn", "iterations": 2}\n\n
+```
+
+Frontend mutates a `StreamingState` in place per event (text_delta → append to last text block; tool_use → push to current assistant turn; tool_result → push user turn with tool_result). On done, streaming state drains into the committed thread.
+
+**Files touched**: 5 source + 1 new component (`MarkdownMessage.tsx`). pnpm deps added: `react-markdown@^10`, `remark-gfm@^4`, `rehype-katex@^7`, `remark-math@^6`.
+
+**Compat**: existing `POST /api/ai/chat` (synchronous) endpoint stays; the new streaming endpoint is additive. Both share the same tool loop + system prompt + 6-iteration cap.
+
+**Sync endpoint not deprecated** — kept for tests, non-streaming integrations, and as a fallback if the streaming code path ever needs to be bypassed. Frontend uses streaming exclusively.
+
+---
+
+**2026-05-16 (earlier) — Phase 3: D34 cleanup pass.** Three small commits on top of yesterday's D32 desktop shell + D33 AI sidebar work, removing pre-D32 vestigial code and tightening the surface. Plus six same-day D33 follow-ups landed: model auto-migration, DuckDB timeout fix, describe_table tool, persona setting + tool-plumbing hide, page-payload wiring, get_career_arc tool with cite-your-sources prompt.
 
 **D34 cleanup (today)**:
 
@@ -23,7 +57,7 @@
 - **Page-payload wiring** — `<PagePayloadProvider>` Context + `<PagePayloadBridge>` server-component bridge with 16KB cap. Cockpit + player page publish their data; AISidebar reads via `usePagePayload()` and includes in `page_context.payload`. Model now sees what the user sees. (`2381f0b`)
 - **`get_career_arc` tool + cite-your-sources prompt** — fixes the Crochet-vs-Ryan hallucination class (model claimed Ryan career pWAR 1,650.6 vs actual 117.9; got year-to-age mapping wrong). Tool returns deterministic age-per-year + warehouse-aggregated career WAR. System prompt: "cite tool sources for every specific number; never from training-data memory." (`5711f98`)
 
-**API surface today** (33 endpoints — D34 removed `/api/admin/shutdown`).
+**API surface today** (34 endpoints — D34 removed `/api/admin/shutdown`; D35 added `/api/ai/chat/stream`).
 
 **Tool count**: 8 (query_warehouse, describe_table, get_career_arc, get_player, compare_players, get_glossary, list_leaderboard_stats, create_metabase_card).
 

@@ -16,6 +16,7 @@ Errors:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Iterator
 
 from diamond.ai.settings import AISettings, get_api_key
 
@@ -86,6 +87,57 @@ class AIClient(ABC):
         assistant message + a user message with tool_result blocks,
         and call chat() again.
         """
+
+    def chat_stream(
+        self,
+        messages: list[dict],
+        *,
+        system: str | None = None,
+        tools: list[dict] | None = None,
+        max_tokens: int = 1500,
+    ) -> Iterator[dict]:
+        """Streaming variant of ``chat`` (D35 Tier C).
+
+        Yields a sequence of provider-agnostic events:
+
+            {"type": "text_delta", "text": "...chunk..."}
+            {"type": "tool_use", "id": "...", "name": "...", "input": {...}}
+            {"type": "done", "stop_reason": "end_turn" | "tool_use" | ...}
+
+        Adapters that don't support native streaming may degrade to
+        a synchronous round-trip and emit the full text as a single
+        text_delta event (the default fallback below). Adapters that
+        do support streaming override this method to yield deltas as
+        the provider produces them.
+        """
+        # Default fallback: call non-streaming chat() and re-emit as
+        # a single text_delta + tool_use events + done. Concrete
+        # adapters override this for true streaming.
+        result = self.chat(
+            messages,
+            system=system,
+            tools=tools,
+            max_tokens=max_tokens,
+        )
+        for block in result.get("content", []):
+            if not isinstance(block, dict):
+                continue
+            t = block.get("type")
+            if t == "text":
+                txt = block.get("text", "")
+                if txt:
+                    yield {"type": "text_delta", "text": txt}
+            elif t == "tool_use":
+                yield {
+                    "type": "tool_use",
+                    "id": block.get("id", ""),
+                    "name": block.get("name", ""),
+                    "input": block.get("input") or {},
+                }
+        yield {
+            "type": "done",
+            "stop_reason": result.get("stop_reason", "end_turn"),
+        }
 
     @property
     @abstractmethod

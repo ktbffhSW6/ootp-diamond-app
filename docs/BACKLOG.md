@@ -123,12 +123,27 @@ Metabase API.
   year + warehouse-aggregated career WAR. System prompt mandates
   citing tool sources for every specific number. Tool count 7 → 8.
 
-### AI sidebar v2 follow-ups — DEFERRED
+### AI sidebar v2 follow-ups — partially shipped via D35
 
-- [ ] **Streaming responses** (SSE) — sidebar currently shows
-      "Thinking…" until the full tool loop finishes (5-15s for
-      complex questions). Streaming would let intermediate reasoning
-      appear live. ~1 day.
+- ✅ **Streaming responses** (SSE) — D35 Tier C. New `POST
+  /api/ai/chat/stream` endpoint emits provider-agnostic events
+  (`text_delta`, `tool_use`, `tool_result`, `iteration`, `done`,
+  `error`); both Anthropic + OpenAI adapters implement native
+  streaming; frontend `streamChat()` parses SSE incrementally with
+  abort support; UI shows blinking ▍ cursor + Stop button. (D35,
+  2026-05-16)
+- ✅ **Markdown rendering for assistant text** — D35 Tier A.
+  `MarkdownMessage` component via `react-markdown` + `remark-gfm` +
+  `rehype-katex` + `remark-math`. Tables / headings / lists / code
+  blocks all render properly; per-text-block card chrome dropped.
+- ✅ **Coalesced response groups + Claude.ai-style asymmetry** —
+  D35 Tier B. Consecutive assistant turns render under one Diamond
+  label; user messages right-aligned pills; assistant flat
+  full-width prose; hover copy button.
+- ✅ **Resizable + repositioned chrome** — D35 Tier D. Drag-to-
+  resize handle on left edge (380-900px, persisted); mode pills
+  moved into header; jump-to-latest button when scrolled away
+  mid-stream.
 - [ ] **Conversation persistence** — threads live in component state
       only. Per-save persistence to `~/.diamond/<save>/ai-threads/*.json`
       would let users resume long analyses. ~half day.

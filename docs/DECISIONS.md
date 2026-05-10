@@ -1257,3 +1257,87 @@ web/
 - All `src/diamond/` modules — every one is imported somewhere (an earlier "unused module" scan was a false alarm caused by multi-line `from X import (a, b, c)` patterns).
 
 **Pinned**: window X + tray Quit are the only quit paths; tray Show focuses the window via Qt signal; no separate per-server .bat files (Makefile is the source of truth).
+
+## D35 — AI sidebar Claude.ai-style polish: markdown rendering + SSE streaming
+
+**Date**: 2026-05-16 (later)
+**Context**: Post-D33 the AI sidebar was functionally complete (page context + 8 tools + 4 modes + Metabase card creation) but visually unfinished. A user screenshot of a "compare Greg Maddux to Garrett Crochet at the same age" response showed the model producing an A-tier markdown answer — header, side-by-side comparison table, bold verdict — and the sidebar dumping it all as raw `| Stat | Greg Maddux ... |` text with literal `**asterisks**`. Plus per-text-block card chrome stacked four "DIAMOND" labels down the panel for one tool-using response. Plus no streaming — the user stares at "Thinking…" for 4-8 seconds while the model writes a long answer that arrives all at once.
+
+**Decision**: Ship a four-tier polish pass that closes the visual gap to Claude.ai while preserving every D33 capability.
+
+### Tier A: markdown rendering
+
+Add `react-markdown` + `remark-gfm` + `rehype-katex` + `remark-math` as pnpm deps. New `MarkdownMessage` component renders assistant text through these with a custom `Components` map applying theme-aware Tailwind classes per element (h2/h3 hierarchy, GFM tables with borders + zebra stripes, lists with proper marker color, inline + block code with monospace + subtle bg, blockquotes, links opening in new tab — which the launcher's `ExternalLinkPage` routes to the system browser).
+
+**Why not `@tailwindcss/typography`?** The prose plugin pulls a lot of CSS we don't need and would have to be re-themed across our four themes (light/dark/neutral/cb). Inline className overrides per element gives us less CSS, full theme integration, and explicit control over density (the panel is only 520px wide; `prose` defaults are sized for full-page documents).
+
+**Per-text-block card chrome dropped.** The pre-D35 sidebar wrapped each text block in `border + bg-surface-card`. Combined with the per-turn role label, a tool-using response stacked four "DIAMOND ➜ pill ➜ DIAMOND ➜ pill" units. Now: assistant prose flat against the panel bg, one Diamond label per response group.
+
+### Tier B: visual polish
+
+Three structural changes:
+
+1. **Coalesce consecutive assistant turns** into one rendered "response group" (user perceives a multi-iteration tool loop as one answer, so we render one Diamond header). `groupTurns()` walks the thread, starting a new group when a user-text turn arrives, otherwise appending to the trailing assistant group.
+2. **User vs assistant asymmetry** — user messages: subtle right-aligned `bg-surface-card` pill (max 85% width, rounded-2xl with sharp top-right corner). Assistant: full-width flat prose with a small ✦ glyph next to the accent-colored "Diamond" label.
+3. **Hover-revealed copy button** at the bottom of each completed assistant response. Uses `navigator.clipboard.writeText` with a 1.5s "✓ Copied" confirmation.
+
+Panel default width 440 → 520. The 440px width was cramping tables.
+
+### Tier C: SSE streaming
+
+The biggest piece. Three layers:
+
+1. **`AIClient.chat_stream`** — new method on the abstract base; signature mirrors `chat()` but returns `Iterator[dict]`. Default implementation calls `chat()` and re-emits the result as a sequence of `text_delta` + `tool_use` + `done` events (so any future adapter that doesn't support native streaming still works through the pipeline).
+
+2. **Native streaming in both adapters**:
+   - **Anthropic**: `httpx.Client.stream("POST", ..., json={..., "stream": True})`. Consumes SSE frames per the [Messages streaming spec](https://docs.anthropic.com/en/api/messages-streaming) — `content_block_start` (text or tool_use), `content_block_delta` (text_delta or input_json_delta accumulating partial JSON), `content_block_stop`, `message_delta` (final stop_reason), `message_stop`. Re-emits as our provider-agnostic event vocabulary.
+   - **OpenAI**: same shape, different events. `delta.content` for text chunks, `delta.tool_calls[]` with per-`index` arguments accumulating piece by piece. After stream closes, the tool_call accumulator emits `tool_use` events. `finish_reason` maps to `stop_reason` per the same vocabulary as the sync `chat()` method.
+
+3. **Route `_stream_chat`** — new `POST /api/ai/chat/stream` endpoint wraps a `StreamingResponse(text/event-stream)`. Generator drives the same tool loop as the sync endpoint (6-iteration cap), but yields SSE frames per event:
+
+   ```
+   event: iteration\ndata: {"n": 1}\n\n
+   event: text_delta\ndata: {"text": "..."}\n\n
+   event: tool_use\ndata: {"id", "name", "input"}\n\n
+   event: tool_result\ndata: {"tool_use_id", "content", "is_error"}\n\n
+   event: done\ndata: {"stop_reason": "end_turn", "iterations": N}\n\n
+   ```
+
+   Errors emit `event: error\ndata: {"detail": "..."}\n\n` followed by a terminating `done`. Headers include `X-Accel-Buffering: no` so QtWebEngine surfaces deltas promptly.
+
+4. **Frontend `streamChat()`** — uses `fetch().body.getReader()` + `TextDecoder` to parse SSE incrementally. Frame parser splits on `\n\n`, picks `event:` + `data:` lines, dispatches to a handler. Supports `AbortController.signal` for the user's "Stop" button.
+
+5. **`StreamingState`** machine in `AISidebar.tsx` — mutates an in-flight turn array per event (text_delta appends to the trailing text block on the trailing assistant turn; tool_use pushes a new tool_use block; tool_result starts a user turn carrying the result; iteration boundary starts a fresh assistant turn). On `done`, drains into the committed thread.
+
+6. **Animated cursor** — `BlinkingCursor` component (a `h-3.5 w-1.5 animate-pulse bg-accent` block) appears at the end of the streaming text block + as a "Thinking…" indicator before any text arrives. Send button swaps to a Stop button while streaming.
+
+**Why both endpoints, not just the streaming one?** The synchronous `/api/ai/chat` endpoint stays for tests, non-streaming integrations, and as a fallback. Both share the system prompt builder, tool loop, and 6-iteration cap; the only difference is delivery.
+
+### Tier D: chrome polish
+
+- **Mode pills moved into the header** (Tier 3 quick-actions). Pre-D35 they sat above the input area, splitting attention between two control bands. In the header they're closer to the other meta-controls (Tools toggle, New, Close).
+- **Drag-to-resize** — 2px-wide invisible handle on the panel's left edge. PointerEvents drive width; persisted to `localStorage["diamond.ai.width"]` (clamped 380-900px).
+- **Jump-to-latest button** — sticky pill that appears when the user scrolls 60+px above the bottom mid-stream. Click smooth-scrolls back down.
+
+### Failure modes and recovery
+
+- **Provider rejects streaming** (e.g. older Anthropic snapshot pre-stream-API): adapter raises `AIClientError`, route emits an `error` SSE event + `done`, frontend displays the error inline and offers retry.
+- **Network drop mid-stream**: `httpx.HTTPError` caught; same error/done path. Frontend's `AbortController` also handles this client-side.
+- **User clicks Stop**: `ctrl.abort()` → frontend drains any partial assistant turn into the committed thread (so the user keeps what was already streamed) + clears the streaming state. The route's generator yields control to FastAPI's response cleanup; no zombie tool calls (tools run server-side between iterations, not during a stream).
+- **Markdown parse fail in `MarkdownMessage`**: react-markdown is forgiving; malformed input renders as plain text rather than throwing. KaTeX's rehype plugin is also fail-soft (renders `\notarealmacro` as the source string).
+
+### What this does NOT do
+
+- **Conversation persistence to disk** — still in-memory only per browser session. Backlog item.
+- **Token usage tracking + daily cap** — not yet. Backlog item.
+- **More tools** (`get_team`, `get_standings`, `get_movements`) — not yet. Backlog.
+- **Inline embedded Metabase static-embed previews** — `create_metabase_card` still renders as a launcher link, not an inline iframe. Backlog.
+- **Streaming tool inputs** — Anthropic streams the tool's input JSON character by character; we accumulate and only emit `tool_use` once the block stops. Showing the partial JSON would be visual noise; deferred.
+
+### Wiring
+
+- New file: `web/components/ai/MarkdownMessage.tsx`.
+- Modified: `src/diamond/ai/client.py` (added `chat_stream` default), `src/diamond/ai/adapters/anthropic.py` + `openai.py` (native streaming overrides), `src/diamond/api/routes/ai.py` (new `/api/ai/chat/stream` endpoint + `_stream_chat` generator + `_sse` frame helper), `web/lib/ai-chat.ts` (new `streamChat` + `StreamEvent` type), `web/components/AISidebar.tsx` (full rewrite combining tiers B+C+D atop the markdown renderer from A).
+- pnpm deps: `react-markdown@^10`, `remark-gfm@^4`, `rehype-katex@^7`, `remark-math@^6`. Bundle weight ~80KB gzipped — acceptable for a desktop-shell app where the bundle ships once at install time.
+
+**Pinned**: AI prose renders as markdown; assistant text is flat full-width with one Diamond label per response group; user messages are right-aligned pills; streaming via SSE with a Stop button + animated cursor; mode pills + drag-to-resize live in the header.

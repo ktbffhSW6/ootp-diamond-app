@@ -24,10 +24,11 @@ don't need that in our log files.
 from __future__ import annotations
 
 import logging
-from typing import Annotated
+from typing import Annotated, Iterator
 
 import duckdb
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 
 from diamond.ai import (
     AIClientError,
@@ -629,4 +630,190 @@ def chat(
         appended=appended,
         stop_reason=stop_reason,
         iterations=iterations,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Streaming chat endpoint (D35 Tier C)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _sse(event: str, data: dict | str) -> str:
+    """Format one SSE event frame."""
+    if isinstance(data, str):
+        body = data
+    else:
+        body = _json.dumps(data, default=str)
+    return f"event: {event}\ndata: {body}\n\n"
+
+
+def _stream_chat(
+    body: ChatRequest,
+    cursor: duckdb.DuckDBPyConnection,
+) -> Iterator[str]:
+    """Generator yielding SSE frames for ``/api/ai/chat/stream``.
+
+    Drives the same tool loop as the synchronous endpoint, but emits
+    incremental events:
+
+      - ``text_delta`` {"text": "..."}                — partial assistant text
+      - ``tool_use``   {"id", "name", "input"}        — model called a tool
+      - ``tool_result``{"tool_use_id", "content", "is_error"} — server result
+      - ``iteration``  {"n": 1}                       — new tool-loop turn
+      - ``error``      {"detail": "..."}              — recoverable error
+      - ``done``       {"stop_reason": "..."}         — final event
+
+    The frontend (`web/lib/ai-chat.ts`) consumes these and updates
+    the UI in place. Same 6-iteration cap as the sync endpoint.
+    """
+    try:
+        settings = load_settings()
+        client = get_active_client(settings)
+    except AIConfigError as e:
+        yield _sse("error", {"detail": str(e)})
+        yield _sse("done", {"stop_reason": "end_turn"})
+        return
+
+    working: list[dict] = _to_provider_messages(body.messages)
+    working.append({"role": "user", "content": body.user_input})
+
+    system = _build_system_prompt(
+        body.mode,
+        body.page_context.model_dump() if body.page_context else None,
+        persona=settings.persona,
+    )
+    tools_native = [
+        {
+            "name": t.name,
+            "description": t.description,
+            "input_schema": t.input_schema,
+        }
+        for t in all_tools()
+    ]
+
+    ctx = ToolContext(cursor=cursor)
+    iterations = 0
+    stop_reason = "end_turn"
+
+    while iterations < _MAX_ITERATIONS:
+        iterations += 1
+        yield _sse("iteration", {"n": iterations})
+
+        # Per-iteration accumulators so we can rebuild the assistant
+        # content blocks for the next round of `working` history.
+        text_buf = ""
+        tool_calls: list[dict] = []  # {"id", "name", "input"}
+
+        try:
+            for ev in client.chat_stream(
+                working,
+                system=system,
+                tools=tools_native,
+                max_tokens=1500,
+            ):
+                etype = ev.get("type")
+                if etype == "text_delta":
+                    txt = ev.get("text", "")
+                    if txt:
+                        text_buf += txt
+                        yield _sse("text_delta", {"text": txt})
+                elif etype == "tool_use":
+                    tool_calls.append({
+                        "id": ev.get("id", ""),
+                        "name": ev.get("name", ""),
+                        "input": ev.get("input") or {},
+                    })
+                    yield _sse("tool_use", {
+                        "id": ev.get("id", ""),
+                        "name": ev.get("name", ""),
+                        "input": ev.get("input") or {},
+                    })
+                elif etype == "done":
+                    stop_reason = ev.get("stop_reason", "end_turn")
+        except AIClientError as e:
+            log.warning("AI chat stream provider error: %s", e)
+            yield _sse("error", {"detail": str(e)})
+            yield _sse("done", {"stop_reason": "end_turn"})
+            return
+
+        # Reconstruct the assistant turn for `working` history so the
+        # next provider call has the full context.
+        assistant_blocks: list[dict] = []
+        if text_buf:
+            assistant_blocks.append({"type": "text", "text": text_buf})
+        for tc in tool_calls:
+            assistant_blocks.append({
+                "type": "tool_use",
+                "id": tc["id"],
+                "name": tc["name"],
+                "input": tc["input"],
+            })
+        working.append({"role": "assistant", "content": assistant_blocks})
+
+        if stop_reason != "tool_use" or not tool_calls:
+            break
+
+        # Run each tool, emit results, append to history.
+        tool_result_blocks: list[dict] = []
+        for tc in tool_calls:
+            name = tc["name"]
+            tool = TOOLS.get(name)
+            if tool is None:
+                payload = {"ok": False, "error": f"Unknown tool {name!r}."}
+            else:
+                try:
+                    payload = tool.handler(tc["input"], ctx)
+                except Exception as exc:  # pragma: no cover
+                    log.exception("tool %s raised", name)
+                    payload = {
+                        "ok": False,
+                        "error": f"Tool internal error: {exc}",
+                    }
+            is_error = isinstance(payload, dict) and payload.get("ok") is False
+            yield _sse("tool_result", {
+                "tool_use_id": tc["id"],
+                "content": payload,
+                "is_error": is_error,
+            })
+            tool_result_blocks.append({
+                "type": "tool_result",
+                "tool_use_id": tc["id"],
+                "content": _json.dumps(payload, default=str),
+                "is_error": is_error,
+            })
+        working.append({"role": "user", "content": tool_result_blocks})
+
+    if iterations >= _MAX_ITERATIONS and stop_reason == "tool_use":
+        cap_msg = (
+            "I've used the maximum number of tool calls for this turn. "
+            "Let me know if you'd like me to keep going."
+        )
+        yield _sse("text_delta", {"text": cap_msg})
+        stop_reason = "end_turn"
+
+    yield _sse("done", {"stop_reason": stop_reason, "iterations": iterations})
+
+
+@router.post("/ai/chat/stream")
+def chat_stream(
+    body: ChatRequest,
+    cursor: Annotated[duckdb.DuckDBPyConnection, Depends(get_cursor)],
+) -> StreamingResponse:
+    """Streaming variant of ``/api/ai/chat`` (D35 Tier C).
+
+    Returns ``text/event-stream``. See ``_stream_chat`` for the
+    event vocabulary. The frontend's ``streamChat`` consumer renders
+    text deltas incrementally and re-uses the same content-block
+    rendering as the sync endpoint for tool_use / tool_result.
+    """
+    return StreamingResponse(
+        _stream_chat(body, cursor),
+        media_type="text/event-stream",
+        headers={
+            # Disable buffering on intermediate proxies so deltas
+            # surface promptly. Local dev doesn't have a proxy but
+            # the desktop shell's QtWebEngine respects the hint.
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
     )
