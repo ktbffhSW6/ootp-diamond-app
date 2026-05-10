@@ -209,32 +209,50 @@ function DeepLink({
 }
 
 function ColdStartGuide() {
+  // D32 ext: Diamond's launcher now spawns Metabase as a hidden
+  // sidecar alongside FastAPI + Next.js, so we no longer need the
+  // user to open a terminal. This panel reflects the warm-up state
+  // ("Metabase is starting") rather than the stale "open a terminal"
+  // instructions. It auto-morphs to the Launcher card when polling
+  // detects port 3001 reachable (every 5s).
   return (
     <div className="space-y-3 rounded-md border border-amber-300 bg-amber-50 p-5 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
-      <h2 className="text-base font-semibold">Metabase isn&apos;t running</h2>
+      <div className="flex items-center gap-3">
+        <div
+          className="h-4 w-4 animate-spin rounded-full border-2 border-amber-300 border-t-amber-600 dark:border-amber-700 dark:border-t-amber-300"
+          aria-hidden="true"
+        />
+        <h2 className="text-base font-semibold">Metabase is starting…</h2>
+      </div>
       <p>
-        The Workshop launches Metabase at{" "}
+        Diamond launched Metabase as a hidden sidecar. Java cold-start
+        takes ~30–60 seconds on first boot (faster on subsequent
+        launches). This page polls every 5s and will auto-update as
+        soon as Metabase is reachable at{" "}
         <code className="rounded bg-amber-100 px-1 font-mono dark:bg-amber-900/60">
           {METABASE_URL}
         </code>
-        . Start it once and it stays up across Diamond reloads.
+        .
       </p>
-      <ol className="ml-4 list-decimal space-y-1.5">
-        <li>
-          Open a terminal, run:
-          <pre className="mt-1 rounded bg-amber-100 px-2 py-1.5 font-mono text-xs dark:bg-amber-900/60">
+      <details className="text-xs">
+        <summary className="cursor-pointer text-amber-800 dark:text-amber-300">
+          Not auto-starting? Manual fallback
+        </summary>
+        <div className="mt-2 space-y-2 border-l-2 border-amber-300 pl-3 dark:border-amber-700">
+          <p>
+            If the sidecar didn&apos;t spawn (Metabase not yet
+            installed, or port 3001 was already busy at launch), you
+            can start it from a terminal:
+          </p>
+          <pre className="rounded bg-amber-100 px-2 py-1.5 font-mono text-xs dark:bg-amber-900/60">
             ~/.diamond/metabase/metabase.bat /b
           </pre>
-        </li>
-        <li>
-          Wait ~30 seconds for Metabase to boot (first start takes longest)
-        </li>
-        <li>Reload this tab</li>
-      </ol>
-      <p className="border-t border-amber-300 pt-2 text-xs dark:border-amber-700">
-        First-time setup? See <code>docs/METABASE.md</code> for install +
-        config (one-time, ~10 min).
-      </p>
+          <p>
+            First-time setup? See <code>docs/METABASE.md</code> for
+            install + config (one-time, ~10 min).
+          </p>
+        </div>
+      </details>
     </div>
   );
 }
