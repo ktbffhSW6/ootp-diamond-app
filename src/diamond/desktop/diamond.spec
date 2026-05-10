@@ -90,9 +90,13 @@ hiddenimports = [
     "uvicorn.protocols.websockets.auto",
     "uvicorn.lifespan",
     "uvicorn.lifespan.on",
-    # pywebview backends — bundle the Win32 / Edge Chromium one.
-    "webview.platforms.edgechromium",
-    "webview.platforms.winforms",
+    # PySide6 modules our launcher imports directly (Qt6 + bundled Chromium).
+    "PySide6.QtCore",
+    "PySide6.QtGui",
+    "PySide6.QtWidgets",
+    "PySide6.QtWebEngineCore",
+    "PySide6.QtWebEngineWidgets",
+    "PySide6.QtNetwork",
     # pystray backend (Windows-specific impl chosen at import time).
     "pystray._win32",
     # PIL submodules pystray uses for the tray bitmap.

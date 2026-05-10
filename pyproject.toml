@@ -40,12 +40,27 @@ dev = [
     # peer-dep — install via `pnpm install` in `web/`.
     "pydantic-to-typescript>=2.0.0",
 ]
-# Desktop shell (D32) — native pywebview window wrapping FastAPI
+# Desktop shell (D32) — native PySide6 window wrapping FastAPI
 # (in-process uvicorn thread) + Next.js standalone sidecar. Hidden
 # children, single-instance lock, Job Object lifecycle. PyInstaller
 # bundles into one Diamond.exe; pystray + Pillow give the tray icon.
+#
+# We use PySide6 (Qt6) directly rather than pywebview because:
+#   1. pywebview pulls `pythonnet` as a hard Windows base dep, which
+#      has no Python 3.14 wheel (and won't build from source without
+#      the .NET toolchain).
+#   2. Qt brings its own Chromium (QtWebEngine) — eliminates the
+#      "user must install Microsoft WebView2 runtime" dependency
+#      that pywebview's edgechromium backend would have imposed.
+#   3. PySide6 ships an `abi3` wheel that works across Python 3.10+
+#      (3.14 included) without per-version build dance.
+#   4. Direct Qt API gives us native menus, tray, splash — no
+#      pywebview indirection, no "what backend is this picking?".
+# Trade-off: ~80MB more in the bundle vs an equivalent pywebview
+# bundle. Acceptable for a desktop app that already needs Node +
+# Python on disk.
 desktop = [
-    "pywebview>=5.3",
+    "PySide6>=6.8.0",
     "pystray>=0.19.5",
     "Pillow>=10.0.0",
     "psutil>=5.9.0",

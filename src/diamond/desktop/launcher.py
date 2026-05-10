@@ -6,24 +6,35 @@ Run modes:
     diamond-desktop                    # console-script entry (same)
     Diamond.exe                        # PyInstaller-frozen prod build
 
-Architecture (single-window-morph):
+Architecture (single-window-morph, PySide6 + QtWebEngine):
 
     1. Parse CLI flags (--dev, --no-tray, --port-api, --port-web).
     2. Acquire single-instance mutex (focus existing window if held).
     3. Create Job Object (Windows) so kids die with launcher.
-    4. Create the ONE pywebview window with splash HTML and the final
-       window size. The user sees a polished loading screen instantly.
+    4. Construct QApplication + QMainWindow + QWebEngineView. Load
+       the splash HTML at the final window size. The user sees a
+       polished loading screen instantly.
     5. Start a background "boot" thread that:
          - launches uvicorn + Next.js (sidecar.start_sidecars)
-         - on success, calls window.load_url(main_url) — atomic swap
-         - on failure, calls window.load_html(error_html) + logs
+         - on success, signals the main thread to load the main URL
+         - on failure, signals the main thread to render the error HTML
     6. Optionally start the tray icon thread.
-    7. Call webview.start() — blocks on GUI loop until window closed.
+    7. Block on app.exec() — the Qt event loop. Returns when window
+       closes.
     8. On window close: stop sidecars, release lock, exit.
 
-pywebview's ``window.load_url`` is thread-safe (posts to the GUI
-thread internally), so the boot thread can drive the morph without
-any explicit synchronization with the main thread.
+Why PySide6 directly (not pywebview): pywebview pulls `pythonnet` as
+a hard Windows dependency, which has no Python 3.14 wheel and can't
+build from source without the .NET toolchain. PySide6 ships an
+`abi3` wheel that works across Python versions. As a bonus, Qt
+brings its own Chromium so end-users don't need the Microsoft
+WebView2 runtime installed.
+
+Cross-thread signal pattern: Qt widgets must only be touched from
+the GUI thread. The boot thread can't call `view.load(url)` directly.
+We use a custom QObject (`_BootSignals`) with `urlReady` and
+`errorReady` Qt signals; the main thread connects slots on those
+signals to the actual widget updates. Qt auto-marshals the call.
 """
 
 from __future__ import annotations
@@ -77,59 +88,6 @@ def _create_job_object() -> Optional[object]:
     except Exception:
         log.warning("failed to create Job Object — children may outlive launcher", exc_info=True)
         return None
-
-
-# ---- WebView2 runtime check (Windows) ---------------------------------------
-
-
-def _check_webview2_or_warn() -> bool:
-    """Detect Microsoft WebView2 runtime; show a fixable error if missing.
-
-    pywebview on Windows uses Edge Chromium WebView2. Bundled with
-    Windows 11; Windows 10 may not have it. If absent, pywebview will
-    fail to render and the user sees a confusing error. We pre-check
-    via the registry and surface a friendly message with the install
-    URL.
-
-    Returns True if WebView2 is present (or check is unavailable —
-    we'd rather attempt boot than block on a false negative).
-    """
-    if sys.platform != "win32":
-        return True
-    try:
-        import winreg  # type: ignore
-    except Exception:
-        return True
-
-    # Per-machine and per-user install locations.
-    keys = [
-        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"),
-        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"),
-        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"),
-    ]
-    for hive, sub in keys:
-        try:
-            with winreg.OpenKey(hive, sub) as k:
-                version, _ = winreg.QueryValueEx(k, "pv")
-                if version and version != "0.0.0.0":
-                    log.debug("WebView2 found: %s", version)
-                    return True
-        except OSError:
-            continue
-
-    msg = (
-        "Microsoft WebView2 runtime is not installed.\n\n"
-        "Diamond uses WebView2 to render its UI. Install it from:\n"
-        "https://developer.microsoft.com/microsoft-edge/webview2/\n\n"
-        "After installing, relaunch Diamond."
-    )
-    try:
-        import ctypes
-
-        ctypes.windll.user32.MessageBoxW(0, msg, "Diamond — WebView2 required", 0x10)
-    except Exception:
-        log.error(msg)
-    return False
 
 
 # ---- main flow --------------------------------------------------------------
@@ -202,33 +160,61 @@ def main(argv: Optional[list[str]] = None) -> int:
         log.info("another Diamond instance is running — focused it instead.")
         return 0
 
-    # 2. WebView2 sanity check (Windows).
-    if not _check_webview2_or_warn():
-        return 3
-
-    # 3. Job Object.
+    # 2. Job Object.
     job_handle = _create_job_object()
 
-    # 4. Create the (one) window with splash HTML at final size.
-    import webview
+    # 3. Qt application + main window. PySide6 ships its own Chromium
+    #    via QtWebEngine — no Microsoft WebView2 runtime needed on
+    #    the end-user machine.
+    from PySide6.QtCore import QObject, QUrl, Qt, Signal
+    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtWebEngineCore import QWebEngineSettings
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+    from PySide6.QtWidgets import QApplication, QMainWindow
 
-    window = webview.create_window(
-        title=WINDOW_TITLE,
-        html=splash.html(),
-        width=1600,
-        height=1000,
-        min_size=(1100, 700),
-        confirm_close=False,
-        background_color="#0b1220",
+    # High-DPI handling: Qt 6 enables this automatically; we just need
+    # to opt into rounded device-pixel-ratio scaling for crisp text on
+    # 125%/150% Windows scale factors.
+    QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
 
-    # 5. Boot thread — load sidecars, then morph window URL.
+    app = QApplication.instance() or QApplication(sys.argv)
+    app.setApplicationName("Diamond")
+    app.setOrganizationName("Diamond")
+
+    view = QWebEngineView()
+    # Opt-in browser features the Diamond UI may rely on:
+    s = view.settings()
+    s.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
+    s.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
+    s.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+
+    view.setHtml(splash.html())
+
+    win = QMainWindow()
+    win.setWindowTitle(WINDOW_TITLE)
+    win.setCentralWidget(view)
+    win.resize(1600, 1000)
+    win.setMinimumSize(1100, 700)
+    win.show()
+
+    # 4. Cross-thread signaling. Boot thread emits; slots in this
+    #    main thread run on the GUI thread (Qt auto-marshals).
+    class _BootSignals(QObject):
+        urlReady = Signal(str)
+        errorReady = Signal(str)
+
+    signals = _BootSignals()
+    signals.urlReady.connect(lambda u: view.load(QUrl(u)))
+    signals.errorReady.connect(lambda html: view.setHtml(html))
+
+    # 5. Boot thread — load sidecars, then signal the morph.
     handles_box: dict[str, Optional[sidecar.SidecarHandles]] = {"h": None}
 
     def _boot() -> None:
         try:
             if args.dev:
-                # Dev mode: assume dev.bat is up; just check ports.
                 if not sidecar._wait_for_port(args.port_api, timeout=5.0):  # noqa: SLF001
                     raise RuntimeError(
                         f"FastAPI not running on :{args.port_api} (run dev.bat first)."
@@ -249,21 +235,15 @@ def main(argv: Optional[list[str]] = None) -> int:
 
             url = f"http://127.0.0.1:{web_port}"
             log.info("sidecars ready (api=%s, web=%s) — loading %s", api_port, web_port, url)
-            try:
-                window.load_url(url)
-            except Exception:
-                log.exception("window.load_url failed")
+            signals.urlReady.emit(url)
         except Exception as exc:
             log.exception("boot failed")
-            try:
-                window.load_html(_error_html(str(exc)))
-            except Exception:
-                pass
+            signals.errorReady.emit(_error_html(str(exc)))
 
     boot_thread = threading.Thread(target=_boot, name="diamond-boot", daemon=True)
     boot_thread.start()
 
-    # 6. Optional tray.
+    # 6. Optional tray. Daemon thread; can outlive nothing critical.
     tray_stop: Optional[Callable[[], None]] = None
     if not args.no_tray:
         try:
@@ -272,14 +252,14 @@ def main(argv: Optional[list[str]] = None) -> int:
             tray_stop = tray.start(
                 main_url=f"http://127.0.0.1:{args.port_web}",
                 api_url=f"http://127.0.0.1:{args.port_api}",
-                on_quit=_request_quit,
+                on_quit=lambda: app.quit(),
             )
         except Exception:
             log.debug("tray unavailable", exc_info=True)
 
-    # 7. Cleanup hook fires on window close.
-    def _on_closed() -> None:
-        log.info("main window closed — shutting down sidecars")
+    # 7. Cleanup on app exit (window closed / tray quit / OS signal).
+    def _cleanup() -> None:
+        log.info("shutting down sidecars")
         h = handles_box["h"]
         if h is not None:
             try:
@@ -292,40 +272,22 @@ def main(argv: Optional[list[str]] = None) -> int:
             except Exception:
                 log.debug("tray stop failed", exc_info=True)
 
-    window.events.closed += _on_closed
+    app.aboutToQuit.connect(_cleanup)
 
-    # 8. GUI loop. Blocks until window closes.
+    # 8. Block on Qt event loop.
     try:
-        webview.start(private_mode=False, http_server=False)
+        rc = app.exec()
     finally:
-        # Belt-and-suspenders for callback skips.
+        # Belt-and-suspenders: cleanup runs via aboutToQuit normally.
         h = handles_box["h"]
-        if h is not None:
+        if h is not None and getattr(h, "web_proc", None):
             try:
                 sidecar.stop_sidecars(h)
             except Exception:
                 pass
 
     log.info("Diamond exited cleanly")
-    return 0
-
-
-# ---- helpers ----------------------------------------------------------------
-
-
-def _request_quit() -> None:
-    """Tray-initiated quit. Closes every pywebview window which
-    triggers the closed-event handlers and unwinds the GUI loop."""
-    try:
-        import webview
-
-        for w in list(webview.windows):
-            try:
-                w.destroy()
-            except Exception:
-                pass
-    except Exception:
-        log.debug("quit request raised", exc_info=True)
+    return int(rc)
 
 
 if __name__ == "__main__":  # pragma: no cover

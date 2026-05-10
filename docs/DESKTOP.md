@@ -2,7 +2,7 @@
 
 Diamond ships as a native Windows desktop app — one `Diamond.exe`,
 no browser, no flapping consoles, clean shutdown. Architecture
-decision in [DECISIONS.md D32](DECISIONS.md#d32--native-desktop-shell-pywebview--pyinstaller-no-browser-no-consoles).
+decision in [DECISIONS.md D32](DECISIONS.md#d32--native-desktop-shell-PySide6--pyinstaller-no-browser-no-consoles).
 
 ## Run modes
 
@@ -18,7 +18,7 @@ decision in [DECISIONS.md D32](DECISIONS.md#d32--native-desktop-shell-pywebview-
 One-time setup:
 
 ```bash
-make install-desktop      # pip install -e ".[desktop]"  (pywebview, pystray, Pillow, pyinstaller, psutil)
+make install-desktop      # pip install -e ".[desktop]"  (PySide6, pystray, Pillow, pyinstaller, psutil)
 ```
 
 Daily development on launcher code (with `dev.bat` running):
@@ -41,17 +41,19 @@ make desktop-package      # → dist/Diamond/Diamond.exe
 
 ## Architecture
 
-The launcher follows a **single-window-morph** pattern (pywebview only
-allows one `webview.start()` call per process):
+The launcher follows a **single-window-morph** pattern (PySide6 + QtWebEngine
+gives us one QApplication, one QMainWindow, one QWebEngineView; the
+boot thread emits a Qt signal to swap content):
 
 ```
                  ┌─────────────────────────────────────────────────────┐
                  │ Diamond.exe (PyInstaller-frozen Python interpreter) │
                  │                                                     │
                  │  ┌─ main thread ─────────────────────────────────┐  │
-                 │  │ pywebview GUI loop (WebView2)                 │  │
+                 │  │ Qt event loop (app.exec())                    │  │
+                 │  │   QMainWindow + QWebEngineView (Chromium)     │  │
                  │  │   ▲                                           │  │
-                 │  │   │ window.load_url(main_url) (thread-safe)   │  │
+                 │  │   │ signal.urlReady → view.load(QUrl)         │  │
                  │  └───┼───────────────────────────────────────────┘  │
                  │      │                                              │
                  │  ┌───┴── boot daemon thread ─────────────────────┐  │
@@ -75,17 +77,16 @@ allows one `webview.start()` call per process):
 ### Lifecycle
 
 1. **Single-instance lock** (`single_instance.acquire()`) — `CreateMutexW("Local\\Diamond.OOTP.Desktop.SingleInstance")`. Second double-click sees `ERROR_ALREADY_EXISTS`, calls `FindWindowW` + `SetForegroundWindow` on the existing window, exits with code 0.
-2. **WebView2 sanity check** (`_check_webview2_or_warn()`) — registry probe. Missing → `MessageBoxW` with the install URL, exit 3.
-3. **Job Object** (`win_jobobject.create_kill_on_close_job()`) — handle stays alive in module state for launcher lifetime.
-4. **Window opens with splash HTML** at final size (1600×1000). User sees a polished loading screen within ~200ms.
-5. **Boot thread** runs concurrently:
+2. **Job Object** (`win_jobobject.create_kill_on_close_job()`) — handle stays alive in module state for launcher lifetime.
+3. **QApplication + QMainWindow + QWebEngineView** initialized with splash HTML at final size (1600×1000). User sees a polished loading screen within ~200ms. QtWebEngine ships its own Chromium so there's no "user must install WebView2" dependency.
+4. **Boot thread** runs concurrently:
    - Starts uvicorn in another daemon thread.
    - Spawns `node server.js` with `CREATE_NO_WINDOW`, assigns its PID to the Job Object.
    - Waits up to 45s for both ports to accept TCP connections.
-   - Calls `window.load_url("http://127.0.0.1:3000")` — atomic swap from splash to app.
-6. **Tray thread** (optional, daemon) — pystray Icon with Show / Metabase / API docs / Quit menu.
-7. **GUI loop** (`webview.start()`) — blocks until window closes.
-8. **On window close** — `_on_closed` fires → `stop_sidecars` (terminate node, daemon uvicorn dies with process) → tray stops → exit.
+   - Emits a Qt signal (`signals.urlReady`) — slot runs on GUI thread, calls `view.load(QUrl(...))`. Atomic swap from splash to app.
+5. **Tray thread** (optional, daemon) — pystray Icon with Show / Metabase / API docs / Quit menu.
+6. **Qt event loop** (`app.exec()`) — blocks until window closes or `app.quit()` is called.
+7. **On `aboutToQuit`** — `_cleanup` slot fires → `stop_sidecars` (terminate node, daemon uvicorn dies with process) → tray stops → exit.
 
 ### Files
 
@@ -155,14 +156,6 @@ diamond-desktop --log-level DEBUG
 
 ## Troubleshooting
 
-### "WebView2 required" message box
-
-Microsoft WebView2 runtime isn't installed. Bundled with Windows 11; some Windows 10 boxes don't have it. Install from:
-
-https://developer.microsoft.com/microsoft-edge/webview2/
-
-Pick the **Evergreen Bootstrapper** for end-users.
-
 ### Window opens but stays on splash forever
 
 Sidecar boot is timing out (default 45s). Check the launcher log:
@@ -224,10 +217,10 @@ Not in scope for D32 ship; tracked in BACKLOG.md:
 - **Code signing** — Windows SmartScreen friendliness, Authenticode cert
 - **Installer** — Inno Setup script that wraps `dist/Diamond/` into a single MSI / EXE installer with Start Menu shortcut + uninstall entry
 - **Auto-update** — Tauri-style updater (download patch, swap binaries, relaunch)
-- **Cross-platform** — Mac (Cocoa via pywebview) and Linux (GTK via pywebview); Tauri becomes more attractive at that point
+- **Cross-platform** — Mac (Cocoa via PySide6) and Linux (GTK via PySide6); Tauri becomes more attractive at that point
 
 ## When to NOT use the desktop shell
 
 - **Engineering hot-reload** — use `dev.bat` instead. The desktop shell uses production builds; you don't get instant Next.js refresh.
 - **Headless / CI** — the smoke test (`make smoke`) and CLI commands (`diamond ingest`, etc.) don't need a window. Keep using those directly.
-- **Multi-window analytics** — open Metabase Workshop in a real browser tab if you want spillover screen real estate. The pywebview window is intentionally single-instance single-window.
+- **Multi-window analytics** — open Metabase Workshop in a real browser tab if you want spillover screen real estate. The PySide6 window is intentionally single-instance single-window.

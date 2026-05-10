@@ -4,15 +4,15 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-15 (late evening) — **Phase 3: Native desktop shell shipped (D32).** Diamond now ships as a native Windows app — one `Diamond.exe`, no browser tab, no flapping cmd windows, clean shutdown via Windows Job Object. Single-window-morph pattern (splash → main URL via `window.load_url`); pywebview + WebView2 for the chrome; PyInstaller for the bundle. Five-slice ship in a single session.
+**Last updated**: 2026-05-15 (late evening) — **Phase 3: Native desktop shell shipped (D32).** Diamond now ships as a native Windows app — one `Diamond.exe`, no browser tab, no flapping cmd windows, clean shutdown via Windows Job Object. Single-window-morph pattern (Qt signal swaps splash HTML for main URL); PySide6 + QtWebEngine for the chrome (bundled Chromium — no end-user WebView2 install needed); PyInstaller for the bundle. Five-slice ship in a single session, plus same-day pivot from pywebview → PySide6 (pywebview's hard `pythonnet` dep on Windows has no Python 3.14 wheel).
 
 | Slice | Headline | Files |
 |---|---|---|
 | **1. Launcher MVP** | `src/diamond/desktop/launcher.py` orchestrates lifecycle. uvicorn runs in a daemon thread (in-process, no `python.exe` subprocess needed inside the frozen bundle). Next.js standalone runs as a hidden `node server.js` child via `CREATE_NO_WINDOW`. Both bind 127.0.0.1; ports auto-fallback to OS-assigned if 8000/3000 are busy. | `desktop/{launcher,sidecar,paths}.py`, `desktop/__main__.py`, pyproject `[desktop]` extra |
 | **2. Standalone build** | Flipped `web/next.config.mjs` to `output: 'standalone'`. New `scripts/build_desktop.py` runs `next build` + copies `.next/static` and `public/` into the standalone tree (Next omits these by default). `make desktop` chains build + run. | `web/next.config.mjs`, `scripts/build_desktop.py`, `Makefile` |
 | **3. Lifecycle hardening** | Windows Job Object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) — every spawned child PID is assigned to it; hard-killed launcher takes its kids down too. **Eliminates stale-process failure mode entirely.** Single-instance lock via `CreateMutexW` + `Local\\Diamond.OOTP.Desktop.SingleInstance`; second double-click sees `ERROR_ALREADY_EXISTS`, calls `FindWindowW` + `SetForegroundWindow` on the running window. | `desktop/{win_jobobject,single_instance}.py` |
-| **4. PyInstaller bundle** | `src/diamond/desktop/diamond.spec` is a one-folder spec (not `--onefile` — the standalone tree's thousands of small files would add 2-3s per-launch unpack to TEMP). Datas: web standalone tree → `web_standalone/`, asset folder → `desktop_assets/`. Hidden imports cover all 23 API route modules + uvicorn dynamic imports + pywebview backends + pystray + PIL. `make desktop-package` builds → `dist/Diamond/Diamond.exe`. | `desktop/diamond.spec`, `scripts/build_desktop.py --package` |
-| **5. Polish** | **Splash → main morph** (single window, single `webview.start()`; `window.load_url` is thread-safe so the boot thread drives the swap atomically). Splash HTML in `assets/splash.html` matches D18 dark theme. **WebView2 runtime probe** before pywebview starts — missing → `MessageBoxW` with install URL, exit cleanly (Win10 edge case). **Tray icon** via pystray in a daemon thread (Show / Open Metabase Workshop / API docs / Quit). Tray and splash both fail-soft. | `desktop/{splash,tray}.py`, `desktop/assets/splash.html` |
+| **4. PyInstaller bundle** | `src/diamond/desktop/diamond.spec` is a one-folder spec (not `--onefile` — the standalone tree's thousands of small files would add 2-3s per-launch unpack to TEMP). Datas: web standalone tree → `web_standalone/`, asset folder → `desktop_assets/`. Hidden imports cover all 23 API route modules + uvicorn dynamic imports + PySide6 widgets/QtWebEngine + pystray + PIL. `make desktop-package` builds → `dist/Diamond/Diamond.exe`. | `desktop/diamond.spec`, `scripts/build_desktop.py --package` |
+| **5. Polish** | **Splash → main morph** (single window — one `QApplication` + `QMainWindow` + `QWebEngineView`; boot thread emits a Qt signal carrying the URL, slot runs on the GUI thread and calls `view.load(QUrl(...))` — Qt auto-marshals via the meta-object system). Splash HTML in `assets/splash.html` matches D18 dark theme. **No WebView2 runtime dependency** — QtWebEngine ships its own Chromium, so end-users on Win10 don't need to install anything separately. **Tray icon** via pystray in a daemon thread (Show / Open Metabase Workshop / API docs / Quit). Tray and splash both fail-soft. | `desktop/{splash,tray}.py`, `desktop/assets/splash.html` |
 
 **What changes for the user**:
 
@@ -25,7 +25,7 @@
 **What stays unchanged**:
 
 - `dev.bat` and the two-terminal hot-reload workflow — kept for engineering. Desktop shell is the production user surface, not a replacement for the dev path.
-- Metabase Workshop launcher (D31) still opens in default browser (acceptable: Metabase is the explicit BI escape hatch, and rendering it inside another WebView2 buys nothing).
+- Metabase Workshop launcher (D31) still opens in default browser (acceptable: Metabase is the explicit BI escape hatch, and rendering it inside another QtWebEngine instance buys nothing).
 - All API routes, schemas, theme system, dictionary, warehouse — zero touch.
 
 **Run modes**:
@@ -43,7 +43,7 @@
 - Code signing (Windows SmartScreen friendliness) deferred — `Diamond.exe` will trip SmartScreen on first run; user clicks "More info" → "Run anyway". Acceptable for single-user local. Tracked in BACKLOG.md.
 - Inno Setup MSI installer for Start Menu integration + uninstall deferred — manual `dist/Diamond/Diamond.exe` for now.
 - Auto-update deferred — relaunch Diamond after a `git pull` + `make desktop-package`.
-- Mac/Linux deferred — pywebview supports both but Diamond's saves path is hardcoded to Windows; cross-platform is a separate scope.
+- Mac/Linux deferred — PySide6 supports both but Diamond's saves path is hardcoded to Windows; cross-platform is a separate scope.
 - Node still required on PATH — bundling Node would add ~50MB; deferred to a future "no external deps" slice.
 
 ---

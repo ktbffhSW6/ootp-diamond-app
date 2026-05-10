@@ -1,11 +1,11 @@
 """Splash HTML helper — single-window-morph pattern.
 
-pywebview only supports one ``webview.start()`` call per process, so a
-separate splash window in its own GUI loop is impossible. Instead, the
-launcher opens **one** main window initialized with the splash HTML
-and an already-correct (large) size; once sidecars are ready, a
-background thread calls ``window.load_url(main_url)`` to swap the
-content. ``load_url`` is thread-safe in pywebview.
+The launcher opens **one** QMainWindow with a QWebEngineView at the
+final size, initialized with the splash HTML below. Once sidecars
+are ready, a Qt signal (emitted from the boot thread, slot runs on
+the GUI thread) swaps the content via ``view.load(QUrl(main_url))``.
+Single window, single Qt event loop, no thread coordination magic
+needed beyond Qt's auto-marshalled signals.
 
 This module is just a small loader for the asset HTML so the
 launcher stays focused.

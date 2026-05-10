@@ -13,7 +13,7 @@ The project keeps long-running engineering context in `docs/`. Always read at th
 - `docs/UI_DESIGN.md` — UI build order + design conventions; committed five-tab IA + theme system live here.
 - `docs/DEV.md` — two-process dev workflow (FastAPI + Next.js), `make` targets, troubleshooting.
 - `docs/METABASE.md` — Metabase BI workshop (D31): install, Pattern A save-aware sync, ops, troubleshooting, AI-assisted dashboard workflow.
-- `docs/DESKTOP.md` — Native desktop shell (D32): pywebview launcher, Job Object lifecycle, PyInstaller bundle, build pipeline, troubleshooting.
+- `docs/DESKTOP.md` — Native desktop shell (D32): PySide6 launcher, Job Object lifecycle, PyInstaller bundle, build pipeline, troubleshooting.
 
 These files are the source of truth for "why" — favor updating them over leaving knowledge in chat.
 
@@ -65,13 +65,13 @@ make smoke        # or: scripts/smoke_warehouse.py
 Diamond ships as a native Windows app — single `Diamond.exe`, no browser, no flapping cmd windows, clean shutdown via Windows Job Object. Use this path for **production user experience**; `dev.bat` is for engineering hot-reload.
 
 ```bash
-make install-desktop               # one-time: pywebview, pystray, Pillow, PyInstaller, psutil
+make install-desktop               # one-time: PySide6, pystray, Pillow, PyInstaller, psutil
 python -m diamond.desktop --dev    # iterating on launcher/tray code while dev.bat runs
 make desktop                       # production-path validation locally (next build + open native window)
 make desktop-package               # full bundle → dist/Diamond/Diamond.exe
 ```
 
-The launcher (`src/diamond/desktop/launcher.py`) follows a **single-window-morph** pattern: one pywebview window opens with splash HTML at final size, then a boot thread calls `window.load_url(main_url)` once both sidecars are ready (uvicorn in-thread + Next.js standalone subprocess). Job Object guarantees children die with the launcher; named mutex enforces single-instance. See `docs/DESKTOP.md` for the full architecture.
+The launcher (`src/diamond/desktop/launcher.py`) follows a **single-window-morph** pattern: one `QApplication` + `QMainWindow` + `QWebEngineView` opens with splash HTML at final size; a boot thread emits a Qt signal carrying the URL once both sidecars are ready (uvicorn in-thread + Next.js standalone subprocess), and the slot on the GUI thread calls `view.load(QUrl(...))`. Qt auto-marshals across threads via the meta-object system. Job Object guarantees children die with the launcher; named mutex enforces single-instance. PySide6's QtWebEngine bundles its own Chromium so end-users don't need WebView2 installed. See `docs/DESKTOP.md` for the full architecture.
 
 ### CLI commands (audit + analytical surface)
 
@@ -140,7 +140,7 @@ src/diamond/
   dictionary/               D15 stat dictionary (60 entries — single source of truth for labels)
     __init__.py             Stat dataclass + CATEGORIES tuple
     _stats.py               canonical entries grouped by category
-  desktop/                  D32 native desktop shell — pywebview + WebView2
+  desktop/                  D32 native desktop shell — PySide6 + QtWebEngine
     launcher.py             argv parse + lifecycle orchestration (single-window-morph)
     sidecar.py              uvicorn-thread + Next.js subprocess + port probes
     paths.py                source-vs-frozen path resolution (PyInstaller)

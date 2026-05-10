@@ -45,9 +45,10 @@ tab, no flapping cmd windows, clean shutdown via Windows Job Object. Five-slice
 ship in a single session.
 
 - ✅ **Slice 1 — Launcher MVP** (`src/diamond/desktop/{launcher,sidecar,paths}.py`,
-  `desktop/__main__.py`, pyproject `[desktop]` extra). pywebview window, uvicorn
-  in a daemon thread (in-process), Next.js standalone as hidden `node server.js`
-  child via `CREATE_NO_WINDOW`. Both bind 127.0.0.1; ports auto-fallback.
+  `desktop/__main__.py`, pyproject `[desktop]` extra). PySide6 QMainWindow +
+  QWebEngineView, uvicorn in a daemon thread (in-process), Next.js standalone
+  as hidden `node server.js` child via `CREATE_NO_WINDOW`. Both bind 127.0.0.1;
+  ports auto-fallback.
 - ✅ **Slice 2 — Standalone build** (`web/next.config.mjs` `output: 'standalone'`,
   `scripts/build_desktop.py`, `Makefile` `desktop` / `desktop-package` targets).
   Build script copies `.next/static` and `public/` into the standalone tree
@@ -62,12 +63,13 @@ ship in a single session.
   spec (not `--onefile` — standalone tree's many small files would add 2-3s
   per-launch unpack to TEMP). Datas: web standalone tree → `web_standalone/`,
   asset folder → `desktop_assets/`. Hidden imports cover all 23 API route
-  modules + uvicorn dynamic imports + pywebview backends + pystray + PIL.
+  modules + uvicorn dynamic imports + PySide6 widgets/QtWebEngine + pystray + PIL.
 - ✅ **Slice 5 — Polish** (`desktop/{splash,tray}.py`, `desktop/assets/splash.html`).
   Single-window-morph: one window opens with splash HTML at final size; boot
   thread calls `window.load_url(main_url)` when ready (thread-safe in
-  pywebview). WebView2 runtime probe before pywebview starts (Win10 edge case
-  → friendly `MessageBoxW` with install URL). Tray icon (pystray, daemon
+  pywebview). No WebView2 runtime dependency — QtWebEngine ships its own
+  Chromium, so end-users on Win10 don't need to install anything separately.
+  Tray icon (pystray, daemon
   thread): Show / Open Metabase / API docs / Quit.
 - ✅ **Docs**: `docs/DESKTOP.md` (architecture, build pipeline, troubleshooting,
   when-not-to-use); `docs/DECISIONS.md` D32 (full architectural reasoning vs
@@ -88,8 +90,8 @@ These extend D32 but aren't blocking:
       wire into the build pipeline. Worth it once we distribute outside the
       author's machine.
 - [ ] **Inno Setup MSI installer** — wraps `dist/Diamond/` into a single
-      installer with Start Menu shortcut + uninstall entry + WebView2
-      bootstrapper bundle. ~half day. Needed before any "share with
+      installer with Start Menu shortcut + uninstall entry. ~half day.
+      Needed before any "share with
       friends" milestone.
 - [ ] **Auto-update** — Tauri-style updater (download patch, swap binaries,
       relaunch). ~1-2 days. Not urgent for single-user — relaunch after
@@ -97,9 +99,9 @@ These extend D32 but aren't blocking:
 - [ ] **Bundle Node.js** — eliminate the "node on PATH" requirement. ~half
       day; +50MB bundle. Not blocking — most users have Node from dev
       already.
-- [ ] **Mac/Linux ports** — pywebview supports both but Diamond's saves
-      path is hardcoded to Windows. Cross-platform is a separate scope
-      (would also revisit Tauri vs pywebview).
+- [ ] **Mac/Linux ports** — PySide6 supports both with the same API but
+      Diamond's saves path is hardcoded to Windows. Cross-platform is a
+      separate scope (would also revisit Tauri if smaller bundle matters).
 - [ ] **Minimize-to-tray** — currently close-window = full shutdown.
       Power-user mode: minimize keeps backends warm in the tray. ~1 hr.
       Tray menu already has "Show Diamond" stub for this.
