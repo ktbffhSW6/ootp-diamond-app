@@ -125,37 +125,61 @@ def _start_next_subprocess(
     *,
     job_handle: Optional[object] = None,
 ) -> subprocess.Popen[bytes]:
-    """Spawn ``node server.js`` against the Next.js standalone build.
+    """Spawn the Next.js production server, hidden, on the given port.
 
-    Standalone output requires:
-        web/.next/standalone/server.js     (entry; we run from here)
-        web/.next/standalone/.next/static  (auto-included)
-        web/.next/standalone/public        (auto-included if present)
+    Two paths, in order of preference:
 
-    The standalone bundle is self-contained — its own minimal
-    ``node_modules`` ships next to ``server.js``. Only ``node`` itself
-    must be on PATH.
+    1. **Standalone tree** at ``web/.next/standalone/server.js`` —
+       self-contained mini-bundle from `next build` with
+       ``output: 'standalone'``. Only ``node`` is needed on PATH;
+       the bundle's own minimal ``node_modules`` ships beside the
+       entry. This is the path PyInstaller-frozen builds use.
+
+    2. **`next start` fallback** — runs ``node web/node_modules/next/
+       dist/bin/next start --port N`` from the repo's ``web/``. Used
+       when the standalone tree is missing or broken (common on
+       Windows + pnpm because `next build` can't always create the
+       symlinks the standalone tree needs without Developer Mode).
+
+    Both paths produce identical runtime behavior. The standalone
+    path is preferred for shipping; `next start` is preferred for
+    local dev where the user may not have flipped Developer Mode
+    on.
 
     If ``job_handle`` is given (Windows), the child is added to the
     Job Object so it dies with the launcher.
     """
-    server_js = paths.web_server_entry()
-    if not server_js.exists():
-        raise FileNotFoundError(
-            f"Next.js standalone build not found at {server_js}.\n"
-            "Run `cd web && npm run build` first (with `output: 'standalone'` "
-            "in next.config.mjs)."
-        )
+    if paths.web_standalone_ok():
+        cwd = paths.web_standalone_dir()
+        cmd = ["node", str(paths.web_server_entry())]
+        log.info("next: using standalone build at %s", cwd)
+    else:
+        next_bin = paths.web_next_bin()
+        if not next_bin.exists():
+            raise FileNotFoundError(
+                "Next.js not found at "
+                f"{next_bin}.\n"
+                "Run `cd web && pnpm install && pnpm run build` first "
+                "(or `npm install && npm run build`)."
+            )
+        cwd = paths.web_repo_dir()
+        cmd = [
+            "node",
+            str(next_bin),
+            "start",
+            "--port",
+            str(port),
+            "--hostname",
+            "127.0.0.1",
+        ]
+        log.info("next: using `next start` fallback (no standalone tree)")
 
-    # The standalone server reads PORT and HOSTNAME from the env.
+    # The standalone server reads PORT and HOSTNAME from env; the
+    # `next start` path uses CLI flags. Setting env covers both.
     env = os.environ.copy()
     env["PORT"] = str(port)
     env["HOSTNAME"] = "127.0.0.1"
-    # Production mode by default; standalone build is already production.
     env["NODE_ENV"] = "production"
-
-    cwd = server_js.parent
-    cmd = ["node", str(server_js)]
 
     try:
         proc = subprocess.Popen(  # noqa: S603 — argv list, no shell

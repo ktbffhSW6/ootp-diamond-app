@@ -62,8 +62,50 @@ def web_static_dir() -> Path:
 
 
 def web_server_entry() -> Path:
-    """Path to ``server.js`` (Next.js standalone entry)."""
+    """Path to ``server.js`` (Next.js standalone entry).
+
+    Only valid when the standalone tree exists (post `next build`
+    with `output: 'standalone'` AND the post-build asset copy AND —
+    on Windows — symlink permissions). Use `web_standalone_ok()` to
+    check before assuming this path is live.
+    """
     return web_standalone_dir() / "server.js"
+
+
+def web_standalone_ok() -> bool:
+    """True iff the standalone tree is fully usable.
+
+    On Windows + pnpm, `next build` with `output: 'standalone'` can
+    succeed at building `.next/` but fail to populate the standalone
+    tree's `node_modules` (symlink permissions). When that happens we
+    fall back to `next start` against the regular `.next/` build.
+    """
+    server_js = web_server_entry()
+    if not server_js.exists():
+        return False
+    # The standalone tree should also have a populated node_modules.
+    nm = web_standalone_dir() / "node_modules"
+    return nm.exists() and any(nm.iterdir())
+
+
+def web_repo_dir() -> Path:
+    """Directory containing ``package.json`` and ``node_modules`` —
+    used for the `next start` fallback path."""
+    if is_frozen():
+        # Frozen builds always use the standalone tree; this is only
+        # exercised in source mode.
+        return bundle_root() / "web"
+    return bundle_root() / "web"
+
+
+def web_next_bin() -> Path:
+    """Path to the next.js CLI script for `next start` invocation.
+
+    `node node_modules/next/dist/bin/next start` is deterministic
+    across npm/pnpm/yarn — no shell, no batch wrapper, no PATH
+    lookup. Subprocess can use CREATE_NO_WINDOW cleanly.
+    """
+    return web_repo_dir() / "node_modules" / "next" / "dist" / "bin" / "next"
 
 
 def assets_dir() -> Path:
