@@ -62,9 +62,25 @@ def start(
     main_url: str,
     api_url: str,
     on_quit: Callable[[], None],
+    on_show: Callable[[], None] | None = None,
     metabase_url: str = "http://127.0.0.1:3001",
 ) -> Callable[[], None]:
     """Start the tray icon thread. Returns a stop function.
+
+    Args:
+        main_url: URL the native window is hosting (for browser
+            fallback if on_show isn't wired).
+        api_url: FastAPI base — used by the "API docs" menu item.
+        on_quit: called on tray Quit. Must be thread-safe (we're in
+            pystray's thread, not Qt's).
+        on_show: called on tray "Show Diamond". Should focus the
+            native Qt window (un-minimize, raise, activate). The
+            launcher wires this through a Qt Signal so the actual
+            widget calls happen on the GUI thread; from pystray's
+            side it's just `lambda: signal.emit()`. If None,
+            falls back to opening main_url in the system browser
+            (the pre-D34 behavior, kept as a safety net).
+        metabase_url: deep-link target for "Open Metabase Workshop".
 
     The stop function is idempotent and safe to call multiple times.
     """
@@ -72,11 +88,19 @@ def start(
 
     icon_image = _load_icon()
 
-    def _open_main(_icon, _item) -> None:
-        # The main pywebview window is already up; tray "Show" is
-        # mostly useful when a future minimize-to-tray behavior lands.
-        # For v1 we deep-link in the system browser as a fallback for
-        # the "main window crashed but tray still alive" edge case.
+    def _show_main(_icon, _item) -> None:
+        # The native Qt window is already up; tray "Show" focuses
+        # it (raises + activates) rather than spawning a duplicate
+        # in the browser. on_show is provided by the launcher and
+        # marshals to the GUI thread via a Qt signal.
+        if on_show is not None:
+            try:
+                on_show()
+                return
+            except Exception:
+                log.exception("on_show raised; falling back to browser")
+        # Fallback: deep-link via default browser. Only fires if
+        # on_show wasn't wired or raised.
         webbrowser.open(main_url)
 
     def _open_metabase(_icon, _item) -> None:
@@ -95,7 +119,7 @@ def start(
                 pass
 
     menu = pystray.Menu(
-        pystray.MenuItem("Show Diamond", _open_main, default=True),
+        pystray.MenuItem("Show Diamond", _show_main, default=True),
         pystray.MenuItem("Open Metabase Workshop", _open_metabase),
         pystray.MenuItem("API docs (Swagger)", _open_api_docs),
         pystray.Menu.SEPARATOR,

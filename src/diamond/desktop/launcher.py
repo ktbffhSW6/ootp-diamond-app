@@ -285,15 +285,32 @@ def main(argv: Optional[list[str]] = None) -> int:
     win.setMinimumSize(1100, 700)
     win.show()
 
-    # 4. Cross-thread signaling. Boot thread emits; slots in this
-    #    main thread run on the GUI thread (Qt auto-marshals).
+    # 4. Cross-thread signaling. Boot thread (and tray thread) emit;
+    #    slots in this main thread run on the GUI thread (Qt auto-
+    #    marshals).
     class _BootSignals(QObject):
         urlReady = Signal(str)
         errorReady = Signal(str)
+        showRequested = Signal()  # tray "Show Diamond" → focus window
 
     signals = _BootSignals()
     signals.urlReady.connect(lambda u: view.load(QUrl(u)))
     signals.errorReady.connect(lambda html: view.setHtml(html))
+
+    def _show_main_window() -> None:
+        # Un-minimize, raise, focus. Win32-correct sequence — calling
+        # raise_() alone doesn't bring a minimized window back.
+        try:
+            win.setWindowState(
+                win.windowState() & ~Qt.WindowState.WindowMinimized
+            )
+            win.show()
+            win.raise_()
+            win.activateWindow()
+        except Exception:
+            log.exception("show-main-window slot raised")
+
+    signals.showRequested.connect(_show_main_window)
 
     # 5. Boot thread — load sidecars, then signal the morph.
     handles_box: dict[str, Optional[sidecar.SidecarHandles]] = {"h": None}
@@ -339,6 +356,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 main_url=f"http://127.0.0.1:{args.port_web}",
                 api_url=f"http://127.0.0.1:{args.port_api}",
                 on_quit=lambda: app.quit(),
+                on_show=lambda: signals.showRequested.emit(),
             )
         except Exception:
             log.debug("tray unavailable", exc_info=True)
