@@ -72,3 +72,54 @@ class AnthropicClient(AIClient):
             if isinstance(block, dict) and block.get("type") == "text":
                 return str(block.get("text", "")).strip()
         raise AIClientError("Anthropic returned no text block")
+
+    def chat(
+        self,
+        messages: list[dict],
+        *,
+        system: str | None = None,
+        tools: list[dict] | None = None,
+        max_tokens: int = 1500,
+    ) -> dict:
+        """Multi-turn chat with optional tool use (D33).
+
+        Anthropic's Messages API natively supports the tool-use loop:
+        the response's ``stop_reason`` is ``tool_use`` when the model
+        wants to call tools, ``end_turn`` when it's done. We pass
+        through both fields so the route layer can drive the loop.
+        """
+        headers = {
+            "x-api-key": self._api_key,
+            "anthropic-version": _API_VERSION,
+            "content-type": "application/json",
+        }
+        body: dict[str, object] = {
+            "model": self._model,
+            "max_tokens": max_tokens,
+            "messages": messages,
+        }
+        if system:
+            body["system"] = system
+        if tools:
+            # Anthropic's tool format matches our internal Tool shape
+            # exactly (name + description + input_schema).
+            body["tools"] = tools
+
+        try:
+            with httpx.Client(timeout=_TIMEOUT) as c:
+                resp = c.post(_API_URL, headers=headers, json=body)
+        except httpx.HTTPError as e:
+            raise AIClientError(f"Anthropic network error: {e}") from e
+
+        if resp.status_code != 200:
+            try:
+                err = resp.json().get("error", {}).get("message", resp.text)
+            except Exception:
+                err = resp.text
+            raise AIClientError(f"Anthropic {resp.status_code}: {err[:300]}")
+
+        data = resp.json()
+        return {
+            "stop_reason": data.get("stop_reason", "end_turn"),
+            "content": data.get("content", []),
+        }

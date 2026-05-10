@@ -38,6 +38,64 @@ inline plaque thumbnails per inductee row (needs Pillow downsample); full
 7-segment outline rendering on the spray chart (vs the 5-point spline we
 adapt to today).
 
+## ✅ AI sidebar (D33) — SHIPPED 2026-05-16
+
+**Status**: full four-tier AI surface replacing D14's single-button
+"Summarize career". Floating launcher on every page; tool-using
+analyst over the warehouse; GM-copilot modes; prompt-to-dashboard via
+Metabase API.
+
+- ✅ **Tier 1 — page-aware** (`AISidebar.tsx` reads `usePathname()`,
+  system prompt includes "user is on /player/123")
+- ✅ **Tier 2 — tool-using analyst** (`src/diamond/ai/tools.py` —
+  6 tools: query_warehouse, get_player, compare_players,
+  get_glossary, list_leaderboard_stats, create_metabase_card; route
+  drives the tool loop with iteration cap = 6)
+- ✅ **Tier 3 — GM copilot modes** (4 modes: chat / callup / trade /
+  draft; mode pills in sidebar footer; structured prompts in
+  `_MODE_PROMPTS`)
+- ✅ **Tier 4 — prompt-to-dashboard** (`create_metabase_card` tool
+  POSTs MBQL spec via `diamond.api.metabase` coordinator; returns
+  card_url; sidebar renders inline as ✓ green launcher link)
+- ✅ **Provider-agnostic** (Anthropic + OpenAI both support tool use;
+  OpenAI adapter translates message format + tool_calls in both
+  directions)
+- ✅ **Safety** (read-only SQL with regex-blocked mutation keywords +
+  single-statement guard + LIMIT 1000 + 5s timeout; tool errors
+  return `{"ok": False}` rather than raising)
+- ✅ **Metabase link fix** — `QWebEnginePage.createWindow` override
+  routes target="_blank" to system browser via
+  `QDesktopServices.openUrl`. Workshop tab's deep-link cards now work
+  inside the desktop shell.
+
+### AI sidebar v2 follow-ups — DEFERRED
+
+- [ ] **Streaming responses** (SSE) — sidebar currently shows
+      "Thinking…" until the full tool loop finishes (5-15s for
+      complex questions). Streaming would let intermediate reasoning
+      appear live. ~1 day.
+- [ ] **Conversation persistence** — threads live in component state
+      only. Per-save persistence to `~/.diamond/<save>/ai-threads/*.json`
+      would let users resume long analyses. ~half day.
+- [ ] **Per-page payload context** — currently only `pathname` is
+      sent. Could attach the player profile / team summary / standings
+      block as `page_context.payload` for a richer T1 experience. The
+      schema reserves the field; just needs each page to populate.
+      ~1 day.
+- [ ] **More tools** — `get_team`, `get_standings`, `get_movements`,
+      `get_recent_news`, `compare_seasons` would broaden the analyst
+      surface. ~half day per tool.
+- [ ] **Token usage tracking + daily cap** — D14's reserved
+      `use_level` field can drive a soft daily cap so users don't
+      surprise-burn API credits. ~half day.
+- [ ] **Inline embedded Metabase card preview** — D31 noted that
+      static-embed (signed JWT) iframes work even with OSS's
+      `frame-ancestors 'none'` for individual cards. Could render the
+      card the model just created inline in the sidebar instead of
+      linking out. ~1 day.
+
+---
+
 ## ✅ Native desktop shell (D32) — SHIPPED 2026-05-15 late-evening
 
 **Status**: Diamond is now a native Windows app. One `Diamond.exe`, no browser

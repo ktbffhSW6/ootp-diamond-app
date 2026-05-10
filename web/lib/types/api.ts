@@ -230,6 +230,78 @@ export interface ChartBuilderResponse {
   points: ChartBuilderPoint[];
 }
 /**
+ * One content block within a message turn.
+ *
+ * Anthropic's content-block shape, surfaced to the frontend so the
+ * UI can render text and tool calls / results distinctly.
+ */
+export interface ChatContentBlock {
+  type: "text" | "tool_use" | "tool_result";
+  text?: string | null;
+  id?: string | null;
+  name?: string | null;
+  input?: {
+    [k: string]: unknown;
+  } | null;
+  tool_use_id?: string | null;
+  content?: unknown;
+  is_error?: boolean | null;
+}
+/**
+ * User-side request: full thread + new user input.
+ */
+export interface ChatRequest {
+  /**
+   * Existing conversation, oldest first.
+   */
+  messages?: ChatTurn[];
+  /**
+   * Latest user message text. Appended as a fresh user turn.
+   */
+  user_input: string;
+  page_context?: PageContext | null;
+  /**
+   * Tier 3 GM copilot quick-actions. 'chat' is the open-ended default. The named modes pre-pend a structured prompt template + suggested tools.
+   */
+  mode?: "chat" | "callup" | "trade" | "draft";
+}
+/**
+ * One full message in the conversation thread.
+ */
+export interface ChatTurn {
+  role: "user" | "assistant";
+  content: ChatContentBlock[];
+}
+/**
+ * Optional page-aware context for Tier 1.
+ */
+export interface PageContext {
+  /**
+   * Current Next.js pathname, e.g. '/player/123' or '/league'.
+   */
+  pathname: string;
+  /**
+   * Optional structured payload from the current page (player profile, team summary, etc.). Sent verbatim to the model as context. Not required — the model can call tools to look up data on its own.
+   */
+  payload?: {
+    [k: string]: unknown;
+  } | null;
+}
+/**
+ * Server appends one assistant turn (which may include tool_use
+ * blocks the route already executed) plus any user-side tool_result
+ * turns interleaved by the tool loop. The frontend stitches these
+ * onto its existing thread.
+ */
+export interface ChatResponse {
+  appended: ChatTurn[];
+  stop_reason: "end_turn" | "tool_use" | "max_tokens";
+  /**
+   * Number of provider round-trips this request consumed.
+   */
+  iterations: number;
+}
+/**
  * Slimmed-down ledger row for the recent-moves strip.
  */
 export interface CockpitMovementRow {

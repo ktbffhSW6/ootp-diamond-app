@@ -1121,3 +1121,73 @@ scripts/build_desktop.py    next build + asset copy + (optional) PyInstaller
 **Pinned**: PySide6 + QtWebEngine (not pywebview/Tauri/Electron), one-folder PyInstaller bundle (not one-file), single-window-morph (not splash-then-main, not multi-window), Job Object + named mutex for lifecycle.
 
 **Deferred to v2**: code signing (Windows SmartScreen friendliness), Inno Setup MSI installer for Start Menu integration + uninstall, auto-update via Tauri-style updater, Mac/Linux ports.
+
+---
+
+## D33 — AI sidebar with tool use, page context, GM-copilot modes, and Metabase card creation
+
+**Date**: 2026-05-15 (late-evening + 2026-05-16)
+**Decision**: Replace D14's single-button "Summarize career" with a full AI sidebar reachable from every page. Four-tier capability stack: (T1) page-aware chat with the current pathname/payload baked into the system prompt, (T2) read-only tool-using analyst with six tools wired into Diamond's warehouse + dictionary, (T3) GM-copilot quick-modes for call-up / trade / draft decisions, (T4) prompt-to-dashboard via Metabase REST API.
+
+**Why**: D14 shipped as a v0.1 — one button, one player payload, no DB access, no follow-ups. The user pushed back ("seems quite limited and not really easy to find") and asked for the right architecture. Diamond is the perfect substrate for a real AI layer: stable warehouse schema, OOTP-canonical stat dictionary, Metabase wired in for visualizations. Skipping straight to T2-T4 instead of incrementally extending T1 lets us ship the actual valuable surface in one cohesive change.
+
+**Architecture**:
+
+1. **Sidebar** (`web/components/AISidebar.tsx`) — floating launcher button (`✦ Ask Diamond`, bottom-right) opens a 440px slide-out panel. Header shows current pathname as `ctx:`. Body is a scrollable thread with rich content blocks (text + tool_use + tool_result) rendered inline. Footer has four mode pills (Chat / Call-up / Trade / Draft) + a textarea + Send.
+
+2. **Page context** (T1) — the sidebar reads `usePathname()` and posts `page_context.pathname` with every request. The route's system prompt prepends "the user is currently on /player/123" so a generic question like "is he struggling?" is grounded. Optional `page_context.payload` is reserved for richer per-page context (player profile, team summary) but not required v1 — the model can fetch via tools.
+
+3. **Tools** (T2) — six tools, all in `src/diamond/ai/tools.py`:
+   - `query_warehouse(sql)` — read-only DuckDB cursor, single-statement guard, forbidden-keyword regex (DROP/DELETE/UPDATE/INSERT/CREATE/ALTER/...), default LIMIT 1000, 5s statement timeout.
+   - `get_player(player_id)` — bio + career bWAR/pWAR.
+   - `compare_players(player_ids)` — 2-5 players side-by-side.
+   - `get_glossary(stat_id)` — definition + KaTeX formula + interpretation from `diamond.dictionary.STATS`.
+   - `list_leaderboard_stats()` — discovery aid.
+   - `create_metabase_card(name, sql, viz_type)` — POSTs to Metabase's REST API; returns `card_url`.
+   Tools return `{"ok": False, "error": "..."}` on failure rather than raising — the model recovers gracefully.
+
+4. **Tool loop** in `routes/ai.py:chat()` — translates frontend `ChatTurn` ↔ provider-native messages, drives the loop until `stop_reason != "tool_use"`. `_MAX_ITERATIONS = 6` cap. Returns every appended turn (assistant text + tool_use blocks + user tool_result blocks) so the UI can render the full reasoning chain.
+
+5. **GM-copilot modes** (T3) — four `mode` values in `ChatRequest`: `chat` (default, generic), `callup`, `trade`, `draft`. Non-default modes prepend a structured prompt to the system prompt. The frontend's mode pills + the empty-state suggestions both wire into this.
+
+6. **Prompt-to-dashboard** (T4) — `create_metabase_card` calls `diamond.api.metabase._get_session()` for the cached Metabase auth token, POSTs `{name, description, display, dataset_query: {type: "native", native: {query: sql}, database: 1}}` to `/api/card`. Returns `card_url`; the sidebar renders a green "✓ Created Metabase card" link the user can click to open it in their browser. Database id 1 is hardcoded per D31's Pattern A.
+
+**Provider abstraction**: `AIClient.chat()` is a new abstract method on the existing D14 client. Anthropic adapter passes the Anthropic-shaped tool/messages format directly (already matches our internal shape). OpenAI adapter translates in both directions: tool_use blocks ↔ `tool_calls`, tool_result blocks ↔ `role: "tool"` messages. Both adapters emit our internal `{stop_reason, content[]}` shape so the route never has to branch.
+
+**Safety**:
+
+- **SQL is read-only**: regex-blocked DROP/DELETE/UPDATE/INSERT/CREATE/ALTER/ATTACH/DETACH/COPY/EXPORT/LOAD/INSTALL/PRAGMA/VACUUM. Single-statement only. LIMIT 1000 default. 5s timeout. The DuckDB cursor itself is the same one the read-only routes use; not a new privilege escalation.
+- **Tool errors don't crash the loop**: `{"ok": False, "error": ...}` flows back to the model which can recover.
+- **Iteration cap**: 6 round-trips per request prevents runaway tool spirals.
+- **No streaming yet**: synchronous request/response. Streaming is a v2 follow-up.
+- **API keys stay in keyring**: existing D14 infra unchanged. The sidebar uses whatever provider/model the user configured at `/settings/ai`.
+
+**Files**:
+
+```
+src/diamond/ai/
+  client.py             AIClient gains chat() abstract method
+  tools.py              new — 6 tool implementations + Tool dataclass + ToolContext
+  adapters/anthropic.py adds chat() — Anthropic-native pass-through
+  adapters/openai.py    adds chat() — translates messages + tool_calls in both directions
+
+src/diamond/api/
+  schemas/chat.py       new — ChatTurn / ChatContentBlock / ChatRequest / ChatResponse / PageContext
+  routes/ai.py          adds /api/ai/chat endpoint + system-prompt builder + tool loop
+
+web/
+  lib/ai-chat.ts        new — sendChat() helper
+  components/AISidebar.tsx new — full sidebar (~470 LOC)
+  app/layout.tsx        wires <AISidebar /> into the root layout
+```
+
+**Tradeoffs**:
+
+- **Latency**: tool-using turns can take 5-15s for complex questions (model thinks → tool runs → model summarizes). Non-streaming v1 means the user sees "Thinking…" until the whole loop finishes. Streaming would let us show intermediate reasoning live; deferred.
+- **Cost**: full warehouse schema (~220 tables) isn't in the system prompt — model has to discover via `list_leaderboard_stats` + `query_warehouse(SHOW TABLES)`. Cheaper input tokens, slightly more round-trips. Acceptable for single-user; would refactor for multi-user.
+- **No memory across sessions**: each new sidebar open starts a fresh thread. The "New" button explicitly resets. Conversation history is in component state only.
+- **`create_metabase_card` requires Metabase to be running**: tool checks port 3001 + Metabase auth; returns `{"ok": False, "error": ...}` with a friendly message if not. The user sees the error inline and can click the Workshop tab (which now auto-launches Metabase per D32).
+
+**Pinned**: tool-loop on the server (not client-driven), Anthropic-shaped internal message format (OpenAI translated in adapter), six tools (not extensible v1 — adding a tool means a code change), six-iteration cap, no streaming.
+
+**Deferred to v2**: streaming responses (SSE), per-page payload-aware context (player profile / team summary baked into `page_context.payload`), conversation persistence (save threads to disk per save), token usage tracking + daily cap (the D14 `use_level` field), more tools (`get_team`, `get_standings`, `get_movements`).

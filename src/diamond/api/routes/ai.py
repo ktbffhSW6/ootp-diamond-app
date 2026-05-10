@@ -303,3 +303,278 @@ def ai_summarize(
         provider=client.provider_name,
         model=client.model,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Chat endpoint (D33) — full AI sidebar with page context + tools
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+import json as _json  # noqa: E402
+
+from diamond.ai.tools import TOOLS, ToolContext, all_tools  # noqa: E402
+from diamond.api.schemas import (  # noqa: E402
+    ChatContentBlock,
+    ChatRequest,
+    ChatResponse,
+    ChatTurn,
+)
+
+
+# Tier 3 prompt templates. The route prepends one of these to the
+# user's input when ``mode != "chat"``. Keeping them in one place
+# makes the GM-copilot UI a thin wrapper — the frontend just sends a
+# mode string + free-form input.
+_MODE_PROMPTS: dict[str, str] = {
+    "callup": (
+        "You are advising the GM on a roster move. Use the warehouse "
+        "to compare promotion candidates against their potential MLB "
+        "replacements. Cite OPS+ / wRC+ for batters, ERA+ / FIP for "
+        "pitchers, plus career trajectory. Recommend a specific move."
+    ),
+    "trade": (
+        "You are evaluating a trade idea. Use compare_players + "
+        "query_warehouse to assess each side's WAR contribution, "
+        "contract status, age curve, and positional fit. State which "
+        "side wins and why."
+    ),
+    "draft": (
+        "You are reviewing a draft class outcome. Pull from "
+        "draft_class + f_player_season_advanced_* to find hits, "
+        "misses, and best-pick patterns. Quantify with WAR per pick."
+    ),
+}
+
+
+def _build_system_prompt(mode: str, page_context: dict | None) -> str:
+    base = (
+        "You are Diamond's analytical co-pilot — a sabermetrics-fluent "
+        "assistant for an OOTP 27 dynasty. The user is the GM of the "
+        "Boston Red Sox in the 'Building the Green Monster' save (years "
+        "2026-2029).\n\n"
+        "You have read-only access to a DuckDB warehouse via the "
+        "`query_warehouse` tool. Key tables: "
+        "`players_current`, `f_player_season_advanced_batting` (wOBA, "
+        "wRC+, OPS+, b_war), `f_player_season_advanced_pitching` (FIP, "
+        "ERA+, p_war), `f_player_season_statcast_batting` (EV, "
+        "barrel%), `f_player_season_leverage_batting` (WPA, RE24, "
+        "Clutch), `team_record_snapshot`, `parks`. Use `get_glossary` "
+        "first if you're unsure what a stat means.\n\n"
+        "Be direct and quantitative. Cite specific numbers from the "
+        "warehouse, not vibes. When you produce a recommendation, "
+        "state it plainly. When you don't have enough info, say so "
+        "and ask a focused follow-up question.\n\n"
+        "Stat conventions: OPS+/wRC+/ERA+ are 100-relative (>100 is "
+        "above average). WAR is OOTP-canonical (b_war for batters, "
+        "p_war for pitchers — IE-A-tier reconciled). League scope is "
+        "MLB + affiliated minors + DSL + AFL. Pre-2026 player-seasons "
+        "have real-history baselines from L_REF (D29).\n\n"
+        "When the user might want to revisit an analysis, offer to "
+        "create a Metabase card via `create_metabase_card` — those "
+        "live in the user's Workshop tab and can be saved to "
+        "dashboards."
+    )
+    if mode in _MODE_PROMPTS:
+        base = base + "\n\nMode-specific guidance: " + _MODE_PROMPTS[mode]
+
+    if page_context:
+        path = page_context.get("pathname")
+        payload = page_context.get("payload")
+        page_block = f"\n\nThe user is currently on page: {path}"
+        if payload:
+            try:
+                serialized = _json.dumps(payload, default=str, indent=2)
+                if len(serialized) > 4000:
+                    serialized = serialized[:4000] + "\n... (truncated)"
+                page_block += (
+                    f"\nPage data:\n```json\n{serialized}\n```\n"
+                    "Use this as default context — the user is asking "
+                    "about what's on this page unless they say otherwise."
+                )
+            except Exception:
+                pass
+        base += page_block
+
+    return base
+
+
+def _to_provider_messages(turns: list[ChatTurn]) -> list[dict]:
+    """Translate frontend ChatTurn list to provider-native messages.
+
+    The provider adapters speak Anthropic-shaped messages (which our
+    ChatTurn mirrors), so this is mostly a structural copy.
+    """
+    out: list[dict] = []
+    for t in turns:
+        blocks: list[dict] = []
+        for b in t.content:
+            block: dict = {"type": b.type}
+            if b.type == "text" and b.text is not None:
+                block["text"] = b.text
+            elif b.type == "tool_use":
+                block["id"] = b.id
+                block["name"] = b.name
+                block["input"] = b.input or {}
+            elif b.type == "tool_result":
+                block["tool_use_id"] = b.tool_use_id
+                block["content"] = (
+                    b.content
+                    if isinstance(b.content, str)
+                    else _json.dumps(b.content, default=str)
+                )
+                if b.is_error:
+                    block["is_error"] = True
+            blocks.append(block)
+        out.append({"role": t.role, "content": blocks})
+    return out
+
+
+def _from_provider_blocks(blocks: list[dict]) -> list[ChatContentBlock]:
+    out: list[ChatContentBlock] = []
+    for b in blocks:
+        if not isinstance(b, dict):
+            continue
+        t = b.get("type")
+        if t == "text":
+            out.append(ChatContentBlock(type="text", text=b.get("text", "")))
+        elif t == "tool_use":
+            out.append(ChatContentBlock(
+                type="tool_use",
+                id=b.get("id"),
+                name=b.get("name"),
+                input=b.get("input") or {},
+            ))
+    return out
+
+
+_MAX_ITERATIONS = 6  # cap on tool round-trips per request
+
+
+@router.post("/ai/chat", response_model=ChatResponse)
+def chat(
+    body: ChatRequest,
+    cursor: Annotated[duckdb.DuckDBPyConnection, Depends(get_cursor)],
+) -> ChatResponse:
+    """Multi-turn chat with optional tool use (D33).
+
+    The route drives the tool loop: model emits tool_use blocks, we
+    execute them server-side, append tool_result blocks, call the
+    model again. ``_MAX_ITERATIONS`` caps the loop to avoid runaway
+    behavior.
+
+    Returns every turn produced this request (one assistant turn per
+    iteration, plus user turns carrying tool_result blocks). The
+    frontend appends these to its existing thread.
+    """
+    try:
+        client = get_active_client(load_settings())
+    except AIConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    # Build the working message list: existing thread + new user input.
+    working: list[dict] = _to_provider_messages(body.messages)
+    working.append({"role": "user", "content": body.user_input})
+
+    system = _build_system_prompt(
+        body.mode,
+        body.page_context.model_dump() if body.page_context else None,
+    )
+
+    tools_native = [
+        {
+            "name": t.name,
+            "description": t.description,
+            "input_schema": t.input_schema,
+        }
+        for t in all_tools()
+    ]
+
+    ctx = ToolContext(cursor=cursor)
+    appended: list[ChatTurn] = []
+    iterations = 0
+    stop_reason = "end_turn"
+
+    while iterations < _MAX_ITERATIONS:
+        iterations += 1
+        try:
+            response = client.chat(
+                working,
+                system=system,
+                tools=tools_native,
+                max_tokens=1500,
+            )
+        except AIClientError as e:
+            log.warning("AI chat provider error: %s", e)
+            raise HTTPException(status_code=502, detail=str(e)) from e
+
+        stop_reason = response.get("stop_reason", "end_turn")
+        content_blocks = response.get("content", [])
+
+        # Surface the assistant turn (text + tool_use, both visible
+        # in the UI so users can see what the model called).
+        assistant_turn = ChatTurn(
+            role="assistant",
+            content=_from_provider_blocks(content_blocks),
+        )
+        appended.append(assistant_turn)
+        working.append({"role": "assistant", "content": content_blocks})
+
+        if stop_reason != "tool_use":
+            break
+
+        # Run every tool_use block; emit a single user turn carrying
+        # all tool_result blocks (Anthropic-native shape).
+        tool_results: list[dict] = []
+        ui_results: list[ChatContentBlock] = []
+        for block in content_blocks:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            name = block.get("name", "")
+            tool = TOOLS.get(name)
+            if tool is None:
+                payload = {"ok": False, "error": f"Unknown tool {name!r}."}
+            else:
+                try:
+                    payload = tool.handler(block.get("input") or {}, ctx)
+                except Exception as exc:  # pragma: no cover
+                    log.exception("tool %s raised", name)
+                    payload = {"ok": False, "error": f"Tool internal error: {exc}"}
+
+            is_error = isinstance(payload, dict) and payload.get("ok") is False
+            tool_use_id = block.get("id", "")
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tool_use_id,
+                "content": _json.dumps(payload, default=str),
+                "is_error": is_error,
+            })
+            ui_results.append(ChatContentBlock(
+                type="tool_result",
+                tool_use_id=tool_use_id,
+                content=payload,
+                is_error=is_error,
+            ))
+
+        appended.append(ChatTurn(role="user", content=ui_results))
+        working.append({"role": "user", "content": tool_results})
+
+    if iterations >= _MAX_ITERATIONS and stop_reason == "tool_use":
+        # Truncate gracefully — emit a final assistant text saying we
+        # capped iterations rather than spinning forever.
+        appended.append(ChatTurn(
+            role="assistant",
+            content=[ChatContentBlock(
+                type="text",
+                text=(
+                    "I've used the maximum number of tool calls for this "
+                    "turn. Let me know if you'd like me to keep going."
+                ),
+            )],
+        ))
+        stop_reason = "end_turn"
+
+    return ChatResponse(
+        appended=appended,
+        stop_reason=stop_reason,
+        iterations=iterations,
+    )

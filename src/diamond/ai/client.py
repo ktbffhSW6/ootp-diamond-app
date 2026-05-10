@@ -36,7 +36,7 @@ class AIClientError(Exception):
 
 
 class AIClient(ABC):
-    """Provider-agnostic completion interface."""
+    """Provider-agnostic completion + chat-with-tools interface."""
 
     @abstractmethod
     def complete(
@@ -46,7 +46,46 @@ class AIClient(ABC):
         system: str | None = None,
         max_tokens: int = 600,
     ) -> str:
-        """Generate a completion. Returns the assistant text."""
+        """Generate a completion. Returns the assistant text.
+
+        Single-turn, no tools. Used by the legacy /api/ai/summarize
+        endpoint. New code should prefer ``chat`` for multi-turn or
+        tool-using conversations.
+        """
+
+    @abstractmethod
+    def chat(
+        self,
+        messages: list[dict],
+        *,
+        system: str | None = None,
+        tools: list[dict] | None = None,
+        max_tokens: int = 1500,
+    ) -> dict:
+        """One round-trip in a multi-turn chat with optional tools.
+
+        Args:
+            messages: provider-native message list. Each element has
+                ``role`` (``user`` / ``assistant``) and ``content``.
+                Anthropic content can be a string or a list of typed
+                blocks (text / tool_use / tool_result).
+            system: optional system prompt.
+            tools: provider-native tool declaration list. Each tool
+                has ``name``, ``description``, ``input_schema``.
+            max_tokens: cap on response.
+
+        Returns a dict with:
+            stop_reason (str): 'end_turn' | 'tool_use' | 'max_tokens'
+            content (list[dict]): provider-native content blocks.
+                Each block has ``type`` (``text`` or ``tool_use``)
+                plus type-specific fields. ``tool_use`` blocks include
+                ``id``, ``name``, ``input``.
+
+        The route layer drives the loop: while stop_reason ==
+        'tool_use', execute each tool_use block, append the
+        assistant message + a user message with tool_result blocks,
+        and call chat() again.
+        """
 
     @property
     @abstractmethod

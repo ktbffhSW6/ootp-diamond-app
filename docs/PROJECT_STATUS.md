@@ -4,7 +4,69 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-15 (late evening) — **Phase 3: Native desktop shell shipped (D32).** Diamond now ships as a native Windows app — one `Diamond.exe`, no browser tab, no flapping cmd windows, clean shutdown via Windows Job Object. Single-window-morph pattern (Qt signal swaps splash HTML for main URL); PySide6 + QtWebEngine for the chrome (bundled Chromium — no end-user WebView2 install needed); PyInstaller for the bundle. Five-slice ship in a single session, plus same-day pivot from pywebview → PySide6 (pywebview's hard `pythonnet` dep on Windows has no Python 3.14 wheel).
+**Last updated**: 2026-05-16 — **Phase 3: AI sidebar shipped (D33) + Metabase link fix.** Diamond's AI is no longer a single "Summarize career" button — it's a full sidebar reachable from every page with tool use, page context, GM-copilot modes, and Metabase card creation. Plus a fix for QtWebEngine target=_blank links (Metabase Workshop deep-links now route to the system browser).
+
+**D33 four-tier shape**:
+
+| Tier | Capability | Implementation |
+|---|---|---|
+| **T1: Page-aware** | Sidebar reads `usePathname()`; system prompt includes "user is on /player/123" | `web/components/AISidebar.tsx` + `_build_system_prompt` |
+| **T2: Tool-using analyst** | 6 tools wired into warehouse + dictionary | `src/diamond/ai/tools.py`; route's tool loop |
+| **T3: GM copilot** | 4 modes (chat / callup / trade / draft) prepend structured prompts | `_MODE_PROMPTS` + frontend mode pills |
+| **T4: Prompt-to-dashboard** | `create_metabase_card` POSTs MBQL spec to Metabase REST API | `tools.py:_create_metabase_card` |
+
+**Tools** (all read-only, return `{"ok": False, "error": ...}` on failure rather than raising):
+
+- `query_warehouse(sql)` — DuckDB cursor with single-statement guard, regex-blocked mutations, default LIMIT 1000, 5s timeout
+- `get_player(player_id)` — bio + career bWAR/pWAR
+- `compare_players(player_ids)` — 2-5 players side-by-side
+- `get_glossary(stat_id)` — definition + formula + interpretation from `diamond.dictionary.STATS`
+- `list_leaderboard_stats()` — discovery
+- `create_metabase_card(name, sql, viz_type)` — POSTs to Metabase, returns card_url
+
+**Frontend rendering** of the conversation thread is rich:
+- Plain text in standard chat bubbles
+- `tool_use` blocks render as collapsible `<details>` with the model's input args + a "Tier 4" badge for `create_metabase_card`
+- `tool_result` blocks special-case warehouse query results (preview table, first 25 rows, SQL inline) and Metabase card creations (green ✓ link to open in browser)
+- Errors render in rose styling
+
+**Empty-state suggestions** are page-aware: on `/player/[id]` you get "Summarize this player's career…", on `/league` you get "Who should I call up from AAA?" (mode=callup), on `/movements` you get a trade analysis prompt, etc.
+
+**Metabase link fix**: QtWebEngine doesn't handle `target="_blank"` by default — the Workshop tab's "New question / Sample dashboard / Browse warehouse" cards opened nothing. Subclassed `QWebEnginePage` to override `createWindow`; new-window navigation now routes to the system default browser via `QDesktopServices.openUrl`.
+
+**Files**:
+
+```
+src/diamond/ai/
+  client.py                AIClient gains chat() abstract method
+  tools.py                 new — 6 tools + Tool dataclass + ToolContext
+  adapters/anthropic.py    adds chat() — pass-through (Anthropic-native shape)
+  adapters/openai.py       adds chat() — translates messages + tool_calls
+
+src/diamond/api/
+  schemas/chat.py          new — ChatTurn / ChatContentBlock / ChatRequest / ChatResponse / PageContext
+  routes/ai.py             adds /api/ai/chat endpoint + system-prompt builder + tool loop
+
+src/diamond/desktop/
+  launcher.py              ExternalLinkPage subclass routes target=_blank to system browser
+
+web/
+  lib/ai-chat.ts           new — sendChat() helper
+  components/AISidebar.tsx new — full sidebar (~470 LOC)
+  app/layout.tsx           wires <AISidebar /> into root layout
+```
+
+**API surface today** (34 endpoints — D33 added `/api/ai/chat`).
+
+**Caveats**:
+- **No streaming v1** — synchronous request/response; sidebar shows "Thinking…" until the full loop finishes. SSE streaming is a v2 follow-up.
+- **Iteration cap = 6** — prevents tool spirals; if hit, the model gets a graceful "I've used max tool calls" close.
+- **No conversation persistence** — threads live in component state; "New" resets. Per-save thread persistence is a v2 follow-up.
+- **`create_metabase_card` requires Metabase running** — checks port 3001; surfaces a friendly error inline if not. D32's auto-launch makes this rare in practice.
+
+---
+
+**2026-05-15 (late evening) — Phase 3: Native desktop shell shipped (D32).** Diamond now ships as a native Windows app — one `Diamond.exe`, no browser tab, no flapping cmd windows, clean shutdown via Windows Job Object. Single-window-morph pattern (Qt signal swaps splash HTML for main URL); PySide6 + QtWebEngine for the chrome (bundled Chromium — no end-user WebView2 install needed); PyInstaller for the bundle. Five-slice ship in a single session, plus same-day pivot from pywebview → PySide6 (pywebview's hard `pythonnet` dep on Windows has no Python 3.14 wheel).
 
 | Slice | Headline | Files |
 |---|---|---|

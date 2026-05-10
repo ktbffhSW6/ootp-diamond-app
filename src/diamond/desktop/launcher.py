@@ -219,9 +219,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     # 3. Qt application + main window. PySide6 ships its own Chromium
     #    via QtWebEngine — no Microsoft WebView2 runtime needed on
     #    the end-user machine.
+    import webbrowser
+
     from PySide6.QtCore import QObject, QUrl, Qt, Signal
-    from PySide6.QtGui import QGuiApplication
-    from PySide6.QtWebEngineCore import QWebEngineSettings
+    from PySide6.QtGui import QDesktopServices, QGuiApplication
+    from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
     from PySide6.QtWebEngineWidgets import QWebEngineView
     from PySide6.QtWidgets import QApplication, QMainWindow
 
@@ -236,7 +238,38 @@ def main(argv: Optional[list[str]] = None) -> int:
     app.setApplicationName("Diamond")
     app.setOrganizationName("Diamond")
 
+    # Custom QWebEnginePage that routes target="_blank" / window.open
+    # links to the system default browser. Without this, those links
+    # do nothing inside QtWebEngine — there's no second-tab UI in the
+    # native window. The Workshop tab's "New question / Sample
+    # dashboard / Browse warehouse" cards are target="_blank" and
+    # need to land in the user's regular browser (where Metabase is
+    # designed to be used full-screen).
+    class _ExternalLinkPage(QWebEnginePage):
+        def createWindow(self, _window_type):  # noqa: N802 — Qt API name
+            # The helper page never gets attached to a view; we just
+            # listen for its URL and open it externally, then return
+            # it to satisfy Qt's signature contract.
+            helper = QWebEnginePage(self.profile(), self)
+            helper.urlChanged.connect(self._open_external)
+            return helper
+
+        @staticmethod
+        def _open_external(url: QUrl) -> None:
+            url_str = url.toString()
+            if not url_str or url_str == "about:blank":
+                return
+            try:
+                # QDesktopServices.openUrl uses Windows shell URL
+                # handlers; falls back to webbrowser if that fails.
+                if not QDesktopServices.openUrl(url):
+                    webbrowser.open(url_str)
+            except Exception:
+                log.debug("openExternal failed for %s", url_str, exc_info=True)
+
     view = QWebEngineView()
+    view.setPage(_ExternalLinkPage(view))
+
     # Opt-in browser features the Diamond UI may rely on:
     s = view.settings()
     s.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)

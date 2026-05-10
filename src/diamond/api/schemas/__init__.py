@@ -32,6 +32,13 @@ from diamond.api.schemas.awards import (
     AwardsResponse,
 )
 from diamond.api.schemas.batted_balls import BattedBallEvent, BattedBallsResponse
+from diamond.api.schemas.chat import (
+    ChatContentBlock,
+    ChatRequest,
+    ChatResponse,
+    ChatTurn,
+    PageContext,
+)
 from diamond.api.schemas.chart_builder import (
     ChartBuilderPoint,
     ChartBuilderResponse,

@@ -23,6 +23,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { AISidebar } from "@/components/AISidebar";
 import { QuitButton } from "@/components/QuitButton";
 import { RefreshButton } from "@/components/RefreshButton";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
@@ -86,6 +87,10 @@ export default function RootLayout({
           </div>
         </header>
         <main className="px-3 py-4 sm:px-4 lg:px-6">{children}</main>
+        {/* D33: AI sidebar — floating launcher button + slide-out panel.
+            Reachable from every page; sends current pathname as
+            page_context so the model knows what the user is looking at. */}
+        <AISidebar />
       </body>
     </html>
   );
