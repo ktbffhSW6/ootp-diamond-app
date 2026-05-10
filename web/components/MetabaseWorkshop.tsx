@@ -18,7 +18,11 @@
 
 import { useEffect, useState } from "react";
 
-const METABASE_URL = "http://localhost:3000";
+// Port 3001 to avoid colliding with Diamond's Next.js dev server (3000)
+// and FastAPI (8000). Override via NEXT_PUBLIC_METABASE_URL in
+// `web/.env.local` if you've moved Metabase elsewhere.
+const METABASE_URL =
+  process.env.NEXT_PUBLIC_METABASE_URL ?? "http://localhost:3001";
 
 type LivenessState = "checking" | "up" | "down";
 

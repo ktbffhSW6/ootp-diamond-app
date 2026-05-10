@@ -48,7 +48,7 @@ from diamond.config import OOTP_SAVED_GAMES, SaveConfig
 log = logging.getLogger(__name__)
 
 
-METABASE_URL = "http://127.0.0.1:3000"
+METABASE_URL = "http://127.0.0.1:3001"
 METABASE_DATABASE_ID = 1  # Pattern A — single Database connection
 METABASE_TIMEOUT = 5.0    # seconds; save switch shouldn't hang on Metabase
 
