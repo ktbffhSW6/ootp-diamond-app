@@ -6,23 +6,13 @@
 
 ---
 
-## 🎯 Active priority — finish Padres reconciliation, then build the Almanac
+## 🎯 Active priority — Almanac architecture (D40+)
 
-Tracking ladder agreed 2026-05-17 (post-D38):
+D39 closed Statcast reconciliation 2026-05-17 evening — see PROJECT_STATUS.md "Active priority ladder" for the four-part scorecard. **D40 unblocked.**
 
-**Step 1 — finish reconciliation to ~100% (D39 target)**
+**Step 1 — Baseball Almanac architecture (D40+)**
 
-Three investigation buckets left from D38 reconciliation pass. Each needs deep-dive against at-bat-grain data (`f_pa_event`, 5M+ rows multi-year), comparing against the Padres IE control data at `docs/helpful_files/recon/Padres/`:
-
-- **Statcast spray classification (Pull% / Cent% / Oppo%)** — 5-18% match. Salvador Perez (RHB) IE Pull%=53.8 vs Diamond=28.2. Need to understand OOTP's `hit_xy` encoding semantics. Hypothesis options: (a) hit_xy is stadium-relative not batter-relative (current DATA_NOTES claim incorrect), (b) thresholds need adjustment, (c) OOTP defines pull via swing-contact-point not hit-landing. Empirical test: pull Perez's full 105 BIP with valid hit_xy, distribution-analyze, find the threshold/transform that reproduces 53.8% pull.
-- **Statcast aggregation (EV / LA / HHi / Barrel% / GB% / FB% / LD%)** — 53-86% match. Suspected BIP-cutoff + weighted-average alignment. Compare Diamond's at-bat-aggregated EV against IE's EV per player; identify which events Diamond includes that IE excludes (or vice versa). Look at Merrill IE BIP=351 vs Diamond=396 — the 45-event delta tells us the filter difference.
-- **xBA / xSLG / xwOBA** (7 D-tier cols across batting + pitching superstats_1) — Diamond stores values via OOTP's `lref_xwoba_table` interpolation (should be canonical by construction), but they differ ~30-40% from IE display. Merrill: Diamond xBA=.190 vs IE=.274. Hypothesis: OOTP IE adds wOBA-equivalent credit for BB/HBP/K on top of per-BIP xstats; Diamond stores BIP-only contributions. Test by computing Diamond's xwOBA with non-BIP-event adjustment and see if it matches IE.
-
-Plus the 8 remaining wOBA outliers (small-sample DSL pitchers batting). Probably league-specific scaling in OOTP we don't fully replicate.
-
-**Step 2 — Baseball Almanac architecture (D40+)**
-
-After D39 closes reconciliation, build the save-agnostic complete-history layer per the 17-item phase plan committed 2026-05-17:
+Build the save-agnostic complete-history layer per the 17-item phase plan committed 2026-05-17:
 
 1. HoF Lahman drop — `lref_master.lahmanID` swap (~2 hrs)
 2. `lref_player_*` ingest (Lahman batting/pitching/fielding/hof/awards, frozen per save, 12/31/2025 cutoff enforced)
@@ -45,6 +35,26 @@ Source-attribution tooltips + Statcast scale labels as cross-cutting work.
 - 2026+ = pure OOTP sim from monthly dumps
 - 12/31/2025 boundary machine-enforced via year filters on unified views + smoke-test invariant
 - Save-agnostic by construction: any new save gets the same baseline depth on first ingest
+
+---
+
+## ✅ D39 Statcast reconciliation deep-dive — SHIPPED 2026-05-17 evening
+
+Four-part fix closed Padres Statcast/x-stat columns from ~85% → 95% match overall:
+
+- **D39a — Spray classification** (`hit_xy` is **batter-relative**, not stadium-relative). HR-only events from 1,889 MLB 2028 HRs anchored the encoding: both LHB and RHB pulled HRs cluster at low `hit_xy`. Calibrated boundaries: Pull<114, Cent 114-195, Oppo≥196. **Pull% 5%→38%**, Cent 18%→56%, Oppo 9%→40%. Documented ceiling: 1D `hit_xy` can't capture per-player skew; ~50% within ±10pp is the realistic limit without (stadium handedness × pull-tendency-rating) features.
+- **D39b — `game_type=0` filter** added to all three L3 builders (`f_player_season_statcast_batting`, `_pitching`, `_f_pa_event_xstats`). IE Statcast columns are regular-season only; L3 was silently inflating BIP/EV by 10-15% by including spring training + playoffs.
+- **D39c — LA bucket recalibration** to GB<12 / LD 12-26 / FB 27-51 / PU≥52 (was 10/25/50). **LD% 31%→88%, GB% 60%→73%, FB% 4%→69%, IFFB 22%→72%, HR/FB 65%→79%, GB/FB ratio 3%→57%**.
+- **D39d — x-stats** (three sub-bugs in D29 Slice 2):
+  - Integer-EV interpolation collapsed `floor·0 + ceil·0 = 0` — silently zeroed 15-25% of every player's BIPs. Fixed with explicit `CASE WHEN ev_floor=ev_ceil THEN floor_val ELSE <interp>`.
+  - IE-style denominators: `xBA=SUM(xba_pa)/AB`, `xSLG=SUM(xslg_pa)/AB`, `xwOBA=(SUM(xwoba_pa)+0.69·uBB+0.72·HBP)/PA`. Per-BIP averages retained as `*_bip` inspection columns.
+  - Empirical scalers (`lref_x*_table` is real-MLB-calibrated, OOTP IE pre-scales higher): xBA × 1.22, xSLG × 1.09. xwOBA already within ~3% — no scaler needed.
+  - xERA via Savant convention `21.5·xwOBA − 2.65`.
+  - **Result**: Batting xBA 0%→89%, xSLG 0%→89%, xwOBA 0%→78%. Pitching xBA 0%→96%, xSLG 0%→97%, xwOBA 0%→82%, xERA 0%→87%.
+
+Plus housekeeping: save-aware report header (`write_report()` no longer hard-codes "Red Sox"); `f_player_season_xstats_*` added to warehouse passthrough aliases.
+
+Files: `src/diamond/audit/reconcile.py`, `src/diamond/schema/l3_advanced.py`. Verified on Perez (28026), Merrill (52256), Cabrera (1618). See DECISIONS.md D39 for the full diagnostic transcript including the HR-by-handedness analysis that surfaced the spray bug.
 
 ---
 

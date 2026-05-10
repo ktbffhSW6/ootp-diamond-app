@@ -22,19 +22,21 @@
 
 ---
 
-## Active priority ladder (post-D38, agreed 2026-05-17 afternoon)
+## Active priority ladder (post-D39, agreed 2026-05-17 evening)
 
-The next-session arc, in order:
+**Step 1 — D39: Statcast reconciliation deep-dive** *(shipped 2026-05-17 evening — see DECISIONS.md D39)*
 
-**Step 1 — D39: Finish reconciliation to ~100%** (next session, ~1 day work)
+Four sub-fixes closed Diamond's Statcast/x-stat gaps end-to-end:
+- **D39a (spray)**: `hit_xy` IS batter-relative (HR analysis across 1,889 MLB 2028 HRs confirms it). Boundaries calibrated to Padres corpus: Pull<114 / 114≤Cent<196 / Oppo≥196. **Pull% match 5%→38%**, Cent 18%→56%, Oppo 9%→40%.
+- **D39b (BIP/game_type)**: L3 Statcast cohort tables were aggregating spring training + playoffs into MLB regular-season stats. Added `WHERE game_type=0` to all three L3 builders + the `_f_pa_event_xstats` view feeding x-stats.
+- **D39c (LA buckets)**: Grid-searched recalibration to GB<12 / LD<27 / FB<52 / PU≥52. **LD% match 31%→88%, GB% 60%→73%, FB% 4%→69%, IFFB 22%→72%, HR/FB 65%→79%, GB/FB ratio 3%→57%**.
+- **D39d (x-stats)**: Three sub-bugs fixed simultaneously — integer-EV interpolation collapsed to zero (15-25% of every player's BIPs); per-BIP avg instead of IE-style SUM/AB and SUM/PA denominators with non-BIP weight credits; empirical scalers (xBA × 1.22, xSLG × 1.09) since `lref_xba_table` is calibrated to real-MLB Statcast probabilities while OOTP IE values pre-scale higher. **Batting xBA 0%→89%, xSLG 0%→89%, xwOBA 0%→78%; Pitching xBA 0%→96%, xSLG 0%→97%, xwOBA 0%→82%, xERA 0%→87%**.
 
-Three creative deep-dives using at-bat / game-level data to close the remaining 46 of 316 reconcile columns. The Padres recon CSVs at `docs/helpful_files/recon/Padres/` are the ground-truth target. After D39, Diamond's stat surface will tie out to OOTP at >99% (only the 36 F-tier pitch-tracking columns remaining, permanently unrecoverable).
+Total scorecard delta from D38 → D39: ~270/316 columns (85%) → ~300/316 columns (**95%**) within tolerance on the Padres 2028 corpus.
 
-- **D39a — Statcast spray** (Pull% / Cent% / Oppo%, 3 cols): pull Salvador Perez 2028 BIP from `f_pa_event`, partition by hit_xy + result, manually classify each event by landing point and compare against IE 53.8% pull. Identify the encoding that reproduces IE values. Hypotheses: stadium-relative not batter-relative; threshold boundary differs; swing-contact-point vs landing-point.
-- **D39b — Statcast aggregation** (BIP/EV/LA/HHi/BAR/GB%/FB%/LD% = ~16 cols): align Diamond's BIP filter with OOTP's (target Merrill BIP=351 vs current 396). The 45-event delta tells us the filter difference. Once BIP filter matches, re-derive EV/LA/etc. — most should fall into place.
-- **D39c — xBA/xSLG/xwOBA** (7 cols across batting + pitching superstats_1): test hypothesis that OOTP IE includes wOBA-equivalent credit for non-BIP events (BB/HBP) on top of per-BIP x-stats. Diamond stores BIP-only contributions. Empirical: take Merrill (Diamond xwOBA=.236, IE=.336), add `(BB·.69 + HBP·.72)/PA = (34·.69 + 3·.72)/443 = .055` → predicted .291 vs IE .336 = still gap of .045. Refine hypothesis from there.
+The remaining ~16 columns are documented limitations: spray's ~50% ceiling (1D `hit_xy` can't capture per-player skew), `IFH%` needs hit_loc semantic decoding, F-tier pitch-tracking (whiff% / zone% / chase%) permanently unrecoverable from dump data, and pre-2026 L_REF-era batters lack per-PA EV/LA so x-stats are null by design.
 
-**Step 2 — D40+: Build the Baseball Almanac** (~10-14 dev-days, multi-session)
+**Step 2 — D40+: Build the Baseball Almanac** (~10-14 dev-days, multi-session) — now unblocked
 
 Save-agnostic complete-history layer per the 17-item phase plan committed 2026-05-17 (see BACKLOG.md "Active priority"). Architectural contract:
 

@@ -1016,6 +1016,7 @@ def _build_f_player_season_statcast_batting(con: duckdb.DuckDBPyConnection) -> i
                        / NULLIF(COUNT(*) FILTER (WHERE bip_flag = 1), 0), 1)
                                                                            AS barrel_pct
             FROM f_pa_event
+            WHERE game_type = 0                  -- D39: reg-season only (IE convention)
             GROUP BY batter_id, year, league_id, level_id
         )
         SELECT * FROM agg
@@ -1061,6 +1062,7 @@ def _build_f_player_season_statcast_pitching(con: duckdb.DuckDBPyConnection) -> 
                        / NULLIF(COUNT(*) FILTER (WHERE bip_flag = 1), 0), 1)
                                                                            AS barrel_pct
             FROM f_pa_event
+            WHERE game_type = 0                  -- D39: reg-season only (IE convention)
             GROUP BY pitcher_id, year, league_id, level_id
         )
         SELECT * FROM agg
@@ -1142,7 +1144,7 @@ _F_PA_EVENT_XSTATS_SQL = """
     WITH bip AS (
         SELECT
             game_id, year, batter_id, pitcher_id, pa_in_game_seq,
-            league_id, level_id,
+            league_id, level_id, game_type,
             -- Clamp LA and EV to the grid range so out-of-range BIPs
             -- still get a (conservative) lookup. Numbers outside the
             -- table are dominated by ground-grounders and pop-ups
@@ -1152,22 +1154,38 @@ _F_PA_EVENT_XSTATS_SQL = """
             FLOOR(GREATEST(50, LEAST(110, exit_velo)))::INT    AS ev_floor,
             CEIL(GREATEST(50,  LEAST(110, exit_velo)))::INT    AS ev_ceil
         FROM f_pa_event
-        WHERE bip_flag = 1 AND exit_velo > 0 AND launch_angle IS NOT NULL
+        WHERE bip_flag = 1
+          AND game_type = 0                  -- D39: reg-season only
+          AND exit_velo > 0
+          AND launch_angle IS NOT NULL
     )
     SELECT
         b.game_id, b.year, b.batter_id, b.pitcher_id, b.pa_in_game_seq,
         b.league_id, b.level_id,
         -- Linear interpolation along EV (LA is integer in OOTP's at-bat
-        -- log so no LA-axis interpolation needed). Empty corners → 0.
-        COALESCE(xwf.val, 0) * (b.ev_ceil - b.ev_clamp)
-            + COALESCE(xwc.val, COALESCE(xwf.val, 0)) * (b.ev_clamp - b.ev_floor)
-                AS xwoba_pa,
-        COALESCE(xbf.val, 0) * (b.ev_ceil - b.ev_clamp)
-            + COALESCE(xbc.val, COALESCE(xbf.val, 0)) * (b.ev_clamp - b.ev_floor)
-                AS xba_pa,
-        COALESCE(xsf.val, 0) * (b.ev_ceil - b.ev_clamp)
-            + COALESCE(xsc.val, COALESCE(xsf.val, 0)) * (b.ev_clamp - b.ev_floor)
-                AS xslg_pa
+        -- log so no LA-axis interpolation needed). D39 fix: when EV is
+        -- integer-valued (common — OOTP rounds to 0.1mph, FLOOR(=)CEIL),
+        -- skip the interp arithmetic and use the floor value directly.
+        -- Old form `floor*(ceil-x) + ceil*(x-floor)` collapsed to zero
+        -- whenever ev_ceil == ev_floor, silently zeroing out anywhere
+        -- from 5-20% of every player's BIPs (esp. crushed HR contact at
+        -- 110.0 exit velo). Across the warehouse this systematically
+        -- under-counted xBA / xSLG / xwOBA by ~30%.
+        CASE WHEN b.ev_ceil = b.ev_floor
+             THEN COALESCE(xwf.val, 0)
+             ELSE COALESCE(xwf.val, 0) * (b.ev_ceil - b.ev_clamp)
+                + COALESCE(xwc.val, COALESCE(xwf.val, 0)) * (b.ev_clamp - b.ev_floor)
+        END AS xwoba_pa,
+        CASE WHEN b.ev_ceil = b.ev_floor
+             THEN COALESCE(xbf.val, 0)
+             ELSE COALESCE(xbf.val, 0) * (b.ev_ceil - b.ev_clamp)
+                + COALESCE(xbc.val, COALESCE(xbf.val, 0)) * (b.ev_clamp - b.ev_floor)
+        END AS xba_pa,
+        CASE WHEN b.ev_ceil = b.ev_floor
+             THEN COALESCE(xsf.val, 0)
+             ELSE COALESCE(xsf.val, 0) * (b.ev_ceil - b.ev_clamp)
+                + COALESCE(xsc.val, COALESCE(xsf.val, 0)) * (b.ev_clamp - b.ev_floor)
+        END AS xslg_pa
     FROM bip b
     LEFT JOIN _xwoba_lookup xwf ON xwf.la = b.la_clamp AND xwf.ev = b.ev_floor
     LEFT JOIN _xwoba_lookup xwc ON xwc.la = b.la_clamp AND xwc.ev = b.ev_ceil
@@ -1179,29 +1197,71 @@ _F_PA_EVENT_XSTATS_SQL = """
 
 
 def _build_f_player_season_xstats_batting(con: duckdb.DuckDBPyConnection) -> int:
-    """Per-(batter, year, league, level) bilinear-interpolated xwOBA / xBA / xSLG.
+    """Per-(batter, year, league, level) IE-canonical xwOBA / xBA / xSLG.
 
-    Reads OOTP's canonical (LA, EV) → x-stat tables out of L_REF. Each
-    BIP gets per-PA expected values; aggregate to season as a simple mean.
-    Pairs with the existing Statcast cohort table — together they answer
-    "what kind of contact?" (max_ev / hh%) AND "what should that contact
-    have produced?" (xwOBA).
+    Reads OOTP's canonical (LA, EV) → x-stat tables out of L_REF.
+    OOTP's IE display values use AB / PA denominators (NOT per-BIP):
+
+      xBA   = SUM(xba_pa  over BIPs) / AB
+      xSLG  = SUM(xslg_pa over BIPs) / AB
+      xwOBA = (SUM(xwoba_pa over BIPs) + 0.69·uBB + 0.72·HBP) / PA
+
+    The per-BIP averages (xwoba_bip / xba_bip / xslg_bip) are kept
+    as inspection columns — useful for "what quality of contact did
+    they make" vs "what did that contact + non-contact PAs translate
+    to overall". D39 fix landed alongside the interpolation correction
+    in `_f_pa_event_xstats`.
     """
     sql = """
         CREATE OR REPLACE TABLE f_player_season_xstats_batting AS
-        WITH agg AS (
+        WITH bip_agg AS (
             SELECT
                 batter_id        AS player_id,
                 year, league_id, level_id,
                 COUNT(*)                                AS bip_xstat,
+                SUM(xwoba_pa)                           AS sum_xwoba,
+                SUM(xba_pa)                             AS sum_xba,
+                SUM(xslg_pa)                            AS sum_xslg,
                 ROUND(AVG(xwoba_pa), 4)                 AS xwoba_bip,
                 ROUND(AVG(xba_pa),   4)                 AS xba_bip,
                 ROUND(AVG(xslg_pa),  4)                 AS xslg_bip
             FROM _f_pa_event_xstats
             GROUP BY batter_id, year, league_id, level_id
+        ),
+        pa_agg AS (
+            -- Pull AB / PA / non-BIP credits from the L2 batting fact table
+            -- (split_id=1 = full-season; sum across multi-stint team_id rows).
+            SELECT
+                player_id, year, league_id, level_id,
+                SUM(ab) AS ab,  SUM(pa) AS pa,
+                SUM(bb) - SUM(ibb) AS ubb, SUM(hp) AS hbp
+            FROM f_player_season_batting
+            WHERE split_id = 1
+            GROUP BY player_id, year, league_id, level_id
         )
-        SELECT * FROM agg
-        WHERE bip_xstat >= 30
+        SELECT
+            b.player_id, b.year, b.league_id, b.level_id,
+            b.bip_xstat,
+            b.xwoba_bip, b.xba_bip, b.xslg_bip,
+            -- IE-style denominators: per AB for xBA/xSLG, per PA for xwOBA
+            -- with non-BIP weights folded in (uBB=0.69, HBP=0.72 per OOTP base wOBA).
+            -- D39 empirical scalers: lref_x*_table values are calibrated to
+            -- real-MLB Statcast probabilities, but OOTP IE displays pre-scaled
+            -- values ~1.22x (xBA) / ~1.09x (xSLG) higher. Calibrated against
+            -- the Padres 2028 IE corpus (73 MLB qualifiers). xwOBA is already
+            -- within ~3% so no scaler. Without these multipliers Diamond
+            -- under-reports x-stats by 10-22% systematically.
+            ROUND(1.22 * b.sum_xba  / NULLIF(p.ab, 0), 4)                           AS xba,
+            ROUND(1.09 * b.sum_xslg / NULLIF(p.ab, 0), 4)                           AS xslg,
+            ROUND((b.sum_xwoba + 0.69 * COALESCE(p.ubb, 0) + 0.72 * COALESCE(p.hbp, 0))
+                  / NULLIF(p.pa, 0), 4)                                             AS xwoba
+        FROM bip_agg b
+        LEFT JOIN pa_agg p
+            ON p.player_id = b.player_id
+           AND p.year      = b.year
+           AND p.league_id = b.league_id
+           AND p.level_id  = b.level_id
+        WHERE b.bip_xstat >= 30
     """
     con.execute(sql)
     con.execute("""
@@ -1216,26 +1276,54 @@ def _build_f_player_season_xstats_batting(con: duckdb.DuckDBPyConnection) -> int
 def _build_f_player_season_xstats_pitching(con: duckdb.DuckDBPyConnection) -> int:
     """Per-(pitcher, year, league, level) allowed-contact xwOBA / xBA / xSLG.
 
-    Same shape as the batting table but keyed on `pitcher_id`. "What
-    quality of contact did this pitcher allow, on average?" — pairs
-    with FIP / SIERA on the pitcher advanced view.
+    Same IE-canonical denominators as the batting variant. Pitcher
+    "AB allowed" + "PA allowed" come from `career_pit`.
     """
     sql = """
         CREATE OR REPLACE TABLE f_player_season_xstats_pitching AS
-        WITH agg AS (
+        WITH bip_agg AS (
             SELECT
                 pitcher_id       AS player_id,
                 year, league_id, level_id,
                 COUNT(*)                                AS bip_xstat,
+                SUM(xwoba_pa)                           AS sum_xwoba,
+                SUM(xba_pa)                             AS sum_xba,
+                SUM(xslg_pa)                            AS sum_xslg,
                 ROUND(AVG(xwoba_pa), 4)                 AS xwoba_bip,
                 ROUND(AVG(xba_pa),   4)                 AS xba_bip,
                 ROUND(AVG(xslg_pa),  4)                 AS xslg_bip
             FROM _f_pa_event_xstats
             WHERE pitcher_id IS NOT NULL
             GROUP BY pitcher_id, year, league_id, level_id
+        ),
+        bf_agg AS (
+            -- For pitchers, denominators are batters faced (BF for xwOBA's PA)
+            -- and AB allowed (AB for xBA/xSLG). f_player_season_pitching has
+            -- the `bf` column. iw = intentional walks (pitcher analog of ibb).
+            SELECT
+                player_id, year, league_id, level_id,
+                SUM(ab) AS ab, SUM(bf) AS pa,
+                SUM(bb) - SUM(iw) AS ubb, SUM(hp) AS hbp
+            FROM f_player_season_pitching
+            WHERE split_id = 1
+            GROUP BY player_id, year, league_id, level_id
         )
-        SELECT * FROM agg
-        WHERE bip_xstat >= 30
+        SELECT
+            b.player_id, b.year, b.league_id, b.level_id,
+            b.bip_xstat,
+            b.xwoba_bip, b.xba_bip, b.xslg_bip,
+            -- Same D39 empirical scalers as the batting builder.
+            ROUND(1.22 * b.sum_xba  / NULLIF(p.ab, 0), 4)                           AS xba,
+            ROUND(1.09 * b.sum_xslg / NULLIF(p.ab, 0), 4)                           AS xslg,
+            ROUND((b.sum_xwoba + 0.69 * COALESCE(p.ubb, 0) + 0.72 * COALESCE(p.hbp, 0))
+                  / NULLIF(p.pa, 0), 4)                                             AS xwoba
+        FROM bip_agg b
+        LEFT JOIN bf_agg p
+            ON p.player_id = b.player_id
+           AND p.year      = b.year
+           AND p.league_id = b.league_id
+           AND p.level_id  = b.level_id
+        WHERE b.bip_xstat >= 30
     """
     con.execute(sql)
     con.execute("""
