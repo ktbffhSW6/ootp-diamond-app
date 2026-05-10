@@ -36,7 +36,18 @@ export const dynamic = "force-dynamic";
 
 function fmtDate(iso: string | null): string {
   if (iso === null) return "—";
-  const d = new Date(iso);
+  // Date-only ISO strings ("2028-07-01") are parsed by `new Date()` as
+  // midnight UTC, which then renders as the prior calendar day in any
+  // TZ west of UTC. Split + construct from local components so July 1
+  // stays July 1 regardless of viewer TZ. Full ISO timestamps fall
+  // through to the regular Date constructor.
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(iso);
+  const d = dateOnly
+    ? (() => {
+        const [y, m, day] = iso.split("-").map(Number);
+        return new Date(y, m - 1, day);
+      })()
+    : new Date(iso);
   return d.toLocaleDateString("en-US", {
     year: "numeric",
     month: "short",

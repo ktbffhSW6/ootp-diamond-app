@@ -127,7 +127,15 @@ function fmtDate(iso: string | null): string {
   if (!iso) return "—";
   // ISO date string from API. Render short-form so the cell stays
   // narrow.
-  const dt = new Date(iso);
+  // Date-only strings ("2028-07-01") would otherwise be parsed as UTC
+  // midnight and shift to the prior day in any TZ west of UTC.
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(iso);
+  const dt = dateOnly
+    ? (() => {
+        const [y, m, d] = iso.split("-").map(Number);
+        return new Date(y, m - 1, d);
+      })()
+    : new Date(iso);
   if (Number.isNaN(dt.getTime())) return iso;
   return dt.toLocaleDateString("en-US", {
     month: "short",
