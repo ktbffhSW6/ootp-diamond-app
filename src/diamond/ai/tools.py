@@ -125,10 +125,10 @@ def _query_warehouse(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
             "error": "Query must start with SELECT, WITH, SHOW, DESCRIBE, or EXPLAIN.",
         }
 
-    # LIMIT cap. If the model omitted LIMIT we add one. If it added
-    # one larger than our cap we leave it (DuckDB will still respect
-    # the user's intent; the cap is a default, not a ceiling).
-    if not _LIMIT_RE.search(sql):
+    # LIMIT cap. Only SELECT/WITH support LIMIT; SHOW/DESCRIBE/EXPLAIN
+    # are syntax errors with one. Skip the injection for those.
+    needs_limit = bool(re.match(r"\s*(SELECT|WITH)\b", sql, re.IGNORECASE))
+    if needs_limit and not _LIMIT_RE.search(sql):
         sql = f"{sql.rstrip()} LIMIT {_DEFAULT_ROW_CAP}"
 
     try:
@@ -171,6 +171,61 @@ def _to_jsonable(v: Any) -> Any:
 # These tools could call the FastAPI endpoints over HTTP, but that's
 # silly when they live in the same process. Instead they query the
 # warehouse directly with the same shape the routes use.
+
+
+_TABLE_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
+def _describe_table(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+    """Return column names + types for a warehouse table.
+
+    Wraps DuckDB's PRAGMA table_info so the model can introspect
+    schema before writing a SELECT. Independent tool (rather than
+    "just use query_warehouse with DESCRIBE") because (a) DESCRIBE's
+    output shape differs by version, (b) the model frequently fumbles
+    the right syntax, and (c) a dedicated tool gives a cleaner UX in
+    the chat thread.
+    """
+    name = (args.get("table_name") or "").strip()
+    if not name:
+        return {"ok": False, "error": "table_name is required."}
+    if not _TABLE_NAME_RE.match(name):
+        return {
+            "ok": False,
+            "error": (
+                "Invalid table name. Must be alphanumeric + underscore, "
+                "matching the warehouse's table identifiers."
+            ),
+        }
+    try:
+        # PRAGMA table_info wants the name as a literal, not a binding.
+        # Safe because we already validated against the regex above.
+        rows = ctx.cursor.execute(f"PRAGMA table_info('{name}')").fetchall()
+        cols = [c[0] for c in ctx.cursor.description]
+    except duckdb.Error as exc:
+        return {"ok": False, "error": f"DuckDB error: {exc}"}
+
+    if not rows:
+        return {
+            "ok": False,
+            "error": f"Table {name!r} not found.",
+            "hint": (
+                "Common warehouse tables: players_current, teams_current, "
+                "team_record_snapshot, parks, "
+                "f_player_season_advanced_batting, "
+                "f_player_season_advanced_pitching, "
+                "f_player_season_statcast_batting, "
+                "f_player_season_leverage_batting, draft_class."
+            ),
+        }
+    return {
+        "ok": True,
+        "table": name,
+        "columns": [
+            {col: _to_jsonable(v) for col, v in zip(cols, r)}
+            for r in rows
+        ],
+    }
 
 
 def _get_player(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
@@ -421,6 +476,33 @@ TOOLS: dict[str, Tool] = {
             "required": ["sql"],
         },
         handler=_query_warehouse,
+    ),
+    "describe_table": Tool(
+        name="describe_table",
+        description=(
+            "Return the column names + types for a warehouse table. "
+            "Call this BEFORE writing query_warehouse SQL against an "
+            "unfamiliar table — `players_current` for example uses "
+            "`first_name` + `last_name`, not a `name` column."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "table_name": {
+                    "type": "string",
+                    "description": (
+                        "Bare table name. Common: players_current, "
+                        "teams_current, team_record_snapshot, parks, "
+                        "f_player_season_advanced_batting, "
+                        "f_player_season_advanced_pitching, "
+                        "f_player_season_statcast_batting, "
+                        "f_player_season_leverage_batting, draft_class."
+                    ),
+                },
+            },
+            "required": ["table_name"],
+        },
+        handler=_describe_table,
     ),
     "get_player": Tool(
         name="get_player",
