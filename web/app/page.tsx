@@ -13,6 +13,7 @@
 
 import Link from "next/link";
 
+import { PagePayloadBridge } from "@/components/PagePayloadProvider";
 import { PlayerAvatar } from "@/components/PlayerAvatar";
 import { Sparkline } from "@/components/Sparkline";
 import { TeamLogo } from "@/components/TeamLogo";
@@ -315,6 +316,14 @@ export default async function CockpitPage() {
 
   return (
     <div className="space-y-4">
+      {/* Publish cockpit data to the AI sidebar via PagePayloadProvider
+          (D33 follow-up) — the model sees the same standings /
+          spotlight / pressure / movements / save header the user
+          sees. Truncated at 16KB; if the payload exceeds that, the
+          model gets a top-level-keys hint and uses tools to fetch
+          finer detail. */}
+      <PagePayloadBridge data={{ save, cockpit: data }} />
+
       {/* ── Header — save identity ───────────────────────────────── */}
       <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border pb-3">
         <div className="flex items-baseline gap-3">

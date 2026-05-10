@@ -465,33 +465,26 @@ def start_sidecars(
 
 
 def stop_sidecars(handles: SidecarHandles, *, grace: float = 3.0) -> None:
-    """Best-effort orderly shutdown.
+    """No-op on Windows; Job Object handles termination atomically.
 
-    Each subprocess gets a terminate, then a kill on grace timeout.
-    The API thread is daemon and dies when the process exits — we
-    don't try to gracefully drain it (no in-flight HTTP at quit time
-    in normal use).
+    Originally we called terminate() + wait(grace) on each child.
+    Two problems with that:
 
-    Note: even if this function is skipped (hard kill), the Job Object
-    in win_jobobject.py guarantees the children die with the launcher
-    process. This is the orderly path; the Job Object is the safety
-    net.
+    1. Sequential 3+3=6 seconds of waiting before the launcher exits,
+       making the close-window action feel sluggish.
+    2. Each terminate() can briefly flash a console window for the
+       dying child on Windows (the OS allocates a transient surface
+       during process shutdown). With Node + Java + their own helper
+       subprocesses, that's 6-7 brief flashes during quit.
+
+    The Job Object's KILL_ON_JOB_CLOSE flag (D32) reaps every
+    descendant atomically when the launcher process exits — same
+    end state, instant, silent. We rely on that path entirely now.
+
+    The ``grace`` arg is kept for compatibility with the (legacy)
+    ``--dev`` mode where we don't own the children. Currently unused.
     """
-    procs = [handles.web_proc]
-    if handles.metabase_proc is not None:
-        procs.append(handles.metabase_proc)
-
-    for proc in procs:
-        if proc.poll() is not None:
-            continue
-        try:
-            proc.terminate()
-            proc.wait(timeout=grace)
-        except subprocess.TimeoutExpired:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-        except Exception:
-            pass
-    # api_thread: daemon — interpreter exit cleans it up.
+    # Nothing to do — Job Object closure on launcher exit will kill
+    # web_proc + metabase_proc + their descendants. api_thread is
+    # daemon and dies with the interpreter.
+    del handles, grace

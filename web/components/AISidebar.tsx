@@ -35,6 +35,7 @@ import type {
   ChatTurn,
 } from "@/lib/types/api";
 import { sendChat } from "@/lib/ai-chat";
+import { usePagePayload } from "@/components/PagePayloadProvider";
 
 type Mode = "chat" | "callup" | "trade" | "draft";
 
@@ -59,6 +60,7 @@ export function AISidebar() {
   const [error, setError] = useState<string | null>(null);
   const [verbose, setVerbose] = useState(false);
   const pathname = usePathname();
+  const pagePayload = usePagePayload();
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   // Load verbose pref from localStorage on mount.
@@ -106,7 +108,13 @@ export function AISidebar() {
       const req: ChatRequest = {
         messages: thread,
         user_input: trimmed,
-        page_context: { pathname: pathname ?? "/" },
+        page_context: {
+          pathname: pathname ?? "/",
+          // payload is the data the current page fetched + published
+          // via PagePayloadBridge — the model sees what the user
+          // sees instead of having to query for it.
+          payload: pagePayload ?? undefined,
+        },
         mode: modeOverride ?? mode,
       };
 

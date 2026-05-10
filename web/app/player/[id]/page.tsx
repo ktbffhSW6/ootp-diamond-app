@@ -25,6 +25,7 @@ import { notFound } from "next/navigation";
 import { AISummarizeButton } from "@/components/AISummarizeButton";
 import { CareerArc } from "@/components/CareerArc";
 import { EvLaScatter } from "@/components/EvLaScatter";
+import { PagePayloadBridge } from "@/components/PagePayloadProvider";
 import { PlayerAvatar } from "@/components/PlayerAvatar";
 import { PlayerContractCard } from "@/components/PlayerContractCard";
 import { PlayerStatsTab } from "@/components/PlayerStatsTab";
@@ -119,6 +120,11 @@ export default async function PlayerPage({ params, searchParams }: Props) {
 
   return (
     <article className="space-y-6">
+      {/* Publish player profile to the AI sidebar (D33 follow-up).
+          The model sees the same bio + career stats + contract +
+          situational splits + advanced rows that the page renders. */}
+      <PagePayloadBridge data={player} />
+
       {/* Bio header — always visible. */}
       <header className="flex flex-wrap items-start gap-4 border-b border-border pb-4">
         <PlayerAvatar

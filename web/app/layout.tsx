@@ -24,6 +24,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { AISidebar } from "@/components/AISidebar";
+import { PagePayloadProvider } from "@/components/PagePayloadProvider";
 import { QuitButton } from "@/components/QuitButton";
 import { RefreshButton } from "@/components/RefreshButton";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
@@ -58,6 +59,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body className="h-full bg-surface-page text-content-primary text-sm antialiased">
+        <PagePayloadProvider>
         <header className="sticky top-0 z-30 border-b border-border bg-surface-card/95 backdrop-blur-sm">
           {/* Compact single-row chrome — full bleed with small horizontal pad. */}
           <div className="flex items-center gap-4 px-3 py-2 sm:px-4 lg:px-6">
@@ -88,9 +90,11 @@ export default function RootLayout({
         </header>
         <main className="px-3 py-4 sm:px-4 lg:px-6">{children}</main>
         {/* D33: AI sidebar — floating launcher button + slide-out panel.
-            Reachable from every page; sends current pathname as
-            page_context so the model knows what the user is looking at. */}
+            Reachable from every page; sends current pathname + the
+            page's published payload (via PagePayloadProvider) so the
+            model knows what the user is looking at. */}
         <AISidebar />
+        </PagePayloadProvider>
       </body>
     </html>
   );
