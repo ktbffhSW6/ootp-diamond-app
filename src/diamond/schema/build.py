@@ -517,6 +517,7 @@ def rebuild_l1_l2(
     from diamond.schema.l1_reference import build_l1_reference
     from diamond.schema.l1_snapshot import build_l1_snapshot
     from diamond.schema.l2 import build_l2
+    from diamond.schema.l2_ootp import build_l2_ootp
     from diamond.schema.l3 import build_l3
     from diamond.schema.l_ref import ensure_lref
 
@@ -540,6 +541,9 @@ def rebuild_l1_l2(
     if verbose:
         console.rule("L2 facts")
     out["l2"] = build_l2(con, verbose=verbose)
+    if verbose:
+        console.rule("L2 OOTP-cache passthroughs (D40 Phase 4a #2)")
+    out["l2_ootp"] = build_l2_ootp(con, verbose=verbose)
     if verbose:
         console.rule("L3 derived")
     out["l3"] = build_l3(con, verbose=verbose)

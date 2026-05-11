@@ -16,15 +16,25 @@
 - [x] **#1 — L0 inventory pass** ✅ **DONE 2026-05-10** (~1 hr)
   Shipped `scripts/inventory_l0_coverage.py` + `audit_output/l0_column_coverage.md`. Save-agnostic (works against any save via `--save NAME`). Findings: 2,466 non-admin L0 columns; **1,418 referenced (57%)**, **1,048 orphan (42%)**; **18 fully-consumed tables** (including `players_at_bat_batting_stats`, `players_awards`, `players_league_leader`, `players_individual_batting_stats`, `players_salary_history`, `players_streak`, `team_record`, `team_roster`, ...). Three tables D40 originally flagged as wire candidates are already 100% consumed — list refined for #2 below. Report includes per-table breakdown, top-orphan ranking, and category-bucketed Phase 4a wiring recommendations.
 
-- [ ] **#2 — Authoritative team-stat + valuation cache wiring** (~1-2 hrs)
-  Concrete targets per #1's inventory (orphan-count in parens):
-  - `l0_team_pitching_stats` (16) + `l0_team_history_pitching_stats` (16) + `l0_team_bullpen_pitching_stats` (16) + `l0_team_starting_pitching_stats` (16) — OOTP-cached rate stats: `ws`, `gbfbp`, `kbb`, `cgp`, `qsp`, `winp`, `svp`, `bsvp`, `gfp`, `pig`, `r9`, `h9`, `sa`, `da`, `ta`, `ra`. **Note**: `fip`, `whip`, `babip`, `era`, `ops` were originally flagged but are **already wired** (used in team stats endpoints).
-  - `l0_league_history_pitching_stats` (20) + `l0_league_history_fielding_stats` (17) — league-level OOTP-cached aggregates (per-level baselines).
-  - `l0_players_value` (39 orphans, 86%) — per-position (`overall_sp/rp/c/1b/2b/3b/ss/lf/cf/rf`) + per-side (`*_value_vsl/vsr`) + award triggers (`award_bat/pit/field`) + OOTP master valuation rolls.
-  - `l0_players_scouted_ratings` (45) — per-side rating splits we never surface (we use the aggregated ratings only).
-  - `l0_players_career_*_stats` (19 across 3 tables) — career rollups OOTP pre-computes. Cross-check vs our `f_player_career`.
-  Feeds **D40 invariants watchdog** in Phase 4b — every wired column becomes a possible invariant input.
-  **Closes**: unused-authoritative-data class of bugs.
+- [x] **#2 — Authoritative team-stat + valuation cache wiring** ✅ **DONE 2026-05-10** (~1 hr)
+  New `src/diamond/schema/l2_ootp.py` adds 9 fact tables + 1 view as OOTP-cache passthroughs (intended as inputs for D40's Phase 4b invariants watchdog):
+  - **Team-season facts** — `f_team_season_batting_ootp` (3,647 rows, PK team_id+year), `f_team_season_pitching_ootp` (3,647), `f_team_season_fielding_ootp` (3,647). Source `team_history_*_event`. Carry every OOTP-cached rate stat including `sa`/`da`/`ta`/`ra`, `r9`/`h9`, `cgp`/`qsp`/`winp`/`svp`/`bsvp`/`gfp`/`pig`/`ws`/`gbfbp`/`kbb`/`sbp`/`rtop`/`cera`.
+  - **Player-stint facts** — `f_player_stint_batting_ootp` (116,728), `_pitching_ootp` (105,094), `_fielding_ootp` (85,505). Source `players_career_*_event`. Synthetic PK preserved from L1. Carry `ubr`, allowed-hit-type orphans, full opportunity-bucket grid `opps_0..5`/`opps_made_0..5` + `roe`/`plays_base`.
+  - **League-season facts** — `f_league_season_pitching_ootp` (34), `f_league_season_fielding_ootp` (344). Carry `kp`/`bbp`/`kbbp`/`irsp` and the zone-rating + efficiency league baselines.
+  - **Player valuation** — `f_player_value_current` (12,720 — one row per scoped player at latest dump). Surfaces all 39 orphan cols: per-side `offensive_value_vsl/vsr`/`pitching_value_vsl/vsr`/`leadoff_value_vsl/vsr`, master rolls `overall_value`/`talent_value`/`career_value`, 3-segment trajectory `stats_value_0..2`/`stats_mod_0..2`, per-position rolls `overall_sp/rp/c/1b/2b/3b/ss/lf/cf/rf`, award triggers, `oa`/`oa_rating`/`pot`/`pot_rating`.
+  - **Per-side scouted ratings** — `v_player_ratings_by_side` view explicitly enumerates 95 batting + pitching + fielding rating columns (overall + talent + vs-L + vs-R + misc + per-position potentials) so they're addressable by name. Sourced from `players_ratings_current`.
+
+  Each builder calls `_assert_columns_present` against an explicit `_*_ORPHAN_COLS` tuple — OOTP version-bumps that drop/rename a column fail the warehouse build loudly. Wired into `rebuild_l1_l2` orchestration between L2 and L3.
+
+  **Outcome**: 1,418 → **1,681 referenced cols (57% → 68%)**; **263 orphans closed**; 10 target tables + 5 shared-column siblings now at **100% coverage**:
+  - `l0_team_history_{batting,pitching,fielding}_stats(_stats)`: 1 + 16 + 2 orphans closed
+  - `l0_team_{pitching,batting,fielding,bullpen,starting}_stats`: shared-column closure
+  - `l0_players_career_{batting,pitching,fielding}_stats`: 1 + 4 + 14 orphans closed
+  - `l0_players_value`: 39 orphans closed
+  - `l0_league_history_{pitching,fielding}_stats`: 20 + 17 closed
+  - `l0_players_scouted_ratings`: 45 closed
+
+  `make smoke` passes; `diamond ingest --rebuild-only` succeeds in ~30s. **Closes**: unused-authoritative-data class of bugs.
 
 - [ ] **#3 — MiLB levels 5-8 advanced-stats backfill** (~0.5 day)
   Investigate `lref_era_stats_minors` coverage for Short-Season A / Complex / DSL / AFL (currently NULL for pre-2026 player-seasons at these levels). Either close gap or document as permanent limitation. **Closes**: minor-league pre-2026 rows rendering "—".
