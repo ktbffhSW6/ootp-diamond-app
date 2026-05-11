@@ -1003,18 +1003,27 @@ ab AS (
 agg AS (
     SELECT
         player_id,
-        -- BIP excludes sacrifices (sac=1 bunt, sac=2 SF) per OOTP convention.
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0) AS bip,
+        -- BIP **includes sacrifices** (sac=1 bunt and sac=2 SF). Phase
+        -- 4a-extended (2026-05-10) probe across 78 comparable Padres
+        -- batters: `result IN (4-9)` with NO sac filter matches IE in
+        -- 59/78 cases (MAE=4.17 BIP); the prior `sac=0` filter matched
+        -- only 7/78 (MAE=8.24). Counter-intuitive vs MLB convention
+        -- (sac bunts don't count as ABs) but the OOTP IE display counts
+        -- every result-yielding ball-in-play event regardless of sac
+        -- flag. All BIP-dependent filters in this CTE follow suit.
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9)) AS bip,
         COUNT(*) FILTER (WHERE result = 9) AS hr,
-        -- LA buckets (D39 recalibrated): GB <12, LD 12-26, FB 27-51, PU >=52.
-        -- Grid-searched against Padres 2028 corpus (73 MLB qualifiers, BIP≥30);
-        -- prior boundaries (10/25/50) systematically under-counted GB and
-        -- mis-bucketed line drives near the LD/FB boundary. 92% of players
-        -- now land within ±5pp on GB/LD/FB (was 30-60% under old boundaries).
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle < 12) AS gb_la,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle BETWEEN 12 AND 26) AS ld_la,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle BETWEEN 27 AND 51) AS fb_la,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle >= 52) AS pu_la,
+        -- LA buckets: GB <11, LD 11-25, FB 26-50, PU >=51. Phase 4a-extended
+        -- re-grid-searched (2026-05-10) against the 107-batter Padres corpus
+        -- AFTER the BIP fix removed `sac=0` filter — best fit is one tick
+        -- below D39's (12, 27, 52) at MAE=1.54pp (vs 2.54pp under D39
+        -- bounds). The re-fit makes sense: sacs (most are bunts ≈ LA<10)
+        -- now count as GB events, so the GB upper bound nudges down to
+        -- avoid over-counting; LD bound follows by 1.
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND launch_angle < 11) AS gb_la,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND launch_angle BETWEEN 11 AND 25) AS ld_la,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND launch_angle BETWEEN 26 AND 50) AS fb_la,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND launch_angle >= 51) AS pu_la,
         -- Infield-hits + GB-singles (for FanGraphs IFH% = IFH / GB).
         -- Phase 4a #5 (2026-05-10): hit_loc ≤ 22 = infield zone, ≥ 23 =
         -- outfield. Decoded by grid-searching 74 Padres MLB batters' GB
@@ -1024,15 +1033,15 @@ agg AS (
         -- hits across the corpus, the largest single-zone count — natural
         -- infield/outfield break point.
         COUNT(*) FILTER (
-            WHERE result = 6 AND sac = 0
-              AND launch_angle < 12
+            WHERE result = 6
+              AND launch_angle < 11
               AND hit_loc <= 22
         ) AS ifh,
         -- Spray counts (batter-relative — see spray_dir comment above).
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND spray_dir = 'PULL') AS pull,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND spray_dir = 'CENT') AS cent,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND spray_dir = 'OPPO') AS oppo,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND spray_dir IS NOT NULL) AS spray_bip,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND spray_dir = 'PULL') AS pull,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND spray_dir = 'CENT') AS cent,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND spray_dir = 'OPPO') AS oppo,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND spray_dir IS NOT NULL) AS spray_bip,
         -- EV buckets — OOTP-canonical cutoffs Soft<76 / Avg 76-94 / Solid>=95
         -- per Phase 4a #4 (2026-05-10). Grid-search across 74 Padres MLB
         -- batters × 12,506 BIP events with IE-reported Soft/Avg/Solid%
@@ -1040,24 +1049,28 @@ agg AS (
         -- Pitching side independently agreed (73 pitchers × 12,780 BIP,
         -- MAE 1.81 vs 2.06pp). The 95-mph solid ceiling matches MLB-
         -- Statcast's "hard-hit" convention exactly.
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo > 0 AND exit_velo < 76) AS soft,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 76 AND exit_velo < 95) AS avg_ev,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 95) AS solid,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 95) AS hhi,
-        -- Barrel — calibrated empirically. OOTP uses a simple flat threshold,
-        -- not Statcast's expanding cone: EV>=100 AND LA in [10..42]. Grid-search
-        -- over the 9 MLB-only Sox starters chose this as the lowest-error fit
-        -- (4/9 exact, 6/9 within ±1).
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND exit_velo > 0 AND exit_velo < 76) AS soft,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND exit_velo >= 76 AND exit_velo < 95) AS avg_ev,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND exit_velo >= 95) AS solid,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND exit_velo >= 95) AS hhi,
+        -- Barrel — Phase 4a-extended (2026-05-10) recalibrated against
+        -- 74-batter Padres corpus (BIP>=30). OOTP uses a flat threshold
+        -- (not Statcast's expanding cone). Grid-search over ev_min ∈
+        -- [95..105] × la_low ∈ [5..15] × la_high ∈ [35..50] chose
+        -- **EV >= 99 AND LA in [13..41]** at MAE=1.24 / 27/74 exact,
+        -- vs prior (EV>=100, LA 10..42) at MAE=1.93 / 13/74. The prior
+        -- formula was calibrated against 9 MLB-only Sox starters — too
+        -- small a sample.
         COUNT(*) FILTER (
-            WHERE result IN (4,5,6,7,8,9) AND sac = 0
-              AND exit_velo >= 100
-              AND launch_angle BETWEEN 10 AND 42
+            WHERE result IN (4,5,6,7,8,9)
+              AND exit_velo >= 99
+              AND launch_angle BETWEEN 13 AND 41
         ) AS bar,
-        AVG(exit_velo)    FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0) AS avg_ev_v,
-        MAX(exit_velo)    FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0) AS max_ev_v,
-        AVG(launch_angle) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0) AS avg_la_v,
+        AVG(exit_velo)    FILTER (WHERE result IN (4,5,6,7,8,9)) AS avg_ev_v,
+        MAX(exit_velo)    FILTER (WHERE result IN (4,5,6,7,8,9)) AS max_ev_v,
+        AVG(launch_angle) FILTER (WHERE result IN (4,5,6,7,8,9)) AS avg_la_v,
         -- Pop-ups (LA > 50, infield) approximate IFFB.
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle > 50) AS pu_count,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND launch_angle >= 51) AS pu_count,
         -- Bunt indicator: sac > 0 (bunt-attempt set; sac=1 is bunt, sac=2 sac-fly)
         COUNT(*) FILTER (WHERE sac = 1 AND result IN (6,7,8,9)) AS buh,
         COUNT(*) FILTER (WHERE sac = 1) AS bunt_attempts
@@ -1174,21 +1187,21 @@ ab AS (
 agg AS (
     SELECT
         player_id,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0) AS bip,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9)) AS bip,
         COUNT(*) FILTER (WHERE result = 9) AS hr,
         -- LA buckets (D39 recalibrated to match IE batter side: GB<12, LD 12-26, FB 27-51, PU>=52).
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle < 12) AS gb_la,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle BETWEEN 12 AND 26) AS ld_la,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle BETWEEN 27 AND 51) AS fb_la,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle >= 52) AS pu_la,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND launch_angle < 11) AS gb_la,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND launch_angle BETWEEN 11 AND 25) AS ld_la,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND launch_angle BETWEEN 26 AND 50) AS fb_la,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND launch_angle >= 51) AS pu_la,
         -- EV buckets — OOTP-canonical (76, 95) per Phase 4a #4 (2026-05-10).
         -- Pitching grid-search across 73 Padres pitchers × 12,780 BIP allowed
         -- chose (76, 95) at MAE=1.81pp (vs prior (75, 95) at MAE=2.06pp).
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo > 0 AND exit_velo < 76) AS soft,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 76 AND exit_velo < 95) AS med_ev,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 95) AS solid,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle >= 52) AS pu_count,
-        AVG(exit_velo) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0) AS avg_ev_v
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND exit_velo > 0 AND exit_velo < 76) AS soft,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND exit_velo >= 76 AND exit_velo < 95) AS med_ev,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND exit_velo >= 95) AS solid,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND launch_angle >= 51) AS pu_count,
+        AVG(exit_velo) FILTER (WHERE result IN (4,5,6,7,8,9)) AS avg_ev_v
     FROM ab
     WHERE player_id IS NOT NULL
     GROUP BY player_id
@@ -1222,10 +1235,12 @@ derived AS (
         xp.xslg                                                                AS x_slg,
         xp.xwoba                                                               AS x_woba,
         -- xERA: linear regression on xwOBA (matches Statcast convention).
-        -- Empirical Padres 2028 fit: xERA ≈ 21.5 * xwOBA - 2.65 produces
+        -- Phase 4a-extended (2026-05-10) refit after the xwOBA × 1.03
+        -- scaler was applied: best fit **xERA = 19.5 * xwOBA - 2.5**
+        -- at MAE=0.146 / 67/71 within ±0.40 (vs prior 21.5/-2.65 MAE 0.42).
         -- mean error <0.30 across qualifying MLB starters. Same form
         -- used by Baseball Savant for real-MLB xERA.
-        ROUND(21.5 * xp.xwoba - 2.65, 2)                                       AS x_era
+        ROUND(19.5 * xp.xwoba - 2.5, 2)                                        AS x_era
     FROM gp
     LEFT JOIN agg a ON a.player_id = gp.player_id
     LEFT JOIN (
@@ -1268,7 +1283,7 @@ PITCHING_SUPERSTATS_1 = FileSpec(
         ColSpec("xwOBA", "x_woba",    "D", tolerance=0.015,
                 notes="D39: (SUM(xwoba_pa) + 0.69·uBB + 0.72·HBP) / BF"),
         ColSpec("xERA",  "x_era",     "D", tolerance=0.40,
-                notes="D39: linear fit 21.5·xwOBA − 2.65 (Savant convention)"),
+                notes="Phase 4a-ext: linear fit 19.5·xwOBA − 2.5 (refit after xwOBA scaler 1.03)"),
     ],
 )
 

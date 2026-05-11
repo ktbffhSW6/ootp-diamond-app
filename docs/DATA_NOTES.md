@@ -2270,7 +2270,66 @@ IFH% = 100 * IFH / total-GB
 
 **Higher precision** would require multi-dimensional decoding (hit_loc × exit_velo × launch_angle), which is a Phase 4b/5 candidate but not closing-blocking.
 
-### Multi-stint OPS+/ERA+ presentation gap (Phase 4a #6, 2026-05-10)
+### Phase 4a-extended recon drive (2026-05-10)
+
+After Phase 4a closed (deliverables 1-7), an honest audit of the Padres recon report surfaced 72 columns still under 100% match. Most were investigatable, not "permanent." This section captures the fixes.
+
+**Headline cascade — five formula corrections:**
+
+1. **BIP filter — `sac=0` removed** (`reconcile.py:BATTING_SUPERSTATS_CTE`). IE's BIP includes sac flies AND sac bunts. Probe across 78 comparable Padres batters: `result IN (4-9)` with NO sac filter matched 59/78 (MAE 4.17); prior `sac=0` matched only 7/78 (MAE 8.24). Removed from BIP count + LA buckets + spray + EV buckets + Barrels + averages (BAR retains its own `sac=0` filter — pending; see below).
+
+2. **BAR (Barrels) recalibration**. Grid-searched 74-batter Padres corpus (BIP≥30) for ev_min × la_window: best fit **EV ≥ 99, LA in [13..41]** at MAE=1.24 / 27/74 exact, vs prior (EV≥100, [10..42]) at MAE 1.93 / 13/74 exact.
+
+3. **xwOBA scaler 1.03** added in `l3_advanced.py:_build_f_player_season_xstats_{batting,pitching}`. Grid-search on Padres corpus: best scaler 1.03 (63/73 exact, MAE 0.0088) vs no-scaler 52/73 (MAE 0.0124).
+
+4. **xERA formula refit** as a downstream of xwOBA scaler change. Old `21.5 * xwOBA - 2.65` was fit against the no-scaler xwOBA; refit to **`19.5 * xwOBA - 2.5`** at MAE=0.146 / 67/71 within ±0.40 (vs stale 21.5/-2.65 MAE 0.42).
+
+5. **LA bucket re-fit** post-BIP-fix. Sacs (~LA<10) now count as GBs, pushing the optimal cutoffs down. Grid-searched 107-batter Padres corpus: best **GB<11, LD 11-25, FB 26-50, PU≥51** at MAE 1.54pp (vs prior 12/27/52 at MAE 2.54pp).
+
+**Recon scorecard — before / after Phase 4a-extended:**
+
+| Column | Pre-ext | Post-ext | Δ |
+|---|---:|---:|---:|
+| **Batting** | | | |
+| LA | 53% | **94%** | +41pp |
+| HHi | 68% | **94%** | +26pp |
+| EV | 73% | 87% | +14pp |
+| Soft% | 68% | 81% | +13pp |
+| Solid% | 78% | 86% | +8pp |
+| xwOBA | 78% | **92%** | +14pp |
+| BAR | 19% | 40% | +21pp |
+| BAR% | 58% | 74% | +16pp |
+| GB/FB | 47% | **92%** | +45pp |
+| GB% | 68% | **92%** | +24pp |
+| FB% | 65% | **91%** | +26pp |
+| HR/FB | 83% | **95%** | +12pp |
+| IFFB | 83% | 93% | +10pp |
+| LD% | 88% | 95% | +7pp |
+| **Pitching** | | | |
+| xERA | 87%¹ | **97%** | +10pp |
+| xwOBA | 82% | **96%** | +14pp |
+| HR/FB | 87% | 97% | +10pp |
+| GB/FB | 61% | **92%** | +31pp |
+| GB% | 76% | **95%** | +19pp |
+| FB% | 73% | **95%** | +22pp |
+| LD% | 88% | 95% | +7pp |
+
+¹ xERA briefly regressed to 44% after the xwOBA scaler was applied (formula constants were stale), then jumped to 97% after the refit.
+
+**What's still ≤ 80% match after extended pass — root causes:**
+
+| Column | Match% | Reason |
+|---|---:|---|
+| `Pull%`, `Cent%`, `Oppo%` | 38-54% | **Structural — 1D `hit_xy` encoding cannot capture per-batter biases.** D39 + Phase 4a-ext 2D probe (hit_xy × hit_loc) both confirmed; best 1D fit MAE 6.9pp vs 2D MAE 7.2pp. Per-batter spray deviation requires features OOTP doesn't write to any dump. |
+| `BAR` | 40% | Integer count, tolerance is exact. Per-player ±1 noise inflates mismatch rate. |
+| `IFH%` | 57% | Single-dim hit_loc decoding (Phase 4a #5) at MAE=3.54pp; multi-dim (hit_loc × EV × LA) deferred to Phase 4b/5. |
+| `BUH%` | 68% | Bunt hits — very sparse denominator (most players have 0-3 bunt attempts), noise dominates. |
+| `Avg%` | 64% | EV-bucket per-player calibration territory. The OOTP cutoff is what it is at the league level; per-player skill may need its own offset. |
+| `BIP`, `EV` | 80-83% | **f_pa_event scope-filter gap.** ~40 Padres-org players appear in IE with summary BIP > 0 but ZERO rows in `f_pa_event` because their stats came entirely from DSL (`league_id=234`) / foreign-league stints that aren't in the scoped-leagues filter. Not a formula issue — `f_player_season_batting` HAS their counting stats; the PA event log doesn't. Resolved either by expanding the f_pa_event scope (cheap) or accepting that PA-log-derived stats won't cover DSL players. |
+
+**The truly permanent gaps remain**: 36 pitch-tracking F-tier columns (whiff%/zone%/chase%) — OOTP doesn't emit per-pitch zone+type. No path to close from any dump.
+
+
 
 **Original hypothesis (D40 BACKLOG)** — "~5-10pp error on ~12 players who split MLB/AAA in one season. Hypothesis: OOTP applies a level-weighted park factor."
 

@@ -1265,15 +1265,22 @@ def _build_f_player_season_xstats_batting(con: duckdb.DuckDBPyConnection) -> int
             b.xwoba_bip, b.xba_bip, b.xslg_bip,
             -- IE-style denominators: per AB for xBA/xSLG, per PA for xwOBA
             -- with non-BIP weights folded in (uBB=0.69, HBP=0.72 per OOTP base wOBA).
-            -- D39 empirical scalers: lref_x*_table values are calibrated to
-            -- real-MLB Statcast probabilities, but OOTP IE displays pre-scaled
-            -- values ~1.22x (xBA) / ~1.09x (xSLG) higher. Calibrated against
-            -- the Padres 2028 IE corpus (73 MLB qualifiers). xwOBA is already
-            -- within ~3% so no scaler. Without these multipliers Diamond
-            -- under-reports x-stats by 10-22% systematically.
+            -- Empirical scalers — `lref_x*_table` values are calibrated to
+            -- real-MLB Statcast probabilities, but OOTP IE displays
+            -- pre-scaled values. Grid-searched against the Padres 2028 IE
+            -- corpus (73 MLB qualifiers, BIP>=30):
+            --
+            --   xBA   : optimum scaler 1.21 (63/73 exact) or 1.22 (62/73,
+            --           MAE 0.0087). Keep 1.22 — matches the D39 value;
+            --           1.21 is a tie.
+            --   xSLG  : optimum 1.09 (61/73 exact, MAE 0.0186) — same as D39.
+            --   xwOBA : Phase 4a-extended (2026-05-10) discovered the
+            --           previously-no-scaler version was suboptimal.
+            --           Best scaler **1.03** (63/73 exact, MAE 0.0088) vs
+            --           no-scaler (52/73, MAE 0.0124). Apply 1.03.
             ROUND(1.22 * b.sum_xba  / NULLIF(p.ab, 0), 4)                           AS xba,
             ROUND(1.09 * b.sum_xslg / NULLIF(p.ab, 0), 4)                           AS xslg,
-            ROUND((b.sum_xwoba + 0.69 * COALESCE(p.ubb, 0) + 0.72 * COALESCE(p.hbp, 0))
+            ROUND(1.03 * (b.sum_xwoba + 0.69 * COALESCE(p.ubb, 0) + 0.72 * COALESCE(p.hbp, 0))
                   / NULLIF(p.pa, 0), 4)                                             AS xwoba
         FROM bip_agg b
         LEFT JOIN pa_agg p
@@ -1332,10 +1339,11 @@ def _build_f_player_season_xstats_pitching(con: duckdb.DuckDBPyConnection) -> in
             b.player_id, b.year, b.league_id, b.level_id,
             b.bip_xstat,
             b.xwoba_bip, b.xba_bip, b.xslg_bip,
-            -- Same D39 empirical scalers as the batting builder.
+            -- Same empirical scalers as the batting builder (1.22 xBA,
+            -- 1.09 xSLG, 1.03 xwOBA — last per Phase 4a-extended 2026-05-10).
             ROUND(1.22 * b.sum_xba  / NULLIF(p.ab, 0), 4)                           AS xba,
             ROUND(1.09 * b.sum_xslg / NULLIF(p.ab, 0), 4)                           AS xslg,
-            ROUND((b.sum_xwoba + 0.69 * COALESCE(p.ubb, 0) + 0.72 * COALESCE(p.hbp, 0))
+            ROUND(1.03 * (b.sum_xwoba + 0.69 * COALESCE(p.ubb, 0) + 0.72 * COALESCE(p.hbp, 0))
                   / NULLIF(p.pa, 0), 4)                                             AS xwoba
         FROM bip_agg b
         LEFT JOIN bf_agg p

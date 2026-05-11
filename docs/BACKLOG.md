@@ -57,7 +57,7 @@
 - All 7 deliverables shipped: #1 + #2 + #3 + #4 + #5 + #6 + #7 (all complete)
 - `make smoke` passes; `diamond reconcile` against Padres corpus runs cleanly with the new EV cutoffs + IFH% wired
 
-**Phase 4a ✅ CLOSED. Next: Phase 4b — Maximize the Warehouse.**
+**Phase 4a ✅ CLOSED. Phase 4a-extended ✅ CLOSED 2026-05-10** — pushed an additional ~15 superstat columns from 50-90% match into 80-99% via: BIP filter fix (removed `sac=0`), BAR recalibration (EV≥99 LA[13..41]), xwOBA scaler 1.03, xERA formula refit (19.5x − 2.5), LA bucket re-fit (GB<11, LD 11-25, FB 26-50, PU≥51). Five formula corrections cascaded into +7-45pp improvements across LA/EV/spray/x-stat columns on both batting and pitching sides. Truly permanent gaps documented in DATA_NOTES.md: 1D `hit_xy` spray (38-54%), F-tier pitch tracking (0%), DSL/foreign players w/o PA event log (BIP 80-82%). **Next: Phase 4b — Maximize the Warehouse.**
 - Inventory output committed to `audit_output/l0_column_coverage.md`
 
 ---
