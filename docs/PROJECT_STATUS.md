@@ -49,8 +49,8 @@ Closes the carry-forward research queue before any new warehouse work. Each deli
 
 | # | Deliverable | Closes |
 |---|---|---|
-| 1 | **L0 inventory pass** (`scripts/inventory_l0_coverage.py`) — every L0 column ↔ where it's consumed | Definitive "what we missed at the start" |
-| 2 | **Authoritative team-stat columns wired** — `l0_team_*_stats.{woba,fip,babip,whip,ops,iso,...}` exposed via L1 views; new L2 facts for `players_value` / `players_league_leader` / `players_individual_batting_stats` / `players_salary_history` | Unused-authoritative-data class |
+| 1 | **L0 inventory pass** ✅ **DONE 2026-05-10** — `scripts/inventory_l0_coverage.py` + `audit_output/l0_column_coverage.md`. Findings: 1,418 / 2,466 cols referenced (57%), 1,048 orphan, 18 fully-consumed tables. `players_league_leader` / `_individual_batting_stats` / `_salary_history` are already wired — D40 list updated; concrete remaining wire targets flow into #2 | Definitive "what we missed at the start" |
+| 2 | **Authoritative team-stat + valuation cache wiring** — actual targets per #1: (a) `l0_team_pitching_stats` + `_history_pitching_stats` + bullpen/starting variants — 51 orphan cols (`ws`, `gbfbp`, `kbb`, `cgp`, `qsp`, ...); (b) `l0_league_history_pitching_stats` (20) + `_fielding_stats` (17); (c) `l0_players_value` (39 orphans, per-position + per-side valuations); (d) `l0_players_scouted_ratings` (45 per-side splits); (e) `l0_players_career_*_stats` (19 — cross-check vs `f_player_career`). Feeds D40 invariants watchdog in Phase 4b | Unused-authoritative-data class |
 | 3 | **MiLB levels 5-8 advanced-stats backfill** — Short-Season A / Complex / DSL / AFL coverage | Pre-2026 minor rows rendering "—" |
 | 4 | **EV-bucket OOTP-canonical calibration** — grid-search Soft/Avg/Solid against IE | DATA_NOTES "OOTP EV cutoffs unknown" |
 | 5 | **`hit_loc` semantic decoding** — map every code to a field zone | `IFH%` permanently NULL, sharper-spray blocker |
