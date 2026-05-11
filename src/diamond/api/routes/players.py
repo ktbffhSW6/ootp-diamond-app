@@ -1161,8 +1161,9 @@ def _build_pitching_career(stints: list[dict[str, Any]]) -> PlayerCareerPitching
 
 # Display order — Bref-style reading order: leverage cluster
 # (risp/2-out/late&close) → bases (empty/loaded) → platoon (vs L/R) →
-# counts (first/2-strike/full) → spray (pull/cent/oppo). The "all"
-# baseline anchors at the top.
+# counts (first/2-strike/full). The "all" baseline anchors at the top.
+# Spray splits (pull/center/oppo) were removed Phase 4a-extended-3 —
+# see comment block before _SITUATIONAL_QUERY_TEMPLATE.
 _SITUATIONAL_SPLIT_ORDER: dict[str, int] = {
     "all":          0,
     "risp":         1,
@@ -1175,10 +1176,13 @@ _SITUATIONAL_SPLIT_ORDER: dict[str, int] = {
     "first_pitch":  8,
     "two_strike":   9,
     "full_count":  10,
-    "pull":        11,
-    "center":      12,
-    "oppo":        13,
 }
+# Phase 4a-extended-3 (2026-05-10): dropped pull/center/oppo splits from
+# the API. The underlying `hit_xy` decoding has MAE ~7pp per column vs
+# OOTP IE display values — Pull% on a per-player row can differ by 10-15pp
+# from what OOTP shows. Per "drop things we can't get to 100%" policy.
+# The StadiumSprayChart still renders individual events (visually correct
+# after the [0,255] clipping fix) but the aggregate %s are gone.
 
 # Labels shared by both sides — leverage / bases / counts / spray
 # clusters all read the same regardless of audience.
@@ -1192,15 +1196,13 @@ _SITUATIONAL_SPLIT_LABELS_SHARED: dict[str, str] = {
     "first_pitch":  "First pitch",
     "two_strike":   "Two strikes",
     "full_count":   "Full count",
-    "pull":         "Pull",
-    "center":       "Center",
-    "oppo":         "Opposite",
 }
 
 # Splits whose AVG / OBP / SLG denominators don't match the "All" row's
-# (BIP-only filtering). The UI skips OPS-vs-baseline color coding for
-# these so the user doesn't read meaningless "improvements."
-_NEUTRAL_COLOR_SPLITS: frozenset[str] = frozenset({"pull", "center", "oppo"})
+# (BIP-only filtering). Phase 4a-extended-3 dropped the spray splits;
+# no other splits have BIP-only denominators, so this is empty now. Kept
+# as the integration point for future BIP-only splits.
+_NEUTRAL_COLOR_SPLITS: frozenset[str] = frozenset()
 
 # Side-specific labels for the platoon splits — "vs LHP / vs RHP" reads
 # naturally on the batter card; "vs LHB / vs RHB" on the pitcher card.
@@ -1276,19 +1278,13 @@ def _situational_query(side: str) -> str:
 # resolved on first pitch; 3-2 = full count when resolved). 4-balls
 # walks show as `balls=3`; strike-3 punchouts as `strikes=2`.
 #
-# `spray_direction` (BIP only, null otherwise): naive bins over
-# `hit_xy` per DATA_NOTES "hit_xy spray decode". `hit_xy` is a 16×16
-# packed coord, `x = hit_xy / 16`. **Empirically batter-relative**
-# (verified 2026-05-12 via MLB-2029 HR distribution: mean hit_xy ≈ 71
-# for BOTH LHB and RHB HRs — same pull-side band for both hands; if
-# hit_xy were field-absolute the means would diverge). So:
-#   x ≤ 5  (hit_xy ≤ 95)  → pull
-#   6..9   (96..159)      → center
-#   x ≥ 10 (160..255)     → oppo
-# applied uniformly regardless of bat hand. Edges (`hit_xy=0`) and
-# rows missing handedness fall through to NULL → excluded from spray
-# splits. Magnitudes are approximate vs OOTP's IE values (audit
-# E-tier), but the direction split is reliable.
+# Spray (pull/center/oppo) splits were removed in Phase 4a-extended-3
+# (2026-05-10). The `hit_xy`-based classification never reached 100%
+# match against OOTP IE display — MAE ~7pp per column at the data
+# ceiling, with no realistic improvement path. Per "ditch shotty
+# analysis" policy. The StadiumSprayChart still renders individual
+# event positions (visually correct after the [0,255] clipping fix),
+# but per-player aggregate %s are not surfaced.
 _SITUATIONAL_QUERY_TEMPLATE = """
 WITH base AS (
     SELECT
@@ -1297,7 +1293,6 @@ WITH base AS (
         pa.risp_flag, pa.late_close_flag, pa.outs,
         pa.base1, pa.base2, pa.base3,
         pa.balls, pa.strikes,
-        pa.bip_flag, pa.hit_xy,
         CASE p_p.throws WHEN 1 THEN 'R' WHEN 2 THEN 'L' END
             AS pitcher_throw_hand,
         CASE
@@ -1312,55 +1307,41 @@ WITH base AS (
     WHERE pa.{join_col} = ?
       AND pa.game_type = 0  -- regular season; matches f_player_season_*
 ),
-base_spray AS (
-    SELECT *,
-        CASE
-            WHEN NOT bip_flag OR hit_xy = 0 THEN NULL
-            -- hit_xy is batter-relative (verified empirically):
-            -- low x = pull regardless of hand, high x = oppo
-            -- regardless of hand. So no handedness branching here.
-            WHEN hit_xy / 16 <= 5  THEN 'pull'
-            WHEN hit_xy / 16 <= 9  THEN 'center'
-            ELSE 'oppo'
-        END AS spray_direction
-    FROM base
-),
+-- Phase 4a-extended-3: dropped the base_spray CTE + spray UNION ALL
+-- branches (pull/center/oppo). The `hit_xy`-based classification
+-- never reached 100% match against OOTP IE display (MAE ~7pp per
+-- column at the data ceiling), so per "ditch shotty analysis" policy
+-- the splits are removed. Splits CTE now skips classification and
+-- unions the remaining 11 reliable splits directly off `base`.
 splits AS (
-    SELECT *, 'all' AS split          FROM base_spray
+    SELECT *, 'all' AS split          FROM base
     UNION ALL
-    SELECT *, 'risp' AS split         FROM base_spray WHERE risp_flag
+    SELECT *, 'risp' AS split         FROM base WHERE risp_flag
     UNION ALL
-    SELECT *, 'risp_2out' AS split    FROM base_spray WHERE risp_flag AND outs >= 2
+    SELECT *, 'risp_2out' AS split    FROM base WHERE risp_flag AND outs >= 2
     UNION ALL
-    SELECT *, 'late_close' AS split   FROM base_spray WHERE late_close_flag
+    SELECT *, 'late_close' AS split   FROM base WHERE late_close_flag
     UNION ALL
-    SELECT *, 'bases_empty' AS split  FROM base_spray
+    SELECT *, 'bases_empty' AS split  FROM base
         WHERE base1 = 0 AND base2 = 0 AND base3 = 0
     UNION ALL
-    SELECT *, 'bases_loaded' AS split FROM base_spray
+    SELECT *, 'bases_loaded' AS split FROM base
         WHERE base1 > 0 AND base2 > 0 AND base3 > 0
     UNION ALL
-    SELECT *, 'vs_left' AS split      FROM base_spray WHERE {vs_left_filter}
+    SELECT *, 'vs_left' AS split      FROM base WHERE {vs_left_filter}
     UNION ALL
-    SELECT *, 'vs_right' AS split     FROM base_spray WHERE {vs_right_filter}
+    SELECT *, 'vs_right' AS split     FROM base WHERE {vs_right_filter}
     -- Counts (count BEFORE the resolving pitch — 0-0 = first-pitch
     -- result, 3-2 = full count when resolved).
     UNION ALL
-    SELECT *, 'first_pitch' AS split  FROM base_spray
+    SELECT *, 'first_pitch' AS split  FROM base
         WHERE balls = 0 AND strikes = 0
     UNION ALL
-    SELECT *, 'two_strike' AS split   FROM base_spray
+    SELECT *, 'two_strike' AS split   FROM base
         WHERE strikes = 2
     UNION ALL
-    SELECT *, 'full_count' AS split   FROM base_spray
+    SELECT *, 'full_count' AS split   FROM base
         WHERE balls = 3 AND strikes = 2
-    -- Spray (BIP only; null spray_direction excluded by NOT NULL).
-    UNION ALL
-    SELECT *, 'pull' AS split         FROM base_spray WHERE spray_direction = 'pull'
-    UNION ALL
-    SELECT *, 'center' AS split       FROM base_spray WHERE spray_direction = 'center'
-    UNION ALL
-    SELECT *, 'oppo' AS split         FROM base_spray WHERE spray_direction = 'oppo'
 )
 SELECT
     year, level_id, split,

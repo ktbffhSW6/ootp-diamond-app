@@ -967,14 +967,11 @@ function fmtSlash(v: number | null): string {
 type SituationalSide = "batter" | "pitcher";
 
 // Splits whose AVG/OBP/SLG denominators don't share the same shape as
-// the "All" row (e.g. spray splits filter to BIP-only, so OBP collapses
-// to AVG and the comparison loses meaning). Render these in neutral
-// color rather than emerald/rose vs the baseline.
-const SITUATIONAL_NEUTRAL_COLOR_SPLITS = new Set([
-  "pull",
-  "center",
-  "oppo",
-]);
+// the "All" row should opt out of emerald/rose vs-baseline coloring.
+// Phase 4a-extended-3 (2026-05-10) removed the spray splits which were
+// the only members of this set — kept as the integration point in case
+// future BIP-only splits are added.
+const SITUATIONAL_NEUTRAL_COLOR_SPLITS = new Set<string>();
 
 function opsCellClass(
   split: string,
@@ -1219,10 +1216,6 @@ function SituationalTable({
         <strong>Counts</strong> · the count BEFORE the resolving
         pitch — First pitch = 0-0 result, Two strikes = strikes=2
         when resolved, Full count = 3-2.{" "}
-        <strong>Spray</strong> · pull / center / opposite filtered
-        to balls in play; AVG within these splits is hits-per-BIP
-        (BABIP-with-HR), OBP collapses to AVG (no walks in BIP), so
-        spray rows are not color-coded against the All baseline.{" "}
         OPS in the leverage / bases / platoon / counts rows is
         colored emerald when it&apos;s ≥25 points{" "}
         {side === "batter" ? "better" : "better (lower)"}{" "}

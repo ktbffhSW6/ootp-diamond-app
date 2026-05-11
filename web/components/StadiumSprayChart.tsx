@@ -139,10 +139,11 @@ export function StadiumSprayChart({
   const stadium = mergedStadiums[stadiumKey] ?? mergedStadiums[DEFAULT_STADIUM];
 
   // Compute (x, y) coords in baseball feet for each BIP, then convert
-  // to SVG coords once. Filter to in-arc events; outliers (hit_xy >
-  // 130) are excluded.
+  // to SVG coords once. Filter to in-arc events (full hit_xy range
+  // [0, 255]; Phase 4a-extended-3 fixed prior clipping at 130 that
+  // mis-rendered ~30% of events on the oppo foul line).
   const points = rows
-    .filter((r) => r.hit_xy !== null && r.hit_xy >= 0 && r.hit_xy <= 130)
+    .filter((r) => r.hit_xy !== null && r.hit_xy >= 0 && r.hit_xy <= 255)
     .map((r) => {
       const angleDeg = fieldAngleDeg(r.hit_xy!, handedness);
       const distance = estimateDistance(

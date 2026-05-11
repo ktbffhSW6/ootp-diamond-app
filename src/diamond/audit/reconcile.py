@@ -1175,12 +1175,19 @@ BATTING_SUPERSTATS_1 = FileSpec(
         ColSpec("IFH%",  "ifh_pct",   "E", tolerance=4.0,
                 notes="Phase 4a #5: FanGraphs IFH/GB; hit_loc<=22=infield (MAE 3.54pp on Padres corpus)"),
         ColSpec("BUH%",  "buh_pct",   "E", tolerance=3.0),
+        # Phase 4a-extended-3 SEALED: spray %s are at MAE ~7pp ceiling.
+        # Verified via every reasonable hit_xy encoding × cutoff combo
+        # (1D batter-rel, stadium-rel + handedness, 16x16 grid, fine-grid
+        # search) — all bottom out at the same MAE. Per "ditch shotty
+        # analysis" the cells are no longer displayed in the app (player
+        # page situational spray splits removed). Recon retained as a
+        # drift watch only; future sessions should NOT re-investigate.
         ColSpec("Pull%", "pull_pct",  "E", tolerance=5.0,
-                notes="D39: batter-relative hit_xy<114 = Pull (regardless of bat hand); HR-anchored — both LHB and RHB pull HRs cluster at LOW hit_xy. ~30% of players match within 5pp; the rest have systematic per-player skew that the 1D hit_xy encoding cannot capture."),
+                notes="SEALED Phase 4a-ext-3: dropped from UI; hit_xy ceiling MAE ~8pp"),
         ColSpec("Cent%", "cent_pct",  "E", tolerance=5.0,
-                notes="D39: 114 <= hit_xy < 196"),
+                notes="SEALED Phase 4a-ext-3: dropped from UI"),
         ColSpec("Oppo%", "oppo_pct",  "E", tolerance=5.0,
-                notes="D39: hit_xy >= 196"),
+                notes="SEALED Phase 4a-ext-3: dropped from UI"),
         ColSpec("Soft%", "soft_pct",  "E", tolerance=2.0,
                 notes="Phase 4a #4: OOTP-canonical cutoff EV<76 (grid-search 74 batters MAE 1.68pp)"),
         ColSpec("Avg%",  "avg_pct",   "E", tolerance=2.0,

@@ -301,18 +301,23 @@ export function estimateDistance(
 // ─────────────────────────────────────────────────────────────────────
 // Spray-angle conversion
 //
-// OOTP encodes spray as `hit_xy` ∈ [0, 130]:
+// OOTP encodes spray as `hit_xy` ∈ [0, 255] (BATTER-RELATIVE per D39
+// HR-cluster analysis — LHB and RHB HRs both mean ≈71, confirming low
+// hit_xy = pull side regardless of bat hand). Earlier versions of this
+// code clamped at 130, which mis-rendered ~30% of events at the oppo
+// foul line; fixed in Phase 4a-extended-3 (2026-05-10).
+//
 //   0   = pull-side foul line
-//   65  = center
-//   130 = oppo-side foul line
+//   128 = center
+//   255 = oppo-side foul line
 //
 // Convert to a "field-absolute" angle in degrees, where 0° = +x (RF
 // foul pole direction) and 90° = +y (CF). The result depends on
-// handedness:
+// handedness because the FIELD orientation depends on bat hand:
 //   - RHB: pull = LF, oppo = RF, so hit_xy=0 maps to LF (135°) and
-//     hit_xy=130 maps to RF (45°).
+//     hit_xy=255 maps to RF (45°).
 //   - LHB: pull = RF, oppo = LF, so hit_xy=0 maps to RF (45°) and
-//     hit_xy=130 maps to LF (135°).
+//     hit_xy=255 maps to LF (135°).
 //   - SH (switch hitters): we'd need pitcher-handedness to resolve.
 //     v1 fallback: render as RHB. The fielding-side resolution lives
 //     on the situational-splits side; here we pick a default.
@@ -322,7 +327,7 @@ export function fieldAngleDeg(
   hitXy: number,
   handedness: "L" | "R" | "S",
 ): number {
-  const t = Math.max(0, Math.min(130, hitXy)) / 130; // [0, 1]
+  const t = Math.max(0, Math.min(255, hitXy)) / 255; // [0, 1]
   if (handedness === "L") {
     // Pull = RF (45°) → oppo = LF (135°)
     return 45 + t * 90;
