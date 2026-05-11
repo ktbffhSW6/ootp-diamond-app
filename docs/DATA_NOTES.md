@@ -1184,12 +1184,24 @@ cFIP = lg_ERA - lg_(13*HR + 3*(BB + HBP) - 2*K) / lg_IP
 69% match within 0.1 tolerance. lg_ERA and lg counting stats from
 `league_history_pitching_stats` per (league_id, year, level_id).
 
-### Cross-level player caveat
+### Cross-level player caveat — corrected understanding (Phase 4a #6, 2026-05-10)
 
 For players who split a season across levels (AAA call-up, etc.),
-IE shows the **combined total slash line** but applies a level-weighted
-park factor we don't fully model. These players will mismatch this
-formula by ~5-15 OPS+ points. Logged as a known limitation.
+IE shows the **combined total slash line** for the team-roster display.
+**Original hypothesis** was that OOTP applies a level-weighted park
+factor we don't model. **Investigation finding** (Phase 4a #6,
+2026-05-10): the gap is not a park-factor formula issue. Per **D11**
+rate stats are never rolled up across levels — each `(player_id, year,
+league_id, level_id)` tuple is its own row in
+`f_player_season_advanced_*`. PA-weighted aggregation of our per-level
+rows reproduces IE's combined display value within **±2 OPS+ for the
+median multi-stint player and ±5 at P90**. Outlier gaps (>20 OPS+)
+come from players with foreign / winter-league stints (e.g. L11
+Caribbean Winter) that IE's org-roster display excludes — *not* a
+formula bug. Per-level rows individually match IE's per-level
+breakdown when IE shows it. See the "Multi-stint OPS+/ERA+ presentation
+gap" section in the Permanent limitations table below for the
+Padres-corpus validation.
 
 ## xBA / xSLG / xwOBA — structural-limit D-tier (2026-05-04 EDA)
 
@@ -2187,3 +2199,98 @@ All 36 columns require per-pitch zone + type tracking which OOTP **does not writ
 `players_pitching.csv` is in the dump but all rating columns are zeroed in scouting mode (the standard save config). D19 confirmed empirically; the table is therefore not in L0. If a save runs without scouting mode (rare), the data would be useful but ingesting on demand is deferred.
 
 **Decision**: file is not in L0. If a future save needs it (scouting mode OFF), revisit. Documented in D19, CLAUDE.md gotchas section.
+
+### MiLB levels 5-8 advanced-stats coverage (Phase 4a #3, 2026-05-10)
+
+After Phase 4a #3's investigation + fan-out fix + crosswalk extension, pre-2026 advanced-stat coverage by level is:
+
+| Level | n_seasons | %_NULL | Note |
+|---|---:|---:|---|
+| L1 MLB | 4,033 | 0.1% | `lref_era_stats` (1870-2025) |
+| L2 AAA | 3,396 | 22.5% | `lref_era_stats_minors` IL/PCL/AAA-era teams |
+| L3 AA  | 2,885 | 21.5% | Eastern/Southern/Texas + AA-era teams |
+| L4 A+/A | 4,796 | 30.1% | Northwest/SAL/Midwest/Cal/Carolina/FSL |
+| L5 | 269 | 100% | Unknown leagues only (no name in `leagues` table) |
+| L6 | 6,793 | **85.3%** | Complex (AZ/FL) + Dominican Rookie + Korean Futures + unknowns |
+| L7 | 893 | **84.3%** | American Association + Pioneer covered; Atlantic + Frontier + unknowns NULL |
+| L8 | 169 | 100% | KBO + 11 unknowns (no `lref_era_stats_minors` data) |
+
+**Permanent gaps** (no path to close — `lref_era_stats_minors` has zero coverage):
+
+- **L5 / L6 / L8 unknown-name leagues** — league_ids 141, 214, 215, 216, 219, 225, 228, 230, 232, 233, 235, 236, 241, 243-251, 255. Have no `name` in `l0_leagues` either — likely OOTP-internal placeholder leagues or save-internal fictional leagues. Cannot match an `era_stats_minors` row without a name.
+- **Foreign professional leagues** — Korean Baseball Organization (221, KBO), Korean Futures League (222), Dominican Rookie League (234, DSL). Real-world leagues with no Lahman/`lref_era_stats_minors` coverage.
+- **Rookie complex leagues** — Arizona Complex League (217), Florida Complex League (218). MLB-affiliated rookie-level training affiliates; no aggregate stats published historically.
+- **Modern independent leagues post-1998** — Atlantic League (238), Frontier League (240) — founded after `lref_era_stats_minors`' Lahman cutoff window for most leagues. American Association (237) IS covered for the historical 1903-1997 AA but NOT the modern independent re-incarnation; the join key is by name so historical seasons match, modern ones miss.
+
+**Closed by Phase 4a #3**:
+
+- **Bug A (level fan-out)** — `milb_level_per_league` used `MIN(level_id)`, but `OOTP's 2021 MiLB reorg` puts the same `league_id` at *both* L4 (modern, post-reorg) and L6 (historical, pre-reorg) for leagues 209-213 + 252. The MIN-based join left every L6 row orphan. Fixed by switching to `milb_levels_per_league` (PLURAL — one row per (league_id, level_id) seen in `f_player_season_batting`). Result: ~1,000 L6 NULLs at Midwest/Northwest/SAL/Cal/Carolina/FSL closed.
+- **Bug B (crosswalk gap)** — Added `(237, 'American Association')` and `(253, 'Pioneer League')` to `milb_xwalk`. Result: ~140 L7 NULLs closed (Pioneer 1939-2024 + American Association 1903-1997 historical).
+
+### OOTP-canonical EV cutoffs (Phase 4a #4, 2026-05-10)
+
+`Soft% / Avg% / Med% / Solid%` use bucket cutoffs **(76, 95)** confirmed via grid-search:
+
+- **Batting corpus**: 74 Padres MLB batters × 12,506 BIP events with IE-reported Soft/Avg/Solid%. Search over (soft ∈ [70..80], solid ∈ [90..96]). Best pair (76, 95) at MAE=1.68pp vs prior (75, 95) at 1.92pp.
+- **Pitching corpus**: 73 pitchers × 12,780 BIP allowed; same search. Independently chose (76, 95) at MAE=1.81pp vs prior 2.06pp.
+
+The **95 solid threshold matches MLB-Statcast's hard-hit convention exactly** — this is locked as canonical. The 76 soft floor is 1 mph above our prior 75 — marginal but consistent improvement across batter and pitcher sides.
+
+Cutoffs applied in `src/diamond/audit/reconcile.py` (`BATTING_SUPERSTATS_CTE` + `PITCHING_SUPERSTATS_CTE`). The L3 production stats use `hard_hit_pct = exit_velo >= 95` which is unchanged. **Material recon improvements** (Padres corpus, 2028):
+
+| Column | Pre-#4 | Post-#4 | Δ |
+|---|---:|---:|---:|
+| Batting Soft% | 58% | 68% | +10pp |
+| Batting Avg% | 58% | 60% | +2pp |
+| Pitching Soft% | 53% | 74% | +21pp |
+| Pitching Med% | 64% | 73% | +9pp |
+
+### hit_loc semantic decoding (Phase 4a #5, 2026-05-10)
+
+`hit_loc` is OOTP's per-PA fielding-zone code, range 0-87 (sparse — codes 0-43 + 79 + 85 + 87 observed). Phase 4a #5 decoded the infield/outfield boundary by grid-searching against the Padres corpus's IE-reported `IFH%` (Infield Hit %).
+
+**Three FanGraphs IFH% formula variants tested:**
+
+| Formula | Best cutoff | MAE |
+|---|---:|---:|
+| F1: IFH / GB-singles | 12 | 5.62 pp |
+| **F2: IFH / all-GB (FanGraphs canonical)** | **22** | **3.54 pp** |
+| F3: IFH / GB-hits (any hit type) | 12 | 5.09 pp |
+
+**Decoding**: `hit_loc ≤ 22 = infield zone`, `hit_loc ≥ 23 = outfield`. The natural break at 22/23 is sharp — hit_loc=22 has 11 GB-hits in the corpus, hit_loc=23 has 133 (12x jump), the largest single-zone count.
+
+**Applied formula** in `src/diamond/audit/reconcile.py:BATTING_SUPERSTATS_CTE`:
+
+```sql
+IFH = COUNT GB-singles (result=6, launch_angle<12) where hit_loc ≤ 22
+IFH% = 100 * IFH / total-GB
+```
+
+**Recon improvement**: IFH% went from NULL (was `notes="needs hit_loc decoding"`) to **60% match** within ±4pp tolerance. The 40% mismatch shows the bucket cutoff is approximate — OOTP's zone code is sparse and some zones (e.g. 23-25, which are likely "shallow outfield grounder past 3B/SS") cross the conceptual infield/outfield line based on how hard the ball was hit, not just the zone.
+
+**Higher precision** would require multi-dimensional decoding (hit_loc × exit_velo × launch_angle), which is a Phase 4b/5 candidate but not closing-blocking.
+
+### Multi-stint OPS+/ERA+ presentation gap (Phase 4a #6, 2026-05-10)
+
+**Original hypothesis (D40 BACKLOG)** — "~5-10pp error on ~12 players who split MLB/AAA in one season. Hypothesis: OOTP applies a level-weighted park factor."
+
+**Investigation finding (2026-05-10)** — Padres 2028 corpus analysis (full sweep of 269 IE-reported players, 28 multi-stint):
+
+| Metric | Value |
+|---|---:|
+| Single-stint median \|OPS+ derived - IE\| | 2 |
+| Multi-stint median PA-weighted gap | 2 |
+| Multi-stint P90 gap | ~5 |
+| Multi-stint mean gap | 5.4 (pulled by outliers) |
+| Multi-stint max gap | 88 |
+
+**The hypothesis was wrong.** PA-weighted aggregation of our per-level OPS+ closes the gap to within 2 points for the median multi-stint player — better than the formula tolerance of single-stint reconciliation. The two outliers (>20 OPS+ gap) come from players with stints in **foreign / winter leagues that IE's org-roster aggregate excludes**:
+
+- Andrew McConnell: L4 (Padres affiliate, 25 PA) + L11 (foreign winter ball, 214 PA). IE shows 100 (Padres-only stats); PA-weighted incl. winter ball is 188. The L11 stats aren't a bug — they're real but outside IE's display scope.
+- Cardell Thibodeaux: tiny L3 stint (1 PA) drags into a misleading rate stat aggregate.
+
+**Architectural decision (preserved)**: Per **D11**, rate stats are never rolled up across levels at L3. `f_player_season_advanced_batting` exposes one row per `(player_id, year, league_id, level_id)`. The combined "team display" value IE shows is a UI presentation choice, not a sabermetric truth — a player's MLB OPS+ and AAA OPS+ are *different observations of different contexts* and don't combine cleanly into a single number.
+
+**Reconcile behavior** (verified Padres 2028): per-level rows match IE's per-level value (when IE shows a per-level breakdown). When IE shows a single combined number, our per-level rows individually agree within ±2 OPS+; PA-weighted aggregation would produce ±2 of IE for the median multi-stint player and ±5 at P90.
+
+**No formula change.** The DATA_NOTES "Cross-level player caveat" note is hereby corrected: the gap is not "level-weighted park factor we don't fully model" — it's "IE shows team-scope combined OPS+ aggregated across levels we surface as separate rows per D11. PA-weighted aggregation reproduces the IE value within ±2 OPS+ for the typical case; outliers come from foreign-league stints IE excludes."

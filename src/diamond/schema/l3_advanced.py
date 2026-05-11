@@ -325,28 +325,48 @@ WITH
 -- still resolves correctly via this lookup applied to the save's own data.
 milb_xwalk(league_id, era_league) AS (
     VALUES
+        -- AAA
         (204, 'International League'),
         (205, 'Pacific Coast League'),
+        -- AA
         (206, 'Eastern League'),
         (207, 'Southern League'),
         (208, 'Texas League'),
+        -- A+ / A
         (209, 'Northwest League'),
         (210, 'South Atlantic League'),
         (211, 'Midwest League'),
         (212, 'California League'),
         (213, 'Carolina League'),
-        (252, 'Florida State League')
+        (252, 'Florida State League'),
+        -- L7 independent (Phase 4a #3, 2026-05-10):
+        -- American Association covers 1903-1997 (89 era rows; classic
+        -- minor-league AA, NOT the modern indy league of same name —
+        -- OOTP routes them by name so the join only fires for the
+        -- historical pre-1998 seasons).
+        (237, 'American Association'),
+        -- Pioneer League 1939-2024 (83 era rows; was MiLB Rookie, now
+        -- independent post-2021 reorg — covers both eras).
+        (253, 'Pioneer League')
 ),
--- Resolve level_id from the save itself rather than hardcoding — league_id
--- is 1:1 with level_id within a single save, but the user's save_configs
--- may diverge from the canonical Building-the-Green-Monster set.
-milb_level_per_league AS (
-    SELECT league_id, MIN(level_id) AS level_id
+-- Resolve level_id from the save itself rather than hardcoding —
+-- league_id is *usually* 1:1 with level_id, but the 2021 MiLB reorg
+-- (Phase 4a #3 investigation, 2026-05-10) means several leagues appear
+-- at BOTH levels in a single save: e.g., league_id=211 (Midwest) sits
+-- at L6 for historical 2007-2019 rows and L4 for modern 2021-2028 rows
+-- after OOTP's "rebrand to full-season A" classification. Using
+-- MIN(level_id) would route every imported baseline to the lower
+-- level, leaving the higher-level historical rows orphan (NULL OPS+).
+-- Fan out instead — produce one row per (league_id, level_id) where
+-- the league appears, so era_stats_minors data feeds every level the
+-- league sits at across the save's history.
+milb_levels_per_league AS (
+    SELECT league_id, level_id
     FROM f_player_season_batting
     WHERE league_id IN (
         SELECT league_id FROM milb_xwalk
     )
-    GROUP BY league_id
+    GROUP BY league_id, level_id
 ),
 -- One JOINed row per (save_league_id, year). Derive the same column shape
 -- as the MLB CTEs so we can UNION downstream. era_stats_minors carries
@@ -398,7 +418,7 @@ milb_joined AS (
     FROM milb_xwalk x
     JOIN lref_era_stats_minors esm
         ON esm."League" = x.era_league
-    JOIN milb_level_per_league l
+    JOIN milb_levels_per_league l
         ON l.league_id = x.league_id
     WHERE TRY_CAST(esm."Year" AS INTEGER) IS NOT NULL
       AND TRY_CAST(esm.AB AS DOUBLE) > 0

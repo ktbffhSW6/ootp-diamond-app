@@ -1015,15 +1015,33 @@ agg AS (
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle BETWEEN 12 AND 26) AS ld_la,
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle BETWEEN 27 AND 51) AS fb_la,
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle >= 52) AS pu_la,
+        -- Infield-hits + GB-singles (for FanGraphs IFH% = IFH / GB).
+        -- Phase 4a #5 (2026-05-10): hit_loc ≤ 22 = infield zone, ≥ 23 =
+        -- outfield. Decoded by grid-searching 74 Padres MLB batters' GB
+        -- single events against IE-reported IFH%; best cutoff=22 at
+        -- MAE=3.54pp with the IFH/all-GB denominator (vs F1 IFH/singles
+        -- MAE=5.6pp, F3 IFH/GB-hits MAE=5.1pp). hit_loc=23 jumps to 133
+        -- hits across the corpus, the largest single-zone count — natural
+        -- infield/outfield break point.
+        COUNT(*) FILTER (
+            WHERE result = 6 AND sac = 0
+              AND launch_angle < 12
+              AND hit_loc <= 22
+        ) AS ifh,
         -- Spray counts (batter-relative — see spray_dir comment above).
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND spray_dir = 'PULL') AS pull,
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND spray_dir = 'CENT') AS cent,
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND spray_dir = 'OPPO') AS oppo,
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND spray_dir IS NOT NULL) AS spray_bip,
-        -- EV buckets — calibrated against MLB-only Sox players: Soft<75 / Avg 75-95 / Solid>=95.
-        -- (Original Statcast convention is 80/95; OOTP runs a hair lower on the soft cutoff.)
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo > 0 AND exit_velo < 75) AS soft,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 75 AND exit_velo < 95) AS avg_ev,
+        -- EV buckets — OOTP-canonical cutoffs Soft<76 / Avg 76-94 / Solid>=95
+        -- per Phase 4a #4 (2026-05-10). Grid-search across 74 Padres MLB
+        -- batters × 12,506 BIP events with IE-reported Soft/Avg/Solid%
+        -- chose (76, 95) at MAE=1.68pp (vs prior (75, 95) at MAE=1.92pp).
+        -- Pitching side independently agreed (73 pitchers × 12,780 BIP,
+        -- MAE 1.81 vs 2.06pp). The 95-mph solid ceiling matches MLB-
+        -- Statcast's "hard-hit" convention exactly.
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo > 0 AND exit_velo < 76) AS soft,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 76 AND exit_velo < 95) AS avg_ev,
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 95) AS solid,
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 95) AS hhi,
         -- Barrel — calibrated empirically. OOTP uses a simple flat threshold,
@@ -1060,7 +1078,7 @@ derived AS (
         -- IFFB as % of FB (matches IE display).
         ROUND(100.0 * a.pu_count / NULLIF(a.fb_la + a.pu_la, 0), 1)                      AS iffb_pct,
         ROUND(100.0 * a.hr / NULLIF(a.fb_la + a.pu_la, 0), 1)                            AS hr_fb,
-        NULL                                                                              AS ifh_pct,
+        ROUND(100.0 * a.ifh / NULLIF(a.gb_la, 0), 1)                                     AS ifh_pct,
         ROUND(100.0 * a.buh / NULLIF(a.bunt_attempts, 0), 1)                             AS buh_pct,
         ROUND(100.0 * a.pull / NULLIF(a.spray_bip, 0), 1)                                AS pull_pct,
         ROUND(100.0 * a.cent / NULLIF(a.spray_bip, 0), 1)                                AS cent_pct,
@@ -1110,7 +1128,8 @@ BATTING_SUPERSTATS_1 = FileSpec(
         ColSpec("FB%",   "fb_pct",    "E", tolerance=3.0),
         ColSpec("IFFB",  "iffb_pct",  "E", tolerance=3.0, notes="pop-ups (LA>=52) as % of FB"),
         ColSpec("HR/FB", "hr_fb",     "E", tolerance=3.0),
-        ColSpec("IFH%",  "ifh_pct",   "E", notes="needs hit_loc decoding"),
+        ColSpec("IFH%",  "ifh_pct",   "E", tolerance=4.0,
+                notes="Phase 4a #5: FanGraphs IFH/GB; hit_loc<=22=infield (MAE 3.54pp on Padres corpus)"),
         ColSpec("BUH%",  "buh_pct",   "E", tolerance=3.0),
         ColSpec("Pull%", "pull_pct",  "E", tolerance=5.0,
                 notes="D39: batter-relative hit_xy<114 = Pull (regardless of bat hand); HR-anchored — both LHB and RHB pull HRs cluster at LOW hit_xy. ~30% of players match within 5pp; the rest have systematic per-player skew that the 1D hit_xy encoding cannot capture."),
@@ -1118,9 +1137,12 @@ BATTING_SUPERSTATS_1 = FileSpec(
                 notes="D39: 114 <= hit_xy < 196"),
         ColSpec("Oppo%", "oppo_pct",  "E", tolerance=5.0,
                 notes="D39: hit_xy >= 196"),
-        ColSpec("Soft%", "soft_pct",  "E", tolerance=2.0, notes="EV cutoff approx — TBD"),
-        ColSpec("Avg%",  "avg_pct",   "E", tolerance=2.0),
-        ColSpec("Solid%","solid_pct", "E", tolerance=2.0),
+        ColSpec("Soft%", "soft_pct",  "E", tolerance=2.0,
+                notes="Phase 4a #4: OOTP-canonical cutoff EV<76 (grid-search 74 batters MAE 1.68pp)"),
+        ColSpec("Avg%",  "avg_pct",   "E", tolerance=2.0,
+                notes="Phase 4a #4: 76<=EV<95"),
+        ColSpec("Solid%","solid_pct", "E", tolerance=2.0,
+                notes="Phase 4a #4: EV>=95 matches MLB-Statcast hard-hit convention exactly"),
         ColSpec("EV",    "ev",        "E", tolerance=0.5),
         ColSpec("mEV",   "m_ev",      "E", tolerance=0.5),
         ColSpec("LA",    "la",        "E", tolerance=0.5),
@@ -1159,9 +1181,11 @@ agg AS (
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle BETWEEN 12 AND 26) AS ld_la,
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle BETWEEN 27 AND 51) AS fb_la,
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle >= 52) AS pu_la,
-        -- EV buckets calibrated 2026-05-04 (75/95 cutoffs match IE far better than 85/100).
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo > 0 AND exit_velo < 75) AS soft,
-        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 75 AND exit_velo < 95) AS med_ev,
+        -- EV buckets — OOTP-canonical (76, 95) per Phase 4a #4 (2026-05-10).
+        -- Pitching grid-search across 73 Padres pitchers × 12,780 BIP allowed
+        -- chose (76, 95) at MAE=1.81pp (vs prior (75, 95) at MAE=2.06pp).
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo > 0 AND exit_velo < 76) AS soft,
+        COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 76 AND exit_velo < 95) AS med_ev,
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND exit_velo >= 95) AS solid,
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0 AND launch_angle >= 52) AS pu_count,
         AVG(exit_velo) FILTER (WHERE result IN (4,5,6,7,8,9) AND sac = 0) AS avg_ev_v
@@ -1230,9 +1254,12 @@ PITCHING_SUPERSTATS_1 = FileSpec(
         ColSpec("FB%",   "fb_pct",    "E", tolerance=3.0),
         ColSpec("IFFB",  "iffb_pct",  "E", tolerance=3.0, notes="pop-ups (LA>=52) as % of FB"),
         ColSpec("HR/FB", "hr_fb",     "E", tolerance=3.0),
-        ColSpec("Soft%", "soft_pct",  "E", tolerance=2.0, notes="EV cutoff approx"),
-        ColSpec("Med%",  "med_pct",   "E", tolerance=2.0),
-        ColSpec("Solid%","solid_pct", "E", tolerance=2.0),
+        ColSpec("Soft%", "soft_pct",  "E", tolerance=2.0,
+                notes="Phase 4a #4: OOTP-canonical EV<76 (pitching grid-search MAE 1.81pp)"),
+        ColSpec("Med%",  "med_pct",   "E", tolerance=2.0,
+                notes="Phase 4a #4: 76<=EV<95"),
+        ColSpec("Solid%","solid_pct", "E", tolerance=2.0,
+                notes="Phase 4a #4: EV>=95"),
         ColSpec("EV",    "ev",        "E", tolerance=0.5),
         ColSpec("xBA",   "x_ba",      "D", tolerance=0.015,
                 notes="D39: lref x-stat lookup; SUM(xba_pa over BIP allowed) / AB allowed"),

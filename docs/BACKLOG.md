@@ -36,24 +36,28 @@
 
   `make smoke` passes; `diamond ingest --rebuild-only` succeeds in ~30s. **Closes**: unused-authoritative-data class of bugs.
 
-- [ ] **#3 — MiLB levels 5-8 advanced-stats backfill** (~0.5 day)
-  Investigate `lref_era_stats_minors` coverage for Short-Season A / Complex / DSL / AFL (currently NULL for pre-2026 player-seasons at these levels). Either close gap or document as permanent limitation. **Closes**: minor-league pre-2026 rows rendering "—".
+- [x] **#3 — MiLB levels 5-8 advanced-stats backfill** ✅ **DONE 2026-05-10** (~30 min)
+  Two-bug fix in `_lg_constants_advanced_imported` (`l3_advanced.py`): (a) `milb_level_per_league` (MIN-based) → `milb_levels_per_league` (PLURAL, one row per (league_id, level_id) seen) closes the "OOTP 2021 reorg reclassified historical L6 leagues to modern L4" gap for leagues 209-213 + 252; (b) extended `milb_xwalk` with `American Association` (1903-1997, 89 era-rows) + `Pioneer League` (1939-2024, 83). **Results**: L6 NULL pct 100% → 85.3% (~1,000 closed); L7 100% → 84.3% (~140 closed); L1-L4 unchanged. **Remaining ~7,500 NULLs at L5/L6/L7/L8 are permanent** — foreign professional leagues (KBO, Korean Futures, Dominican Rookie / DSL), MLB-affiliated rookie complex leagues (AZ + FL Complex), modern post-1998 independents (Atlantic, Frontier), and unknown-name OOTP-internal placeholder leagues. Documented in DATA_NOTES.md "MiLB levels 5-8 advanced-stats coverage" section.
 
-- [ ] **#4 — EV-bucket OOTP-canonical calibration** (~0.5 day)
-  Grid-search Soft%/Avg%/Solid% cutoffs against IE display values across Padres corpus; replace empirical 75/95 cutoffs with OOTP-canonical. **Closes**: DATA_NOTES "OOTP EV cutoffs unknown."
+- [x] **#4 — EV-bucket OOTP-canonical calibration** ✅ **DONE 2026-05-10** (~30 min)
+  Grid-search (`/tmp/ev_calibrate.py` + `_pit.py`) across Padres IE corpus (74 batters × 12,506 BIP + 73 pitchers × 12,780 BIP) chose **(76, 95)** at MAE=1.68pp / 1.81pp vs prior (75, 95) at 1.92/2.06pp. The 95 solid threshold matches MLB-Statcast hard-hit convention exactly. Applied to `BATTING_SUPERSTATS_CTE` + `PITCHING_SUPERSTATS_CTE` in `reconcile.py`. **Recon improvements**: batting Soft% 58% → 68% (+10pp), Avg% 58% → 60% (+2pp); pitching Soft% 53% → 74% (+21pp), Med% 64% → 73% (+9pp); Solid% unchanged. DATA_NOTES "OOTP-canonical EV cutoffs" section documents the calibration.
 
-- [ ] **#5 — `hit_loc` semantic decoding** (~0.5 day)
-  Map every hit_loc code (0-77 + 87 + 98-105) to a field zone. Unlocks `IFH%` reconciliation. Becomes input to Phase 4b per-player spray refinement. **Closes**: `IFH%` permanently NULL.
+- [x] **#5 — `hit_loc` semantic decoding** ✅ **DONE 2026-05-10** (~30 min)
+  Grid-search (`/tmp/hit_loc_decode.py`) over three FanGraphs IFH% formula variants against Padres IE corpus. **F2 (IFH / all-GB, FanGraphs canonical) at cutoff=22 wins** with MAE=3.54pp — beats F1 (IFH/GB-singles, MAE 5.62) and F3 (IFH/GB-hits, MAE 5.09). **Decoding**: `hit_loc ≤ 22 = infield zone`, `≥ 23 = outfield`. Natural break is sharp — hit_loc=22 has 11 GB-hits, 23 has 133 (12× jump). Applied to `BATTING_SUPERSTATS_CTE` in `reconcile.py`. **Recon result**: IFH% from NULL → **60% match within ±4pp**. Higher precision would need multi-dim decoding (hit_loc × EV × LA) — deferred to Phase 4b/5.
 
-- [ ] **#6 — Multi-level OPS+/ERA+ formula refinement** (~0.5 day)
-  ~5-10pp error on ~12 players who split MLB/AAA in one season. Hypothesis: OOTP applies level-weighted park factor. Either fix or document. **Closes**: carry-forward item #1.
+- [x] **#6 — Multi-level OPS+/ERA+ formula refinement** ✅ **DONE 2026-05-10** (~1 hr)
+  Investigation finding: **original hypothesis was wrong**. Padres corpus sweep (28 multi-stint players in IE) showed: single-stint median \|OPS+ - IE\| = 2; multi-stint **median PA-weighted gap = 2**; P90 ≈ 5; mean = 5.4 (pulled by outliers); max = 88. Per **D11** rate stats are intentionally never rolled up across levels. PA-weighted aggregation of per-level rows reproduces IE's combined value within ±2 OPS+ for the typical case. **Outlier gaps come from foreign/winter-league stints IE excludes** (e.g. L11 Caribbean Winter Ball, KBO), not a formula bug. **No formula change**; D11 architecture preserved; DATA_NOTES "Cross-level player caveat" + "Multi-stint OPS+/ERA+ presentation gap" sections capture the corrected understanding.
 
 - [x] **#7 — Permanent-limitation writeup in DATA_NOTES.md** — landed in the D40 docs commit (2026-05-17 evening). DATA_NOTES.md now has a "Permanent limitations" section consolidating `leader.category` codes 44+49, OOTP developed-pitch state, F-tier pitch-tracking 36 cols, and `players_pitching.csv` scouting-mode zeros. These items are no longer tracked as "open" in BACKLOG.
 
-### Phase 4a exit criteria
+### Phase 4a exit criteria — ✅ MET 2026-05-10
 
-- `Audit phase — carry-forward` section (below) is either resolved, re-classified to Phase 5+, or marked permanent
-- Zero open audit research items without an explicit owner-phase
+- `Audit phase — carry-forward` section: 100% resolved or marked permanent ✅
+- Zero open audit research items without an explicit owner-phase ✅
+- All 7 deliverables shipped: #1 + #2 + #3 + #4 + #5 + #6 + #7 (all complete)
+- `make smoke` passes; `diamond reconcile` against Padres corpus runs cleanly with the new EV cutoffs + IFH% wired
+
+**Phase 4a ✅ CLOSED. Next: Phase 4b — Maximize the Warehouse.**
 - Inventory output committed to `audit_output/l0_column_coverage.md`
 
 ---
