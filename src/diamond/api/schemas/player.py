@@ -310,12 +310,13 @@ class PlayerAdvancedBattingRow(BaseModel):
     omitted — league constants differ by level so cross-level wRC+
     isn't a well-defined number.
 
-    The `x*_bip` triplet (xwoba_bip / xba_bip / xslg_bip) is the
-    OOTP-canonical bilinear-interpolated x-stat per BIP, averaged across
-    the season's BIP. Sourced from `f_player_season_xstats_batting` via
-    L_REF's (LA, EV) grids per Slice 2 (D26+D27). Null for seasons
-    pre-dating `f_pa_event` coverage (pre-2026), or with < 30 BIP at
-    the level.
+    Phase 4a-extended-3 (2026-05-10) dropped the `x*_bip` triplet
+    (xwoba_bip / xba_bip / xslg_bip) — they're per-BIP averages, not
+    what OOTP IE displays. The IE-style scaled SUM/PA / SUM/AB versions
+    in `f_player_season_xstats_batting` reconcile to 89-92% match on
+    batting, gap dominated by per-player skill variance the empirical
+    scalers can't capture. Per "ditch shotty analysis" policy. Tables
+    remain in L3 for future L_IE routing.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -335,10 +336,6 @@ class PlayerAdvancedBattingRow(BaseModel):
     o_war: float | None
     b_war: float | None           # OOTP combined bWAR (off + def + pos)
     park_avg: float | None        # the dominant-team park factor used
-    bip_xstat: int | None = None      # BIP count with valid (LA, EV) for lookup
-    xwoba_bip: float | None = None    # AVG(xwoba_pa) over BIP — OOTP canonical
-    xba_bip: float | None = None      # AVG(xba_pa)
-    xslg_bip: float | None = None     # AVG(xslg_pa)
     # Leverage stack (Slice A): WPA from L0 game logs (OOTP-supplied);
     # RE24 from `lref_re288_table` joined to `f_pa_event` per-PA.
     # Batter LI / Clutch are pitcher-only for v1 — see l3_leverage.py.
@@ -353,11 +350,10 @@ class PlayerAdvancedPitchingRow(BaseModel):
     the audit's quality threshold. Park factor is the dominant team's
     (most outs at this level).
 
-    The `x*_bip` triplet here describes the **contact the pitcher
-    allowed** (BIP-quality conceded) — pairs with FIP / SIERA on the
-    pitcher advanced view. Lower is better (less hard contact yielded).
-    Same Slice 2 (D26+D27) source: `f_player_season_xstats_pitching`
-    via L_REF (LA, EV) grids.
+    Phase 4a-extended-3 (2026-05-10) dropped the `x*_bip` triplet —
+    same reasoning as the batting side. Per-BIP averages aren't what
+    OOTP IE displays. FIP / ERA+ / pWAR remain as the canonical
+    pitcher-quality columns.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -376,10 +372,6 @@ class PlayerAdvancedPitchingRow(BaseModel):
     p_war: float | None           # OOTP FIP-WAR (canonical pWAR)
     p_ra9_war: float | None       # OOTP RA9-based WAR
     park_avg: float | None
-    bip_xstat: int | None = None
-    xwoba_bip: float | None = None
-    xba_bip: float | None = None
-    xslg_bip: float | None = None
     # Leverage stack (Slice A): WPA + LI + RE24-against + Clutch.
     # OOTP supplies per-game WPA and per-game LI sums directly; RE24-
     # against = -SUM(per-PA RE24) keyed on pitcher_id (lower is better).

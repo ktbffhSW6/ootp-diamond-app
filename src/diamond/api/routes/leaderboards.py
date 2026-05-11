@@ -89,8 +89,8 @@ _ABAT = "f_player_season_advanced_batting"
 _APIT = "f_player_season_advanced_pitching"
 _SBAT = "f_player_season_statcast_batting"
 _SPIT = "f_player_season_statcast_pitching"
-_XBAT = "f_player_season_xstats_batting"
-_XPIT = "f_player_season_xstats_pitching"
+# _XBAT / _XPIT (xstats tables) dropped from leaderboards catalog
+# Phase 4a-extended-3 — see "Statcast" cluster comments below.
 _LBAT = "f_player_season_leverage_batting"
 _LPIT = "f_player_season_leverage_pitching"
 
@@ -165,15 +165,12 @@ LEADERBOARD_STATS: dict[str, StatSpec] = {
     "RA9_WAR":  StatSpec("RA9_WAR",  "RA9-WAR","pitching", _APIT, "MAX(p_ra9_war)","MAX(outs)", "IP", 100, "desc", 1),
     "pit_WAR":  StatSpec("pit_WAR",  "pit_WAR","pitching", _APIT, "MAX(pit_war)",  "MAX(outs)", "IP", 100, "desc", 1),
     # ── Statcast ────────────────────────────────────────────────────
+    # Phase 4a-extended-3 (2026-05-10) dropped AVG_EV (83-87% IE match),
+    # BARREL_PCT (74% batting), SWEET_SPOT_PCT (no IE counterpart),
+    # xwOBA/xBA/xSLG (per-BIP averages don't match IE display). Max_EV
+    # (97%) + HARD_HIT_PCT (94-95%) survive as rounding-grade matches.
     "MAX_EV":         StatSpec("MAX_EV",         "Max EV",  "statcast_b", _SBAT, "MAX(max_ev)",         "MAX(bip)", "BIP", 30, "desc", 1),
-    "AVG_EV":         StatSpec("AVG_EV",         "Avg EV",  "statcast_b", _SBAT, "MAX(avg_ev)",         "MAX(bip)", "BIP", 30, "desc", 1),
-    "BARREL_PCT":     StatSpec("BARREL_PCT",     "Barrel%", "statcast_b", _SBAT, "MAX(barrel_pct)",     "MAX(bip)", "BIP", 30, "desc", 1),
     "HARD_HIT_PCT":   StatSpec("HARD_HIT_PCT",   "HardHit%","statcast_b", _SBAT, "MAX(hard_hit_pct)",   "MAX(bip)", "BIP", 30, "desc", 1),
-    "SWEET_SPOT_PCT": StatSpec("SWEET_SPOT_PCT", "Sweet%",  "statcast_b", _SBAT, "MAX(sweet_spot_pct)", "MAX(bip)", "BIP", 30, "desc", 1),
-    # ── X-stats (Slice 2 — L_REF (LA, EV) → x-stat grids) ────────────
-    "xwOBA":     StatSpec("xwOBA",     "xwOBA", "statcast_b", _XBAT, "MAX(xwoba_bip)", "MAX(bip_xstat)", "BIP", 30, "desc", 3),
-    "xBA":       StatSpec("xBA",       "xBA",   "statcast_b", _XBAT, "MAX(xba_bip)",   "MAX(bip_xstat)", "BIP", 30, "desc", 3),
-    "xSLG":      StatSpec("xSLG",      "xSLG",  "statcast_b", _XBAT, "MAX(xslg_bip)",  "MAX(bip_xstat)", "BIP", 30, "desc", 3),
     # ── Leverage (Slice A — WPA from L0, RE24 from lref_re288_table) ──
     # Batter side: WPA + RE24. Pitcher side: WPA + LI + RE24-against + Clutch.
     # Leverage tables are at (player, year, league, level) grain; one row

@@ -331,12 +331,10 @@ function BatterTable({
             )}
             {mode === "contact" && (
               <>
-                <th
-                  className="px-2 py-2 font-medium text-right"
-                  title="Balls in play this season at the current level. Threshold for cohort stats is 30 BIP — sub-threshold rows render as dashes."
-                >
-                  BIP
-                </th>
+                {/* Phase 4a-extended-3: dropped BIP / Avg EV / Brl% / SS%
+                    — they reconcile to 74-87% match against OOTP IE.
+                    Max EV (97%) and HH% (94%) survive as rounding-grade
+                    matches. */}
                 <th
                   className="px-2 py-2 font-medium text-right"
                   title="Max EV — 90th-percentile exit velocity per Statcast convention (not the absolute peak). Stable signal of top-end power."
@@ -345,27 +343,9 @@ function BatterTable({
                 </th>
                 <th
                   className="px-2 py-2 font-medium text-right"
-                  title="Average exit velocity across all balls in play."
-                >
-                  Avg EV
-                </th>
-                <th
-                  className="px-2 py-2 font-medium text-right"
                   title="Hard Hit % — share of BIP at EV ≥ 95 mph."
                 >
                   HH%
-                </th>
-                <th
-                  className="px-2 py-2 font-medium text-right"
-                  title="Barrel % — Statcast expanding-window definition (EV ≥ 98 + LA window widening with EV)."
-                >
-                  Brl%
-                </th>
-                <th
-                  className="px-2 py-2 font-medium text-right"
-                  title="Sweet Spot % — share of BIP with launch angle in [8°, 32°]."
-                >
-                  SS%
                 </th>
               </>
             )}
@@ -432,12 +412,8 @@ function BatterRow({
       )}
       {mode === "contact" && (
         <>
-          <td className="px-2 py-1.5 text-right font-mono text-xs">{fmtInt(b?.statcast_bip ?? null)}</td>
           <td className="px-2 py-1.5 text-right font-mono text-xs font-medium">{fmt1(b?.statcast_max_ev ?? null)}</td>
-          <td className="px-2 py-1.5 text-right font-mono text-xs">{fmt1(b?.statcast_avg_ev ?? null)}</td>
           <td className="px-2 py-1.5 text-right font-mono text-xs">{fmt1(b?.statcast_hard_hit_pct ?? null)}</td>
-          <td className="px-2 py-1.5 text-right font-mono text-xs font-medium">{fmt1(b?.statcast_barrel_pct ?? null)}</td>
-          <td className="px-2 py-1.5 text-right font-mono text-xs">{fmt1(b?.statcast_sweet_spot_pct ?? null)}</td>
         </>
       )}
     </tr>
@@ -516,12 +492,9 @@ function PitcherTable({
             )}
             {mode === "contact" && (
               <>
-                <th
-                  className="px-2 py-2 font-medium text-right"
-                  title="Balls in play allowed this season at the current level. Threshold for cohort stats is 30 BIP."
-                >
-                  BIP
-                </th>
+                {/* Phase 4a-extended-3: dropped BIP / Avg EV / Brl% / SS% — same
+                    reasoning as the batter side. Max EV (97%) and HH% (94%)
+                    stay as rounding-grade against OOTP IE. */}
                 <th
                   className="px-2 py-2 font-medium text-right"
                   title="Max EV allowed — 90th-percentile of contact this pitcher gave up. Lower is better for a pitcher."
@@ -530,27 +503,9 @@ function PitcherTable({
                 </th>
                 <th
                   className="px-2 py-2 font-medium text-right"
-                  title="Average exit velocity allowed across all balls in play."
-                >
-                  Avg EV
-                </th>
-                <th
-                  className="px-2 py-2 font-medium text-right"
                   title="Hard Hit % allowed — share of BIP at EV ≥ 95 mph. Lower is better."
                 >
                   HH%
-                </th>
-                <th
-                  className="px-2 py-2 font-medium text-right"
-                  title="Barrel % allowed — share of BIP meeting Statcast's expanding-window barrel definition. Lower is better."
-                >
-                  Brl%
-                </th>
-                <th
-                  className="px-2 py-2 font-medium text-right"
-                  title="Sweet Spot % allowed — share of BIP with launch angle in [8°, 32°]. Lower is better."
-                >
-                  SS%
                 </th>
               </>
             )}
@@ -611,12 +566,8 @@ function PitcherRow({
       )}
       {mode === "contact" && (
         <>
-          <td className="px-2 py-1.5 text-right font-mono text-xs">{fmtInt(p?.statcast_bip ?? null)}</td>
           <td className="px-2 py-1.5 text-right font-mono text-xs font-medium">{fmt1(p?.statcast_max_ev ?? null)}</td>
-          <td className="px-2 py-1.5 text-right font-mono text-xs">{fmt1(p?.statcast_avg_ev ?? null)}</td>
           <td className="px-2 py-1.5 text-right font-mono text-xs">{fmt1(p?.statcast_hard_hit_pct ?? null)}</td>
-          <td className="px-2 py-1.5 text-right font-mono text-xs font-medium">{fmt1(p?.statcast_barrel_pct ?? null)}</td>
-          <td className="px-2 py-1.5 text-right font-mono text-xs">{fmt1(p?.statcast_sweet_spot_pct ?? null)}</td>
         </>
       )}
     </tr>

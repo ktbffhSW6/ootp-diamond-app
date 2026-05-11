@@ -75,9 +75,11 @@ const BATTING_COLUMNS: Array<[keyof PlayerBattingStint, string]> = [
 const ADV_BATTING_COLUMNS: Array<[keyof PlayerAdvancedBattingRow, string]> = [
   ["pa", "PA"],
   ["woba", "wOBA"],
-  // OOTP-canonical xwOBA from L_REF (LA, EV) grids — sits next to
-  // actual wOBA so "lucky vs unlucky" reads at a glance. Slice 2.
-  ["xwoba_bip", "xwOBA"],
+  // xwOBA per-BIP (xwoba_bip) was removed Phase 4a-extended-3 — it's
+  // a Diamond-custom AVG(xwoba_pa) over BIP that doesn't appear in any
+  // OOTP IE display. The IE-style scaled SUM/PA value reconciles to
+  // 89-92% per Padres corpus; per "ditch shotty analysis" both versions
+  // are off the player page until L_IE display routing lands.
   ["wraa", "wRAA"],
   ["wrc", "wRC"],
   ["wrc_plus", "wRC_plus"],
@@ -95,12 +97,13 @@ const ADV_BATTING_COLUMNS: Array<[keyof PlayerAdvancedBattingRow, string]> = [
 // (flat-1.13-replacement) + RA9-WAR (runs-based parallel — defense /
 // sequencing-sensitive). Three views of the same season.
 //
-// xwOBA(allowed) sits between FIP and ERA+ — same role for pitchers as
-// xwOBA-on-BIP does for hitters. Lower = better contact suppression.
+// xwOBA-allowed (xwoba_bip) was removed Phase 4a-extended-3 — same
+// reasoning as the batting side: per-BIP avg isn't what OOTP IE
+// displays. FIP / ERA+ / pWAR remain as the canonical pitcher-quality
+// columns.
 const ADV_PITCHING_COLUMNS: Array<[keyof PlayerAdvancedPitchingRow, string]> = [
   ["ip_display", "IP"],
   ["fip", "FIP"],
-  ["xwoba_bip", "xwOBA"],
   ["era_plus", "ERA_plus"],
   ["pit_war", "pit_WAR"],
   ["p_war", "pWAR"],
@@ -175,11 +178,8 @@ function tooltipFor(entry: GlossaryEntry | undefined): string | undefined {
 
 // Slash-line stats render to 3 decimals leading-zero-stripped (Bref style).
 // FPCT + wOBA share the same convention (.985, .992, .380, etc.).
-// xwOBA / xBA / xSLG (Slice 2 from L_REF (LA, EV) grids) share the
-// slash-line presentation.
 const SLASH_FIELDS = new Set([
   "avg", "obp", "slg", "ops", "fpct", "woba",
-  "xwoba_bip", "xba_bip", "xslg_bip",
 ]);
 // ERA / WHIP / K9 / BB9 / FIP render to 2 decimals.
 const TWO_DP_FIELDS = new Set(["era", "whip", "k_per_9", "bb_per_9", "fip"]);

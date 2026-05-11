@@ -950,12 +950,13 @@ export interface ParksResponse {
  * omitted — league constants differ by level so cross-level wRC+
  * isn't a well-defined number.
  *
- * The `x*_bip` triplet (xwoba_bip / xba_bip / xslg_bip) is the
- * OOTP-canonical bilinear-interpolated x-stat per BIP, averaged across
- * the season's BIP. Sourced from `f_player_season_xstats_batting` via
- * L_REF's (LA, EV) grids per Slice 2 (D26+D27). Null for seasons
- * pre-dating `f_pa_event` coverage (pre-2026), or with < 30 BIP at
- * the level.
+ * Phase 4a-extended-3 (2026-05-10) dropped the `x*_bip` triplet
+ * (xwoba_bip / xba_bip / xslg_bip) — they're per-BIP averages, not
+ * what OOTP IE displays. The IE-style scaled SUM/PA / SUM/AB versions
+ * in `f_player_season_xstats_batting` reconcile to 89-92% match on
+ * batting, gap dominated by per-player skill variance the empirical
+ * scalers can't capture. Per "ditch shotty analysis" policy. Tables
+ * remain in L3 for future L_IE routing.
  */
 export interface PlayerAdvancedBattingRow {
   year: number;
@@ -973,10 +974,6 @@ export interface PlayerAdvancedBattingRow {
   o_war: number | null;
   b_war: number | null;
   park_avg: number | null;
-  bip_xstat?: number | null;
-  xwoba_bip?: number | null;
-  xba_bip?: number | null;
-  xslg_bip?: number | null;
   wpa?: number | null;
   re24?: number | null;
 }
@@ -987,11 +984,10 @@ export interface PlayerAdvancedBattingRow {
  * the audit's quality threshold. Park factor is the dominant team's
  * (most outs at this level).
  *
- * The `x*_bip` triplet here describes the **contact the pitcher
- * allowed** (BIP-quality conceded) — pairs with FIP / SIERA on the
- * pitcher advanced view. Lower is better (less hard contact yielded).
- * Same Slice 2 (D26+D27) source: `f_player_season_xstats_pitching`
- * via L_REF (LA, EV) grids.
+ * Phase 4a-extended-3 (2026-05-10) dropped the `x*_bip` triplet —
+ * same reasoning as the batting side. Per-BIP averages aren't what
+ * OOTP IE displays. FIP / ERA+ / pWAR remain as the canonical
+ * pitcher-quality columns.
  */
 export interface PlayerAdvancedPitchingRow {
   year: number;
@@ -1008,10 +1004,6 @@ export interface PlayerAdvancedPitchingRow {
   p_war: number | null;
   p_ra9_war: number | null;
   park_avg: number | null;
-  bip_xstat?: number | null;
-  xwoba_bip?: number | null;
-  xba_bip?: number | null;
-  xslg_bip?: number | null;
   wpa?: number | null;
   li?: number | null;
   re24?: number | null;
