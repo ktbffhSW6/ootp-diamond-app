@@ -4,23 +4,13 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-17 (late evening) — **D40 committed: Phase 4 (Audit Closure + Warehouse Maximization), Phase 5 (Almanac), Phases 6-8 sketched.** Post-D39 strategic discussion surfaced four orthogonal architectural insights: (1) OOTP writes authoritative wOBA / FIP / OPS / BABIP / WHIP / ISO directly to `l0_team_*_stats` columns and we never used them; (2) we have no game-grain fact table so "last 12 days Merrill" and time-series queries are impossible; (3) we under-applied the snapshot pattern — only state tables get per-dump history, never derived stats; (4) Phase 1 was closed prematurely with research items still on the carry-forward list. **D40 is the strategic commitment to close audit properly + maximize the warehouse before continuing to the Almanac.** Goal: richness × accuracy × flexibility, save-agnostic by construction. **See DECISIONS.md D40 for the full architectural commitment + phase-by-phase plan.**
+**Last updated**: 2026-05-10 (final) — **Phase 4a ✅ CLOSED + Phase 4a-extended {-1,-2,-3} ✅ CLOSED + display ditch ✅ SHIPPED + D41 display-policy committed.** All 7 original Phase 4a deliverables landed in earlier sessions today. After Phase 4a closed, an honest audit surfaced 72 recon columns still under 100% — Phase 4a-ext-1 ran a five-formula-correction recon drive (cascading +20-45pp across LA/EV/spray/x-stat columns), Phase 4a-ext-2 stress-tested the "structural" labels rigorously (Pull/Cent/Oppo confirmed unreachable via `r=0.17` correlation; IFH% multi-dim closed 57% → 71%), Phase 4a-ext-3 reverse-engineered the OOTP barrel cone (`EV ≥ 97, LA ∈ [26-(EV-97), 30+(EV-97)]` — BAR 40% → 67% / BAR% 74% → 94%). Then per **D41 display policy**: every column with <95% IE match dropped from the user-facing app (spray %s, Contact mode 4 of 6 cols, Advanced xstats triplet, leaderboards 6 stats). Spray chart kept (visually correct after `[0,255]` clipping fix). The Diamond user invariant — **"any number you see in the app matches what OOTP shows in the game, within rounding"** — is now upheld across every surface. L3 builders still materialize the dropped columns as drift-watch + Phase 4b invariants-watchdog inputs. **See DATA_QUIRKS.md for the master ledger; DECISIONS.md D40+D41 for the architectural commitments.**
 
-**Earlier same day**: D38 Padres reconciliation pass + wOBA formula correction. After D37 stabilized the Padres save, user provided OOTP control data (`docs/helpful_files/recon/Padres/`: 21 stat CSVs + 65 screenshots, all 7/31/2028) and asked to reconcile sim stats to OOTP IE before layering in baseball history. Three D38 changes:
-
-| # | Item | Result |
-|---|---|---|
-| 1 | **Multi-save reconciler infra** — `_resolve_ie_path` org-agnostic suffix match + `--ie-dir`/`--save` CLI flags + scouting-stamp fix so audit reads from any folder of IE CSVs on any save | Reconciliation now works on Padres (was Sox-only); 21 FileSpecs unchanged |
-| 2 | **wOBA formula correction** — OOTP uses BASE linear weights × PA denominator (not the FanGraphs scaled-weights × (AB+uBB+SF+HBP) form). Verified against Bastidas 2028 IE=.357 — old Diamond .372, new Diamond .356. Fix landed in `l3_advanced.py` (player_woba + lg_woba in both Native/Imported views) and `reconcile.py` BATTING_DERIVED_CTE | wOBA tier: 76% → **94%** match (8 small-sample DSL outliers remain) |
-| 3 | **Accuracy floor documented** — 197 A-tier columns at 100%, 43 B-tier at 94-100% (rounding-grade). Statcast aggregation (33 E-tier cols), xBA/xSLG/xwOBA (7 D-tier), and pitch-tracking (36 F-tier) flagged for future investigation; pitch-tracking permanently unrecoverable (OOTP-internal). | ~85% of reconcile columns at OOTP-canonical accuracy |
-
-**Verification post-fix**: Bastidas 2028 wOBA Diamond .356 vs IE .357 ✓; Ocopio .287/.288 vs IE .282 ✓; Merrill OPS+ 124 vs IE 125, b_war 3.6 vs IE 3.6 ✓. All 21 reconcile files run cleanly; output at `audit_output/reconciliation_padres_2028_07.md`.
-
-**Deferred to future sessions** (all in BACKLOG / todo list):
-- Statcast spray classification (Pull/Cent/Oppo at 5-18% match) — hit_xy encoding semantics deep-dive
-- Statcast aggregation alignment (EV/LA/HHi/Barrel% at 53-86%) — BIP cutoff + weighting
-- xBA/xSLG/xwOBA formula divergence — OOTP IE includes non-BIP credit?
-- Phase 1+ work (HoF Lahman drop, lref_player_*, Retrosheet, Almanac UI, stretch comparator)
+**Investigation receipts** (the empirical work that established each fix):
+- Padres IE corpus at `docs/helpful_files/recon/Padres/` (21 stat CSVs + 65 screenshots @ 7/31/2028) is the permanent ground-truth corpus
+- Sox + Padres dual-save reconciliation is the standard regression check
+- All grid-searches probed 74-batter / 73-pitcher / 12,506-BIP / 12,780-BIP-allowed corpora at minimum
+- The lost-work hall of fame (DATA_QUIRKS.md "lost-work" section) captures the cases where we forgot a finding and re-investigated
 
 ---
 
@@ -32,16 +22,20 @@
 Phase 1 — Audit (initial pass)            ✓ 2026-05-04 (milestone close; residuals open)
 Phase 2 — Warehouse + analytics           ✓ 2026-05-06
 Phase 3 — UI implementation               ✓ ~85% shipped; residuals fold into 4b UI work
+Phase 4a — Audit closure                  ✓ 2026-05-10 (all 7 deliverables shipped)
+Phase 4a-ext-1 — recon drive              ✓ 2026-05-10 (5 formula corrections, +20-45pp cascade)
+Phase 4a-ext-2 — structural stress-test   ✓ 2026-05-10 (sealed Pull/Cent/Oppo; IFH% multi-dim)
+Phase 4a-ext-3 — barrel cone derived      ✓ 2026-05-10 (BAR 40 → 67, BAR% 74 → 94)
+Display ditch (D41)                       ✓ 2026-05-10 (cd422af + 169ad0c)
 ─────────────────────────────────────────
-Phase 4a — Audit closure                  ← NEXT, ~2-3 dev-days
-Phase 4b — Maximize the warehouse         ← THEN, ~5-6 dev-days
+Phase 4b — Maximize the warehouse         ← NEXT, ~5-6 dev-days
 Phase 5  — The Baseball Almanac           ← ~10-14 dev-days
 Phase 6  — Multi-save scaffolding         ← ~3-5 dev-days
 Phase 7  — AI as analytical layer         ← ~3-5 dev-days
 Phase 8  — Polish + distribution          ← deferred post-summer
 ```
 
-**See DECISIONS.md D40** for the full architectural commitment including dependency chain, storage projection, non-goals, and per-phase exit criteria. Summary below.
+**See DECISIONS.md D40 + D41** for the architectural commitments; **DATA_QUIRKS.md** for the master ledger of every formula calibration / permanent limitation / display-policy decision.
 
 ### Phase 4a — Audit Closure (~2-3 dev-days)
 

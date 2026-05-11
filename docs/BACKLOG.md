@@ -57,8 +57,17 @@
 - All 7 deliverables shipped: #1 + #2 + #3 + #4 + #5 + #6 + #7 (all complete)
 - `make smoke` passes; `diamond reconcile` against Padres corpus runs cleanly with the new EV cutoffs + IFH% wired
 
-**Phase 4a ✅ CLOSED. Phase 4a-extended ✅ CLOSED 2026-05-10** — pushed an additional ~15 superstat columns from 50-90% match into 80-99% via: BIP filter fix (removed `sac=0`), BAR recalibration (EV≥99 LA[13..41]), xwOBA scaler 1.03, xERA formula refit (19.5x − 2.5), LA bucket re-fit (GB<11, LD 11-25, FB 26-50, PU≥51). Five formula corrections cascaded into +7-45pp improvements across LA/EV/spray/x-stat columns on both batting and pitching sides. Truly permanent gaps documented in DATA_NOTES.md: 1D `hit_xy` spray (38-54%), F-tier pitch tracking (0%), DSL/foreign players w/o PA event log (BIP 80-82%). **Next: Phase 4b — Maximize the Warehouse.**
-- Inventory output committed to `audit_output/l0_column_coverage.md`
+**Phase 4a ✅ CLOSED. Phase 4a-extended (-1, -2, -3) ✅ CLOSED 2026-05-10. Display ditch ✅ SHIPPED 2026-05-10.**
+
+- **Phase 4a-ext-1** (commit `bf31cef`) — five formula corrections cascading +7-45pp. BIP `sac=0` filter removed, BAR recalibrated to EV≥99 LA[13..41], xwOBA scaler 1.03, xERA refit to `19.5·xwOBA - 2.5`, LA buckets re-fit to GB<11/LD 11-25/FB 26-50/PU≥51.
+- **Phase 4a-ext-2** (commit `018f594`) — stress-tested "structural" claims. Confirmed spray Pull/Cent/Oppo is truly stuck (`r=0.17` with avg_xy). Fixed IFH% multi-dim (`hit_loc ≤ 30 AND EV < 95 AND LA < 5`): 57% → 71%. Tried widening PCB level filter to L7-L8 — regressed; IE excludes foreign-league stints. Reverted.
+- **Phase 4a-ext-3** (commit `903810f`) — reverse-engineered the OOTP barrel cone (`lref_xiso_table` is a histogram, not a classifier; had to derive from IE ground truth). Best fit: `EV ≥ 97 AND LA in [26-(EV-97), 30+(EV-97)]`, almost identical to Baseball Savant canonical (EV ≥ 98). BAR 40% → 67%, BAR% 74% → 94%. Applied to both reconcile.py and l3_advanced.py.
+- **Display ditch — spray** (commit `cd422af`) — fixed StadiumSprayChart hit_xy clipping bug (`[0,130]` → `[0,255]`, was mis-rendering ~30% of events). Dropped Pull%/Cent%/Oppo% cells from player page situational table. Chart kept (now visually correct).
+- **Display ditch — full** (commit `169ad0c`) — per D41, removed every column with <95% IE match from the user-facing app. Dropped: player Advanced xstats triplet (xwoba_bip/xba_bip/xslg_bip), roster Contact mode (BIP/Avg EV/Brl%/SS% — kept Max EV + HH%), leaderboards (AVG_EV/BARREL_PCT/SWEET_SPOT_PCT/xBA/xSLG/xwOBA). L3 builders still materialize as drift-watch + Phase 4b invariants-watchdog inputs. Reconcile ColSpecs tagged `SEALED Phase 4a-ext-3`.
+
+**Result**: every number in the user-facing app is now bit-for-bit OOTP-matching within rounding (per D41 invariant). DATA_QUIRKS.md is the master ledger of what's dropped + why.
+
+**Next: Phase 4b — Maximize the Warehouse.** Inventory output committed to `audit_output/l0_column_coverage.md`. See [deferred work](#deferred-work-l_ie--re-enable-paths) below for paths to lift the dropped columns back into the UI later.
 
 ---
 
@@ -124,6 +133,19 @@ Unblocks: "who was leading on June 1?"
 - "Last 12 days Merrill" returns in <100ms
 - Every monthly ingest emits a self-validation report
 - Every screen has a path to a time-windowed view
+
+### Deferred work — L_IE + re-enable paths
+
+Three follow-up tracks that could lift the display-ditched columns back into the UI later. None blocking — the app is in a strong honest state without them.
+
+- [ ] **L_IE display routing** (~2-3 hrs)
+  Ingest `<save>/import_export/*.csv` (OOTP-generated IE roster exports) into a new `lie_*` warehouse layer. API routes prefer `lie_*` values when present; fall back to derivations otherwise. **Coverage**: ~80% of the app (player page, roster page, cockpit spotlights, movements, pressure, compare cards) — anything org-roster-scoped. **Caveat**: user has to manually export rosters in OOTP after each sim advance (1 click). Diamond can detect stale exports via file mtime and surface a "needs refresh" badge. **Net effect**: every value in the app becomes bit-for-bit identical to what OOTP shows in-game, for org-roster players. Re-enables spray %s, BAR count, Soft%/Avg%/Solid%/EV/BIP cells, IFH%, BUH%, xstats batting+pitching (all sourced directly from IE rather than computed). **Closes**: the D41 display-ditch limitation for org-scoped surfaces.
+
+- [ ] **Pitching xstats re-enable** (~30 min)
+  Switch player page pitching Advanced to expose `xwoba` / `xba` / `xslg` (SUM/PA scaled values in `f_player_season_xstats_pitching`) instead of the dropped per-BIP averages. Match: 96-97% (rounding-grade) — would not violate D41 policy. **Why not yet**: schema additions + frontend wiring. Trivial work but not urgent. Batting side stays out (89% match — under threshold; needs the per-player calibration below).
+
+- [ ] **L3 per-player x-stat calibration** (Phase 4b deliverable per D40)
+  Replace flat scalers (1.22 xBA / 1.09 xSLG / 1.03 xwOBA) with per-player skill-aware scalers using the batter's hit-rating profile. **Goal**: push xBA / xSLG / xwOBA batting from 89-92% → 95%+ to re-cross the D41 display threshold. Re-enables batting Advanced xstats columns + leaderboards entries. **Status**: planned, not started. Phase 4b's invariants watchdog + game-grain facts come first.
 
 ---
 

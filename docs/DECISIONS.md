@@ -1920,3 +1920,60 @@ For 5-10 concurrent summer saves: 20-70 GB. Modern SSD, no concern.
 - Phase 4b Tier B — new builders in `src/diamond/schema/l3_history.py` (new module)
 - Phase 4b Tier C — additions to `src/diamond/schema/l3.py` (records / awards modules)
 - D40 watchdog — new module `src/diamond/schema/invariants.py` + new API route + new UI components
+
+
+## D41 — Display policy: drop UI columns where Diamond's value can differ from OOTP IE by more than rounding (≥ ~5pp)
+
+**Date**: 2026-05-10 (post Phase 4a-extended-3 recon drive)
+
+### The user invariant we want to uphold
+
+> **"Any number you see in the Diamond app matches what OOTP shows in the game, within rounding."**
+
+This is the integrity contract for the user-facing surfaces (player page, roster page, leaderboards, chart builder, cockpit, compare). When the contract can't be met for a particular column, the column gets hidden — not shown with a "Diamond-derived" disclaimer, not shown with a wider tolerance band, just hidden.
+
+### The threshold
+
+A column qualifies for display if **its reconcile match rate against the Padres IE corpus is ≥ ~95%** (i.e. the remaining gap is integer rounding or sub-percent precision, not per-player drift that could mislead a decision).
+
+Below ~95% the column is dropped from the UI. The L3 builders **still materialize** the value — that's:
+1. Reconcile drift watch (future OOTP version bumps surface as match-rate drops)
+2. Invariants-watchdog input for Phase 4b's `_diamond_invariants` table
+3. Re-enable target via L_IE display routing (see Phase 4b deferred work)
+
+### What this covered in the initial application
+
+| Surface | Dropped columns | Reason |
+|---|---|---|
+| Player page situational splits | `pull` / `center` / `oppo` rows | hit_xy doesn't carry per-batter spray info (r=0.17), MAE ~7pp ceiling |
+| Player page Advanced (batting + pitching) | `xwoba_bip` / `xba_bip` / `xslg_bip` / `bip_xstat` | per-BIP averages don't appear in OOTP IE display; IE-style scaled batting versions at 89-92% — under threshold |
+| Roster Contact mode (batter + pitcher) | `BIP`, `Avg EV`, `Brl%`, `SS%` | BIP 80-82% (DSL gap), Avg EV 83-87%, Brl% 74% batting, SS% no IE counterpart |
+| Roster Contact mode | KEPT: `Max EV` (97%), `HH%` (94-95%) | Rounding-grade matches |
+| Leaderboards catalog | `AVG_EV`, `BARREL_PCT`, `SWEET_SPOT_PCT`, `xwOBA`, `xBA`, `xSLG` | Same reasoning; chart builder auto-inherits |
+| Spray chart visualization | **KEPT** (clipping bug fixed: `[0,130]` → `[0,255]`) | Renders individual event positions correctly; only aggregate %s are unreliable |
+
+### What this is NOT
+
+- Not a permanent ban — see Phase 4b deferred work for re-enable paths (L_IE routing, pitching xstats via scaled cols, per-player calibration).
+- Not a recommendation to delete the L3 materializations. The L3 tables stay populated for invariants + drift watch.
+- Not a license to hide UX-uncomfortable numbers — the threshold is rooted in the reconcile match rate, which is an empirical drift measurement, not subjective.
+
+### Sealing convention
+
+Recon ColSpec notes are tagged `SEALED Phase 4a-ext-N` (where N is the phase) when the column has been investigated to its data ceiling. **Future sessions should not re-investigate** sealed columns without new evidence (different save, OOTP version bump, fundamentally new data source). See `DATA_QUIRKS.md` "lost-work hall of fame" for the multi-session re-investigation pattern this convention exists to break.
+
+### Why a hard "drop, don't disclaim" choice
+
+A "Diamond-derived" badge or wider tolerance band would have preserved the columns at the cost of constant trust friction. Every decision the user makes on a borderline column ("is this player a pull hitter? — Pull% 47%") would carry the uncomfortable knowledge that the real OOTP value might be 32% or 62%. The clean cut is principled: the app shows OOTP's numbers, or it shows nothing.
+
+### Wiring
+
+- Frontend cuts: `web/components/RosterClient.tsx` (Contact mode 6 → 2 cols), `web/components/PlayerStatsTab.tsx` (ADV_BATTING_COLUMNS + ADV_PITCHING_COLUMNS — drop xstats), `web/lib/stadiums.ts` + `web/components/StadiumSprayChart.tsx` (hit_xy clipping fix).
+- Backend cuts: `src/diamond/api/schemas/player.py` (drop xstats fields from PlayerAdvancedBattingRow + PlayerAdvancedPitchingRow), `src/diamond/api/routes/players.py` (drop xstats JOIN + situational spray splits), `src/diamond/api/routes/leaderboards.py` (drop 6 StatSpec entries + `_XBAT`/`_XPIT` aliases).
+- Reconcile: `src/diamond/audit/reconcile.py` ColSpec notes for `Pull%`/`Cent%`/`Oppo%` updated to `SEALED Phase 4a-ext-3`.
+- Documentation: `docs/DATA_QUIRKS.md` is the authoritative ledger (this decision lives in DECISIONS, the empirical receipts in DATA_NOTES, the at-a-glance index in DATA_QUIRKS).
+
+### Commits
+
+- `cd422af` — spray drop + chart clipping fix
+- `169ad0c` — full ditch (xstats + Contact mode + leaderboards)
