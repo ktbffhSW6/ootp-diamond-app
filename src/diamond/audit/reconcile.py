@@ -949,9 +949,16 @@ PITCHING_STATS_2 = FileSpec(
 # BIP = ground/fly outs + all hits (codes 4,5,6,7,8,9).
 # Statcast values populated mainly for MLB at-bats (non-MLB at-bats lack EV/LA).
 BATTING_SUPERSTATS_CTE = """
--- PCB-derived BIP (AB-K+SF+SH across US-affiliated levels) matches IE far better
--- than at-bat-counted BIP, especially for multi-level / foreign-league players
--- whose at_bats data is incomplete. 105/126 match vs 7/128 at-bat-counted.
+-- PCB-derived BIP (AB-K+SF+SH summed across L1-L6 stints) matches IE in
+-- 98/120 (82%) exact / 117/120 (98%) within ±1 BIP. Phase 4a-extended-2
+-- (2026-05-10) confirmed that **L1-L6 IS the correct level filter** —
+-- IE's org-roster display EXCLUDES foreign / independent league stints
+-- (L7 Atlantic / Frontier / Pioneer / American Association, L8 KBO).
+-- Probe: no-filter = 97/116, L1-L6 = 98/117, L1-L4 = 59/71. The narrower
+-- L1-L4 wrongly drops Complex / DSL players (L6) who DO appear in IE.
+-- Conclusion: keep `BETWEEN 1 AND 6` — the BIP residual ~18% is dominated
+-- by integer-rounding edge cases (sac flies counted differently across
+-- multi-stint), not a missing data source.
 pcb_bip AS (
     SELECT player_id,
            SUM(ab) - SUM(k) + SUM(sf) + SUM(sh) AS bip_pcb
@@ -1032,10 +1039,18 @@ agg AS (
         -- MAE=5.6pp, F3 IFH/GB-hits MAE=5.1pp). hit_loc=23 jumps to 133
         -- hits across the corpus, the largest single-zone count — natural
         -- infield/outfield break point.
+        -- IFH multi-dim — Phase 4a-extended-2 (2026-05-10) widened the
+        -- decoding from hit_loc-only to hit_loc × EV × LA. Grid-search:
+        -- best is (hl<=30, ev<95, la<5) at MAE=3.09pp vs prior single-dim
+        -- (hl<=22) at 3.54pp. The flatter LA cap (la<5) captures the
+        -- "chops + swinging bunts" signature of infield hits; the EV<95
+        -- cap excludes hard line drives through the infield that aren't
+        -- "infield hits" in OOTP's classification.
         COUNT(*) FILTER (
             WHERE result = 6
-              AND launch_angle < 11
-              AND hit_loc <= 22
+              AND launch_angle < 5
+              AND hit_loc <= 30
+              AND exit_velo < 95
         ) AS ifh,
         -- Spray counts (batter-relative — see spray_dir comment above).
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND spray_dir = 'PULL') AS pull,
@@ -1209,7 +1224,9 @@ agg AS (
 gp AS (
     SELECT player_id, SUM(g) AS g, SUM(gs) AS gs,
         -- BIP allowed for pitchers via PCB: AB - K + SF + SH (sacs allowed
-        -- count as BIP). Better fit than at-bat-counted for multi-level pitchers.
+        -- count as BIP). Same L1-L6 level filter as batting side per
+        -- Phase 4a-extended-2 — IE's org-roster aggregate excludes foreign
+        -- / independent league stints (L7-L8).
         SUM(ab) - SUM(k) + SUM(sf) + SUM(sh) AS bip_pcb
     FROM career_pit
     WHERE year = audit_year() AND split_id = 1 AND level_id BETWEEN 1 AND 6

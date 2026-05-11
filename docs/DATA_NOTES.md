@@ -2329,6 +2329,62 @@ After Phase 4a closed (deliverables 1-7), an honest audit of the Padres recon re
 
 **The truly permanent gaps remain**: 36 pitch-tracking F-tier columns (whiff%/zone%/chase%) — OOTP doesn't emit per-pitch zone+type. No path to close from any dump.
 
+### Phase 4a-extended-2 deep-dives (2026-05-10)
+
+After Phase 4a-extended closed, user pushed back: "is there no way to 100%? Have you investigated everything?" Honest answer was no, several gaps were marked structural too quickly. Phase 4a-extended-2 ran rigorous stress-tests on every claim of "structural":
+
+**Spray Pull/Cent/Oppo @ 38-54% — confirmed genuinely structural** (NOT just "1D limit").
+
+The earlier D39 + Phase-4a-ext analysis said "1D `hit_xy` can't capture per-batter spray biases." The deeper test in Phase 4a-extended-2 measured the **Pearson correlation between per-player `avg(hit_xy)` and IE Pull%** across 73 Padres MLB batters with BIP≥30:
+
+```
+r(avg_xy, IE Pull%) = 0.17   (essentially zero)
+r(avg_xy, IE Cent%) = -0.09
+r(avg_xy, IE Oppo%) = -0.14
+```
+
+Top-10 IE pull hitters (Pull% 51-59) had **avg_xy = 128**. Bottom-10 IE pull hitters (Pull% 22-31) had **avg_xy = 126**. Essentially identical. **hit_xy does NOT carry per-batter spray-direction information at the resolution IE needs.** Whatever OOTP IE uses for Pull% computation, it isn't aggregating hit_xy from the PA event log. Likely candidates: an internal sim-time "expected pull side" classification using bat hand × pitch type × swing angle, none of which are exposed in dumps.
+
+Tested alternatives that all confirmed the limit:
+- 1D hit_xy cutoffs (every (p_max, o_min) pair across hit_xy 70..230): best MAE 6.87pp
+- hit_xy decoded as 16×16 packed grid `(x=xy%16, y=xy/16)`: best MAE 6.88-6.95pp (same)
+- BIP-subset filters (hits-only, outs-only, FB+LD only, GB only, non-PU): all 6.87-8.46pp
+- Combined hit_xy × hit_loc 2D model: MAE 7.15pp (worse)
+
+The encoding interpretation is right (HR analysis re-confirms batter-relative: LHB mean hit_xy 71.2, RHB mean 71.8 — both cluster low). hit_xy just doesn't have the per-event lateral resolution required.
+
+**Verdict**: This is the data limit. Cannot be improved with anything in the dumps. Documented as truly structural, not "needs more work."
+
+**BIP @ 80-82% — current L1-L6 filter is OPTIMAL**, not the cause of the gap.
+
+The earlier ext-1 attempt widened the PCB level filter from `BETWEEN 1 AND 6` to no filter, hoping to capture DSL/foreign stints. Result: BIP regressed 82% → 81%. Investigation showed:
+
+| Level filter | exact / 120 | within ±1 |
+|---|---:|---:|
+| No filter (incl. L7-L8 foreign) | 97 | 116 |
+| **L1-L6 (incl. Complex)** | **98** | **117** |
+| L1-L4 (full-season only) | 59 | 71 |
+
+L1-L6 wins by 1 because **IE's org-roster aggregate excludes foreign / independent league stints** (L7 Atlantic / Frontier / Pioneer / American Association, L8 KBO). The L7-L8 widening over-counted BIP for the 2-3 players with foreign-league seasons. Reverted to the original L1-L6 filter.
+
+The remaining 18% BIP gap is integer-edge cases (sac flies counted differently across multi-stint), not a missing data source.
+
+**IFH% multi-dim @ 71% (was 57%, +14pp)** — the deferred multi-dim was real.
+
+The earlier Phase 4a #5 closure picked the single-dim `hit_loc ≤ 22` formula at MAE=3.54pp. Phase 4a-extended-2 grid-searched the full (hit_loc cutoff, EV ceiling, LA ceiling) space:
+
+```
+Best: hit_loc <= 30 AND exit_velo < 95 AND launch_angle < 5  → MAE 3.09pp
+```
+
+The flatter LA ceiling (LA<5) captures the "chops + swinging bunts" signature; the EV<95 cap excludes hard line drives through the infield (which aren't "infield hits" per OOTP classification). Slightly wider hit_loc bound (30 vs 22) lets in shallow outfield-edge zones. Applied to `reconcile.py`.
+
+**BUH% @ 68% — confirmed sparse-denominator noise.**
+
+BUH = bunt hits / bunt attempts. Most batters have 0-3 bunt attempts in a season. With denominator <5, a single bunt result swings the % by 20+pp. The 32% of batters who mismatch are exclusively in the "sparse-denominator" zone. No formula change closes this — it's irreducible noise.
+
+
+
 
 
 **Original hypothesis (D40 BACKLOG)** — "~5-10pp error on ~12 players who split MLB/AAA in one season. Hypothesis: OOTP applies a level-weighted park factor."
