@@ -998,11 +998,20 @@ def _build_f_player_season_advanced_pitching(con: duckdb.DuckDBPyConnection) -> 
 
 
 _STATCAST_BARREL_EXPR = """
-    -- Statcast expanding-window barrel definition. EV >= 98 is the
-    -- floor; the LA window widens as EV climbs, capping at [8, 50].
-    CASE WHEN bip_flag = 1 AND exit_velo >= 98
-              AND launch_angle >= GREATEST(8.0, 26.0 - (exit_velo - 98.0))
-              AND launch_angle <= LEAST(50.0, 30.0 + (exit_velo - 98.0))
+    -- OOTP barrel definition — expanding cone centered at LA=28, half-
+    -- width 2 at the EV floor, expanding 1°/mph above the floor, capped
+    -- at LA [8, 50]. Phase 4a-extended-3 (2026-05-10) reverse-engineered
+    -- the EV floor against Padres IE BAR ground truth:
+    --
+    --   Real Statcast canonical: EV >= 98 floor (Baseball Savant)
+    --   OOTP IE-actual:          EV >= 97 floor (1 mph lower)
+    --
+    -- Grid-search over 74 Padres batters × IE BAR confirmed the OOTP
+    -- floor is 97 mph. Recon match for BAR jumped 40% → 67%, BAR% 74% → 94%.
+    -- See DATA_NOTES "Phase 4a-extended-3" + audit/reconcile.py.
+    CASE WHEN bip_flag = 1 AND exit_velo >= 97
+              AND launch_angle >= GREATEST(8.0, 26.0 - (exit_velo - 97.0))
+              AND launch_angle <= LEAST(50.0, 30.0 + (exit_velo - 97.0))
          THEN 1 ELSE 0 END
 """
 

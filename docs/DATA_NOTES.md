@@ -2383,6 +2383,49 @@ The flatter LA ceiling (LA<5) captures the "chops + swinging bunts" signature; t
 
 BUH = bunt hits / bunt attempts. Most batters have 0-3 bunt attempts in a season. With denominator <5, a single bunt result swings the % by 20+pp. The 32% of batters who mismatch are exclusively in the "sparse-denominator" zone. No formula change closes this — it's irreducible noise.
 
+### Phase 4a-extended-3 — OOTP barrel cone reverse-engineered (2026-05-10)
+
+User pushed back on a different "structural" labeling: barrel rate. The earlier Phase 4a-extended re-grid-searched a flat rectangle (EV>=99, LA[13..41]) on the Padres corpus and called the residual MAE 1.24 "integer-count noise." That was the wrong shape.
+
+**The actual OOTP barrel is an expanding cone**, matching Statcast canonical convention closely:
+
+```
+EV >= 97 AND LA in [26 - (EV-97), 30 + (EV-97)]
+```
+
+- Centered at LA=28
+- Half-width 2 at the EV floor (97)
+- Expanding 1° per mph above the floor
+- Capped at LA [8, 50]
+
+This is **almost identical to Baseball Savant's canonical barrel** (which uses EV>=98) — OOTP's only variation is a 1-mph lower EV floor.
+
+**Grid-search verification** on 74 Padres batters × 12,506 BIP events:
+
+| Formula | exact / 74 | within ±1 | MAE |
+|---|---:|---:|---:|
+| Original (EV>=100, LA[10..42], hand-tuned on 9 Sox) | 13 | n/a | 1.93 |
+| Phase 4a-ext rectangle (EV>=99, LA[13..41]) | 27 | 61 | 1.24 |
+| **Phase 4a-ext-3 cone (EV>=97, cone)** | **38** | **67** | **0.78** |
+| Canonical Statcast (EV>=98 cone) | 18 | 52 | 1.57 |
+
+**Recon impact**:
+
+| Column | Pre-ext-3 | Post-ext-3 | Δ |
+|---|---:|---:|---:|
+| BAR | 40% | **67%** | +27pp |
+| BAR% | 74% | **94%** | +20pp |
+
+Applied to both `audit/reconcile.py:BATTING_SUPERSTATS_CTE` and `schema/l3_advanced.py:_STATCAST_BARREL_EXPR` (production statcast cohort tables). The L3 builder previously used Statcast-canonical EV>=98 — now matches OOTP-actual EV>=97 cone.
+
+**The lost-work narrative**:
+
+`lref_xiso_table` was ingested 2026-05-14 with the DATA_NOTES claim it "replaces our barrel/SS/HH classification." Inspection in Phase 4a-ext-3 showed xiso is a (LSA × outcome) histogram — **not** a (LA, EV) → LSA lookup. The promise in docs couldn't be fulfilled by reading xiso. The actual reverse-engineering — fitting cone shapes to per-player IE BAR ground truth — wasn't done until Phase 4a-ext-3.
+
+**Soft/Med/Solid stay on EV cutoffs (76, 95)**: tested LSA bands {1+2}, {3+4}, {5+6} and they did not fit IE Soft/Med/Solid — MAE 12.4 / 5.3 / 8.8 vs EV-cutoffs at 1.7 / 2.1 / 1.2. OOTP IE's Soft/Med/Solid display is EV-bucketing, not LSA-banding. Phase 4a #4's (76, 95) calibration is correct.
+
+
+
 
 
 

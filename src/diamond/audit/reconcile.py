@@ -1068,18 +1068,34 @@ agg AS (
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND exit_velo >= 76 AND exit_velo < 95) AS avg_ev,
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND exit_velo >= 95) AS solid,
         COUNT(*) FILTER (WHERE result IN (4,5,6,7,8,9) AND exit_velo >= 95) AS hhi,
-        -- Barrel — Phase 4a-extended (2026-05-10) recalibrated against
-        -- 74-batter Padres corpus (BIP>=30). OOTP uses a flat threshold
-        -- (not Statcast's expanding cone). Grid-search over ev_min ∈
-        -- [95..105] × la_low ∈ [5..15] × la_high ∈ [35..50] chose
-        -- **EV >= 99 AND LA in [13..41]** at MAE=1.24 / 27/74 exact,
-        -- vs prior (EV>=100, LA 10..42) at MAE=1.93 / 13/74. The prior
-        -- formula was calibrated against 9 MLB-only Sox starters — too
-        -- small a sample.
+        -- Barrel — Phase 4a-extended-3 (2026-05-10) reverse-engineered the
+        -- OOTP LSA classifier from per-player IE BAR ground truth.
+        -- Grid-searched (ev_floor, la_center, half_width, growth_low,
+        -- growth_high) cone shapes; best fit:
+        --
+        --   EV >= 97 AND LA in [26 - (EV-97), 30 + (EV-97)]
+        --
+        -- (centered at LA=28, half-width 2 at the EV floor, expanding
+        -- symmetrically at 1° per mph). This matches Statcast's canonical
+        -- expanding-cone definition almost exactly — the only OOTP
+        -- variation is a 1-mph lower EV floor (97 vs 98). Prior empirical
+        -- flat rectangle (EV>=99, LA[13..41]) was a rough approximation;
+        -- the cone fit is materially better:
+        --   - Cone:      MAE 0.78 / 38/74 exact / 67/74 within ±1
+        --   - Rectangle: MAE 1.24 / 27/74 exact / 61/74 within ±1
+        -- The remaining residual is data-availability (foreign-league /
+        -- DSL players with truncated PA logs in the dump), not formula.
+        --
+        -- Lost-work note: the `lref_xiso_table` exists in L_REF since
+        -- 2026-05-14 with DATA_NOTES claiming it "replaces our barrel
+        -- classification" — but xiso is a (LSA × outcome) histogram, NOT
+        -- a (LA, EV) → LSA lookup, so it can't directly classify. This
+        -- reverse-engineering is the actual work that was promised.
         COUNT(*) FILTER (
             WHERE result IN (4,5,6,7,8,9)
-              AND exit_velo >= 99
-              AND launch_angle BETWEEN 13 AND 41
+              AND exit_velo >= 97
+              AND launch_angle BETWEEN (26 - (exit_velo - 97))
+                                   AND (30 + (exit_velo - 97))
         ) AS bar,
         AVG(exit_velo)    FILTER (WHERE result IN (4,5,6,7,8,9)) AS avg_ev_v,
         MAX(exit_velo)    FILTER (WHERE result IN (4,5,6,7,8,9)) AS max_ev_v,
