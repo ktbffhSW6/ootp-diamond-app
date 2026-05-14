@@ -44,3 +44,69 @@ class IngestRunResponse(BaseModel):
     ingested: list[str]
     skipped: list[str]
     elapsed_seconds: float
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# D40 invariants watchdog
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class InvariantMetricSummary(BaseModel):
+    """Per-metric tally for the invariants summary endpoint."""
+
+    metric: str
+    green: int
+    amber: int
+    red: int
+    total: int
+
+
+class InvariantOverall(BaseModel):
+    """Roll-up across all metrics."""
+
+    green: int
+    amber: int
+    red: int
+    total: int
+    pass_rate: float                 # 0..100 pct of green
+    status: str                      # 'green' | 'amber' | 'red'  (worst metric wins)
+
+
+class InvariantFailure(BaseModel):
+    """A single drift event for the admin / debug surface.
+
+    `delta = dump_value - derived_value`; `status` is `red` (clear bug,
+    |delta| > 2·tolerance) or `amber` (drift starting, tolerance < |delta|
+    ≤ 2·tolerance).
+    """
+
+    dump_date: str | None            # ISO date
+    scope_type: str
+    scope_id: int | None
+    year: int | None
+    level_id: int | None
+    metric: str
+    dump_value: float | None
+    derived_value: float | None
+    delta: float | None
+    tolerance: float
+    status: str
+    note: str | None
+
+
+class InvariantsResponse(BaseModel):
+    """``GET /api/admin/invariants`` response.
+
+    Reflects the latest watchdog run (computed at end of every
+    `rebuild_l1_l2`). Frontend cockpit pill consumes ``overall.status``
+    + ``overall.pass_rate``; the admin debug page consumes the
+    per-metric `metrics[]` + top-N `failures[]`.
+
+    Returns ``last_run_dump_date = None`` if the watchdog has never
+    run (e.g. warehouse predates D40 wiring).
+    """
+
+    last_run_dump_date: str | None
+    overall: InvariantOverall | None
+    metrics: list[InvariantMetricSummary]
+    failures: list[InvariantFailure]

@@ -46,7 +46,14 @@ from typing import Annotated
 import duckdb
 from fastapi import APIRouter, Depends, HTTPException
 
-from diamond.api.schemas import DumpStatusResponse, IngestRunResponse
+from diamond.api.schemas import (
+    DumpStatusResponse,
+    IngestRunResponse,
+    InvariantFailure,
+    InvariantMetricSummary,
+    InvariantOverall,
+    InvariantsResponse,
+)
 from diamond.api.warehouse import (
     _lock as _warehouse_lock,
     get_active_save,
@@ -279,4 +286,71 @@ def trigger_ingest() -> IngestRunResponse:
         ingested=list(result.get("ingested", [])),
         skipped=list(result.get("skipped", [])),
         elapsed_seconds=round(elapsed, 2),
+    )
+
+
+@router.get("/admin/invariants", response_model=InvariantsResponse)
+def get_invariants(
+    con: Annotated[duckdb.DuckDBPyConnection, Depends(get_cursor)],
+) -> InvariantsResponse:
+    """D40 invariants watchdog status (Phase 4b).
+
+    Returns the cached summary from the most-recent ``run_invariants``
+    call (auto-runs at the end of every ``diamond ingest`` /
+    ``rebuild_l1_l2``). Plus top-20 failures sorted by absolute delta
+    for the drift-debug surface.
+
+    Frontend cockpit pill: consumes ``overall.status`` + ``overall.pass_rate``.
+    Admin debug page: consumes per-metric ``metrics[]`` + ``failures[]``.
+
+    Returns an empty shell (``last_run_dump_date=None``) on warehouses
+    that predate D40 — frontend renders "watchdog not yet run".
+    """
+    from diamond.schema.invariants import (
+        get_invariant_failures,
+        get_latest_invariants_summary,
+    )
+
+    summary = get_latest_invariants_summary(con)
+    if summary is None:
+        return InvariantsResponse(
+            last_run_dump_date=None,
+            overall=None,
+            metrics=[],
+            failures=[],
+        )
+
+    overall_raw = summary["overall"]
+    total = overall_raw["total"]
+    green = overall_raw["green"]
+    amber = overall_raw["amber"]
+    red = overall_raw["red"]
+    pass_rate = round(100.0 * green / total, 2) if total > 0 else 0.0
+    # Status: any red → red; else any amber → amber; else green.
+    status = "red" if red > 0 else ("amber" if amber > 0 else "green")
+
+    metric_rows = [
+        InvariantMetricSummary(
+            metric=k,
+            green=v["green"],
+            amber=v["amber"],
+            red=v["red"],
+            total=v["total"],
+        )
+        for k, v in summary["metrics"].items()
+    ]
+
+    failures = [
+        InvariantFailure(**f)
+        for f in get_invariant_failures(con, status="amber", limit=20)
+    ]
+
+    return InvariantsResponse(
+        last_run_dump_date=summary.get("last_run_dump_date"),
+        overall=InvariantOverall(
+            green=green, amber=amber, red=red, total=total,
+            pass_rate=pass_rate, status=status,
+        ),
+        metrics=metric_rows,
+        failures=failures,
     )

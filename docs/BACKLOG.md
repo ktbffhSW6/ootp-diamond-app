@@ -85,14 +85,18 @@ Implementation in `src/diamond/schema/l2_game_grain.py` (~210 LOC). Cross-dump d
 
 Unblocked: "last N days Merrill", calendar heatmaps, streak engine, Phase 5 stretch comparator.
 
-### D40 invariants watchdog (~1 day)
+### D40 invariants watchdog ✅ DONE 2026-05-14
 
-- [ ] New table `_diamond_invariants` (dump_date, scope_type, scope_id, year, level_id, metric, dump_value, derived_value, delta, tolerance, status)
-- [ ] Initial 10 invariants: team wOBA/OPS/ISO/AVG/OBP/SLG, team FIP/ERA/WHIP/BABIP, league wOBA, event-count consistency (PA/K/HR/AB)
-- [ ] CLI: end-of-ingest Rich summary table (green/amber/red)
-- [ ] API: `GET /api/admin/invariants` endpoint
-- [ ] UI: cockpit drift status pill
-- [ ] History trends visible across dumps
+- [x] New table `_diamond_invariants` (dump_date, scope_type, scope_id, year, level_id, metric, dump_value, derived_value, delta, tolerance, status, note). Built by `src/diamond/schema/invariants.py`.
+- [x] 9 initial invariants (`team_woba` dropped — OOTP doesn't cache team-level wOBA): team AVG, OBP, SLG, ERA, WHIP, K/9, BB/9, plus PA / HR event-count consistency. ~500 rows per metric × 9 metrics = ~4,500 checks per warehouse build.
+- [x] CLI: Rich summary table emitted at end of every `rebuild_l1_l2` (auto-runs after L3 + L_IE). Each metric shows `R red / A amber / G green` with status-colored chip.
+- [x] API: `GET /api/admin/invariants` endpoint returns `overall` rollup + per-metric tally + top-20 failures sorted by |delta|.
+- [x] UI: cockpit drift status pill shows `Drift NN.N%` + red-count badge when red > 0. Color matches overall.status. Hidden gracefully on warehouses predating the watchdog.
+
+**Padres outcome**: 99.8% green (4,545 / 4,554 checks). Watchdog surfaced 7 real PA-count discrepancies (team 274 in 2026 L4 is off by 79 PA — actual warehouse build bug needs investigation) + 1 cascading SLG drift on same team. These are the kinds of integrity bugs the watchdog was designed to catch: cross-stint dedup edge cases that the per-column reconcile pass can't see.
+
+- [ ] **Follow-up**: investigate the 7 red `team_pa_count` failures (cross-stint aggregation bug somewhere in L1/L2). Phase 4b polish.
+- [ ] **Follow-up**: history trends visible across dumps — needs Tier B (SCD2 snapshots) first.
 
 ### Tier B — Per-dump derived-stat history snapshots (~1 day)
 

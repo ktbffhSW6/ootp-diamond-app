@@ -520,6 +520,7 @@ def rebuild_l1_l2(
     from diamond.schema.l2_game_grain import build_l2_game_grain
     from diamond.schema.l2_ootp import build_l2_ootp
     from diamond.schema.l3 import build_l3
+    from diamond.schema.invariants import run_invariants
     from diamond.schema.l_ie import build_l_ie
     from diamond.schema.l_ref import ensure_lref
 
@@ -555,6 +556,9 @@ def rebuild_l1_l2(
     if verbose:
         console.rule("L_IE (import_export display values — D41 bit-for-bit routing)")
     out["l_ie"] = build_l_ie(con, save, verbose=verbose)
+    if verbose:
+        console.rule("D40 invariants watchdog")
+    out["invariants"] = run_invariants(con, verbose=verbose)
     return out
 
 

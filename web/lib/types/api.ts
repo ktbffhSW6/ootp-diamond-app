@@ -722,6 +722,65 @@ export interface IngestRunResponse {
   elapsed_seconds: number;
 }
 /**
+ * A single drift event for the admin / debug surface.
+ *
+ * `delta = dump_value - derived_value`; `status` is `red` (clear bug,
+ * |delta| > 2·tolerance) or `amber` (drift starting, tolerance < |delta|
+ * ≤ 2·tolerance).
+ */
+export interface InvariantFailure {
+  dump_date: string | null;
+  scope_type: string;
+  scope_id: number | null;
+  year: number | null;
+  level_id: number | null;
+  metric: string;
+  dump_value: number | null;
+  derived_value: number | null;
+  delta: number | null;
+  tolerance: number;
+  status: string;
+  note: string | null;
+}
+/**
+ * Per-metric tally for the invariants summary endpoint.
+ */
+export interface InvariantMetricSummary {
+  metric: string;
+  green: number;
+  amber: number;
+  red: number;
+  total: number;
+}
+/**
+ * Roll-up across all metrics.
+ */
+export interface InvariantOverall {
+  green: number;
+  amber: number;
+  red: number;
+  total: number;
+  pass_rate: number;
+  status: string;
+}
+/**
+ * ``GET /api/admin/invariants`` response.
+ *
+ * Reflects the latest watchdog run (computed at end of every
+ * `rebuild_l1_l2`). Frontend cockpit pill consumes ``overall.status``
+ * + ``overall.pass_rate``; the admin debug page consumes the
+ * per-metric `metrics[]` + top-N `failures[]`.
+ *
+ * Returns ``last_run_dump_date = None`` if the watchdog has never
+ * run (e.g. warehouse predates D40 wiring).
+ */
+export interface InvariantsResponse {
+  last_run_dump_date: string | null;
+  overall: InvariantOverall | null;
+  metrics: InvariantMetricSummary[];
+  failures: InvariantFailure[];
+}
+/**
  * An entry in the stat picker — one of the supported leaderboard stats.
  *
  * The frontend uses this to build a grouped dropdown ("Batting / Pitching

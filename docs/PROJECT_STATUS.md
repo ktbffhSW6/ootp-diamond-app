@@ -35,8 +35,9 @@ L_IE display routing Slice 1              ✓ 2026-05-14 (advanced bat/pit; bit-
 Phase 4b deferred items (3x)              ✓ 2026-05-14 (L_IE / pitching xstats / POW-aware calibration)
 Phase 4b Tier A (game-grain facts)        ✓ 2026-05-14 (d7a9b7c)
 Phase 4b Tier D (rolling windows + UI)    ✓ 2026-05-14 (335d5c2)
+Phase 4b D40 invariants watchdog          ✓ 2026-05-14 (99.8% green; cockpit pill)
 ─────────────────────────────────────────
-Phase 4b remaining: D40 invariants + Tier B/C (history snapshots) + UI polish
+Phase 4b remaining: investigate team_pa_count reds + Tier B/C (history snapshots) + UI polish
 Phase 5 — The Baseball Almanac            ← ~10-14 dev-days
 Phase 5  — The Baseball Almanac           ← ~10-14 dev-days
 Phase 6  — Multi-save scaffolding         ← ~3-5 dev-days

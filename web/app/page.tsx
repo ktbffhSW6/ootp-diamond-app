@@ -18,7 +18,7 @@ import { PlayerAvatar } from "@/components/PlayerAvatar";
 import { Sparkline } from "@/components/Sparkline";
 import { TeamLogo } from "@/components/TeamLogo";
 import { plusMinusClass } from "@/lib/heatscale";
-import { getCockpit, getSave } from "@/lib/api";
+import { getCockpit, getInvariants, getSave } from "@/lib/api";
 import type {
   CockpitMovementRow,
   CockpitPressureRow,
@@ -325,7 +325,13 @@ function MovementRow({ row }: { row: CockpitMovementRow }) {
 // ─────────────────────────────────────────────────────────────────────
 
 export default async function CockpitPage() {
-  const [save, cockpit] = await Promise.all([getSave(), getCockpit()]);
+  // Invariants are best-effort: a warehouse predating D40 returns
+  // last_run_dump_date=null. Either way, render the pill.
+  const [save, cockpit, invariants] = await Promise.all([
+    getSave(),
+    getCockpit(),
+    getInvariants().catch(() => null),
+  ]);
   const data: CockpitResponse = cockpit;
 
   const orgLabel = save.org_team_nickname
@@ -357,7 +363,46 @@ export default async function CockpitPage() {
             )}
           </h1>
         </div>
-        <p className="font-mono text-xs text-content-muted">{save.save_name}</p>
+        <div className="flex items-center gap-3">
+          {/* D40 invariants pill — green/amber/red drift indicator.
+              Hidden when the watchdog has never run (legacy warehouse). */}
+          {invariants?.overall && (
+            <span
+              className={
+                "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide " +
+                (invariants.overall.status === "green"
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:border-emerald-400/40 dark:bg-emerald-400/10 dark:text-emerald-400"
+                  : invariants.overall.status === "amber"
+                  ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:border-amber-400/40 dark:bg-amber-400/10 dark:text-amber-400"
+                  : "border-rose-500/40 bg-rose-500/10 text-rose-600 dark:border-rose-400/40 dark:bg-rose-400/10 dark:text-rose-400")
+              }
+              title={
+                `Warehouse drift watchdog — ${invariants.overall.green} green / ` +
+                `${invariants.overall.amber} amber / ${invariants.overall.red} red ` +
+                `across ${invariants.overall.total} checks as of ${invariants.last_run_dump_date ?? "?"}`
+              }
+            >
+              <span
+                className={
+                  "h-1.5 w-1.5 rounded-full " +
+                  (invariants.overall.status === "green"
+                    ? "bg-emerald-500"
+                    : invariants.overall.status === "amber"
+                    ? "bg-amber-500"
+                    : "bg-rose-500")
+                }
+                aria-hidden
+              />
+              Drift {invariants.overall.pass_rate.toFixed(1)}%
+              {invariants.overall.red > 0 && (
+                <span className="ml-1 font-mono text-[10px] text-rose-600 dark:text-rose-400">
+                  · {invariants.overall.red}R
+                </span>
+              )}
+            </span>
+          )}
+          <p className="font-mono text-xs text-content-muted">{save.save_name}</p>
+        </div>
       </header>
 
       {/* ── Warehouse status row ─────────────────────────────────── */}

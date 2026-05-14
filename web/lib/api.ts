@@ -23,6 +23,7 @@ import type {
   ChartBuilderResponse,
   DumpStatusResponse,
   IngestRunResponse,
+  InvariantsResponse,
   CockpitResponse,
   CompareResponse,
   DraftClassResponse,
@@ -435,6 +436,14 @@ export async function setSaveConfig(
 // every 60s and shows a badge when pending_count > 0.
 export async function getDumpStatus(): Promise<DumpStatusResponse> {
   return fetchJson<DumpStatusResponse>("/api/admin/dump-status");
+}
+
+// D40 invariants watchdog status — drift between OOTP-cached
+// aggregates and Diamond-derived aggregates. Computed at end of every
+// `diamond ingest` (rebuild_l1_l2). Returns last_run_dump_date=null on
+// warehouses that predate the watchdog wiring.
+export async function getInvariants(): Promise<InvariantsResponse> {
+  return fetchJson<InvariantsResponse>("/api/admin/invariants");
 }
 
 // Trigger a synchronous ingest — picks up any new dumps + rebuilds
