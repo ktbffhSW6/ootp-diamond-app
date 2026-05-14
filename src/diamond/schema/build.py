@@ -519,6 +519,7 @@ def rebuild_l1_l2(
     from diamond.schema.l2 import build_l2
     from diamond.schema.l2_ootp import build_l2_ootp
     from diamond.schema.l3 import build_l3
+    from diamond.schema.l_ie import build_l_ie
     from diamond.schema.l_ref import ensure_lref
 
     out: dict[str, dict[str, int]] = {}
@@ -547,6 +548,9 @@ def rebuild_l1_l2(
     if verbose:
         console.rule("L3 derived")
     out["l3"] = build_l3(con, verbose=verbose)
+    if verbose:
+        console.rule("L_IE (import_export display values — D41 bit-for-bit routing)")
+    out["l_ie"] = build_l_ie(con, save, verbose=verbose)
     return out
 
 

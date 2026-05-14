@@ -20,7 +20,9 @@ These files are the source of truth for "why" — favor updating them over leavi
 
 **Current phase: Phase 4b — Maximize the Warehouse** (next), then Phase 5 — Baseball Almanac, then Phase 6 (multi-save) → 7 (AI analyst) → 8 (distribution, deferred). **Phase 4a ✅ CLOSED 2026-05-10**; **Phase 4a-extended-1/-2/-3 ✅ CLOSED 2026-05-10** (recon drive on never-re-examined gaps); **Display ditch ✅ CLOSED 2026-05-10** (unreliable cols pulled from UI per D41). The L0/L1/L2/L3 + L_REF + History layer architecture is sound and stays put; Phase 4b is additive — game-grain fact tables (`f_player_game_*`) for time-series, per-dump snapshots of derived stats (`f_*_history`), invariants watchdog (`_diamond_invariants`) self-validating against OOTP-authoritative columns wired in Phase 4a #2, per-player calibration (spray, xSLG) replacing flat scalers from D39. **See DECISIONS.md D40 + D41 + DATA_QUIRKS.md for the full picture.**
 
-**Most recent ship — 2026-05-10 (final) shipped the display ditch (D41).** Per the policy "any column where Diamond's value can differ from OOTP IE by more than rounding (≥ ~5pp) is hidden from the UI." Two commits in sequence: (1) **Spray ditch + chart clipping fix** (`cd422af`) — fixed the StadiumSprayChart hit_xy clipping bug (`[0,130]` → `[0,255]`, was mis-rendering ~30% of events on the oppo foul line); dropped Pull%/Cent%/Oppo% cells from the player page situational table (`hit_xy` doesn't carry per-batter spray info — `r=0.17` against IE Pull%, MAE 7pp ceiling). (2) **Full ditch** (`169ad0c`) — removed xstats triplet (`xwoba_bip`/`xba_bip`/`xslg_bip`) from `PlayerAdvancedBattingRow`/`PitchingRow` schemas, dropped roster Contact mode from 6 → 2 cols (kept Max EV @ 97% + HH% @ 94-95%, dropped BIP/Avg EV/Brl%/SS%), dropped AVG_EV/BARREL_PCT/SWEET_SPOT_PCT/xBA/xSLG/xwOBA from the leaderboards catalog (Chart Builder auto-inherits). L3 tables stay materialized as drift-watch + invariants-watchdog inputs. Reconcile ColSpec notes tagged `SEALED Phase 4a-ext-3` so future sessions don't re-litigate. **Net effect**: every number in the user-facing app is now bit-for-bit OOTP-matching within rounding. See `DATA_QUIRKS.md` for the full ledger of what's dropped + why.
+**Most recent ship — 2026-05-14 shipped L_IE display routing Slice 1.** Per D41, the display ditch dropped every column with <95% IE match. L_IE routing closes the remaining 1-5pp rounding/algorithmic noise on the columns that DO display, via direct read of OOTP's `<save>/import_export/*.csv` roster exports. New `src/diamond/schema/l_ie.py` (~700 LOC) ingests 21 `lie_*` tables (org-agnostic suffix discovery; matches both Sox + Padres prefix conventions; DROP-and-rebuild on every refresh — point-in-time snapshot semantics, unlike L_REF which is frozen). Per-discipline unified views `v_lie_player_{batting,pitching,fielding}_display` parse OOTP display strings (`.250`, `9.1%`, `$28 800 000`, `1 (auto.)`, `-`) to typed numerics ready to COALESCE in API CTEs. Stamps `_diamond_settings.l_ie.*` provenance (timestamp, source dir, per-file rows, missing list). Wired into `rebuild_l1_l2` after L3. **API routing live for**: `_fetch_advanced_batting` + `_fetch_advanced_pitching` in `routes/players.py`. CTE pattern derives a `latest_year` + `ie_eligible` (single-stint players only — multi-stint years keep per-stint derivations to avoid mismatching IE's per-player aggregate against our per-(year, level) grain). View-existence gated by new `_view_exists` helper so warehouses predating L_IE fall through to derivations without erroring. **Verified on Padres save**: Jackson Merrill 2028 derived wOBA=0.350 OPS+=124 bWAR=3.6 → L_IE-routed wOBA=0.343 OPS+=125 bWAR=3.6 (bit-for-bit OOTP IE match). Pre-routing gap distribution on 98 single-stint MLB batters: OPS+ median 2pts max 25; FIP median 0.02 max 0.82; ERA+ median 3pts max 186 — all eliminated by routing. Coverage 98 batters + 114 pitchers (the current-year org roster). Smoke passes. **Remaining slices (deferred — diminishing returns)**: basic batting/pitching stints (already 99%+ exact), fielding (view ready, not wired), roster + leaderboards + cockpit (same pattern), per-position spray %s / BAR / Statcast cells re-enable (column resurrection). See `docs/DATA_QUIRKS.md` L_IE entry + `docs/BACKLOG.md` Phase 4b deferred-work section for full receipts.
+
+**2026-05-10 (final) shipped the display ditch (D41).** Per the policy "any column where Diamond's value can differ from OOTP IE by more than rounding (≥ ~5pp) is hidden from the UI." Two commits in sequence: (1) **Spray ditch + chart clipping fix** (`cd422af`) — fixed the StadiumSprayChart hit_xy clipping bug (`[0,130]` → `[0,255]`, was mis-rendering ~30% of events on the oppo foul line); dropped Pull%/Cent%/Oppo% cells from the player page situational table (`hit_xy` doesn't carry per-batter spray info — `r=0.17` against IE Pull%, MAE 7pp ceiling). (2) **Full ditch** (`169ad0c`) — removed xstats triplet (`xwoba_bip`/`xba_bip`/`xslg_bip`) from `PlayerAdvancedBattingRow`/`PitchingRow` schemas, dropped roster Contact mode from 6 → 2 cols (kept Max EV @ 97% + HH% @ 94-95%, dropped BIP/Avg EV/Brl%/SS%), dropped AVG_EV/BARREL_PCT/SWEET_SPOT_PCT/xBA/xSLG/xwOBA from the leaderboards catalog (Chart Builder auto-inherits). L3 tables stay materialized as drift-watch + invariants-watchdog inputs. Reconcile ColSpec notes tagged `SEALED Phase 4a-ext-3` so future sessions don't re-litigate. **Net effect**: every number in the user-facing app is now bit-for-bit OOTP-matching within rounding. See `DATA_QUIRKS.md` for the full ledger of what's dropped + why.
 
 **2026-05-10 (earlier) shipped Phase 4a-extended-3 — OOTP barrel cone reverse-engineered.** User pushed back on the earlier "structural" labeling for barrel rate: "we literally solved barrel rate though?" Git-history audit showed we never had it at 100%, only iterative empirical re-fits — but `lref_xiso_table` was ingested in 2026-05-14 L_REF Slice 1 with DATA_NOTES claiming it would "replace our barrel/SS/HH classification," then the actual reverse-engineering was never done. Phase 4a-ext-3 did it. Inspection: xiso is a (LSA × outcome) histogram, **not** a (LA, EV) → LSA lookup. The classifier must be derived from per-player IE BAR ground truth. Grid-searched cone shapes against 74-batter Padres corpus: best fit **`EV ≥ 97 AND LA in [26-(EV-97), 30+(EV-97)]`, capped at LA [8, 50]** — centered at LA=28, half-width 2 at EV=97, expanding 1°/mph. Almost identical to Baseball Savant canonical (which uses EV ≥ 98) — OOTP only differs by 1 mph lower floor. Result: BAR 40% → **67% (+27pp)**, BAR% 74% → **94% (+20pp)**. Applied to both `audit/reconcile.py:BATTING_SUPERSTATS_CTE` and `schema/l3_advanced.py:_STATCAST_BARREL_EXPR` (L3 production). Soft/Med/Solid stay on EV cutoffs — tested LSA bands {1+2}/{3+4}/{5+6} at MAE 12.4/5.3/8.8 vs current EV-cutoff (76, 95) at MAE 1.7/2.1/1.2; LSA-band hypothesis rejected. Commit `903810f`.
 
@@ -333,6 +335,37 @@ L_REF (Slice 1 shipped 2026-05-14, D26+D27) — 27 tables / 575,587 rows
                     hof/index.json + plaque PNGs (real HoF photos)
                     colors/*.xml (per-team brand palettes)
                     logos/ + ballcaps/ + jerseys/ assets
+L_IE (Slice 1 shipped 2026-05-14, D41 routing layer) — 21 tables / 5,649 rows
+                  per-save IE display values from
+                  `<save>/import_export/*_organization_-_roster_*.csv`.
+                  Org-agnostic suffix discovery (matches both Sox +
+                  Padres prefix conventions). DROP-and-rebuild on every
+                  warehouse refresh (NOT frozen like L_REF — these are
+                  point-in-time snapshots of OOTP UI exports).
+                  Implementation in `src/diamond/schema/l_ie.py`;
+                  provenance in `_diamond_settings.l_ie.{last_ingest_ts,
+                  source_dir, table_count, files_json, missing_json}`.
+                  21 lie_* tables (one per import_export CSV):
+                    lie_default, lie_popularity_info,
+                    lie_personality___morale, lie_financial_info,
+                    lie_batting_stats_{1,2}, lie_batting_superstats_{1,2},
+                    lie_batting_ratings, lie_batting_potential,
+                    lie_pitching_stats_{1,2}, lie_pitching_superstats_{1,2},
+                    lie_pitching_ratings, lie_pitching_potential,
+                    lie_individual_pitch_ratings, _potential,
+                    lie_fielding_stats, lie_fielding_ratings,
+                    lie_position_ratings.
+                  Plus 3 unified views with parsed numerics
+                  (TRY_CAST off raw VARCHAR display strings, ready
+                  to COALESCE in API CTEs):
+                    v_lie_player_batting_display  — 38 cols
+                    v_lie_player_pitching_display — 26 cols
+                    v_lie_player_fielding_display — 19 cols.
+                  Wired into `_fetch_advanced_batting` +
+                  `_fetch_advanced_pitching`: COALESCE swap-in for
+                  single-stint org-roster players in the latest year.
+                  View-existence gated by `_view_exists` for
+                  L_IE-less warehouses.
 ```
 
 The audit layer (Phase 1) is **scaffolding**. Advanced stats now run against the warehouse via `f_player_season_advanced_*`; the formulas in `src/diamond/advanced/` remain canonical for the audit harness + ad-hoc Polars/SQL paths.

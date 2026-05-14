@@ -138,8 +138,18 @@ Unblocks: "who was leading on June 1?"
 
 Three follow-up tracks that could lift the display-ditched columns back into the UI later. None blocking — the app is in a strong honest state without them.
 
-- [ ] **L_IE display routing** (~2-3 hrs)
-  Ingest `<save>/import_export/*.csv` (OOTP-generated IE roster exports) into a new `lie_*` warehouse layer. API routes prefer `lie_*` values when present; fall back to derivations otherwise. **Coverage**: ~80% of the app (player page, roster page, cockpit spotlights, movements, pressure, compare cards) — anything org-roster-scoped. **Caveat**: user has to manually export rosters in OOTP after each sim advance (1 click). Diamond can detect stale exports via file mtime and surface a "needs refresh" badge. **Net effect**: every value in the app becomes bit-for-bit identical to what OOTP shows in-game, for org-roster players. Re-enables spray %s, BAR count, Soft%/Avg%/Solid%/EV/BIP cells, IFH%, BUH%, xstats batting+pitching (all sourced directly from IE rather than computed). **Closes**: the D41 display-ditch limitation for org-scoped surfaces.
+- [x] **L_IE display routing — Slice 1 (advanced stats)** ✅ **DONE 2026-05-14** (~2 hrs)
+  Shipped `src/diamond/schema/l_ie.py` — 21 `lie_*` tables (one per `<save>/import_export/*_organization_-_roster_*.csv`), org-agnostic suffix discovery, DROP-and-rebuild on every warehouse refresh. Per-discipline unified views `v_lie_player_{batting,pitching,fielding}_display` parse OOTP display strings (`.250`, `9.1%`, `$28 800 000`) → typed numerics ready to COALESCE in API CTEs. Wired into `rebuild_l1_l2` after L3.
+
+  **API routing**: `_fetch_advanced_batting` / `_fetch_advanced_pitching` in `routes/players.py` LEFT JOIN the unified views; CTE-derived `ie_eligible` filter restricts swap-in to **single-stint players, latest year only** (multi-stint years keep per-stint derivations to avoid mismatching IE's per-player aggregate against our per-(year, level) grain). View-existence is gated by `_view_exists` so warehouses predating L_IE fall through to derivations without erroring.
+
+  **Verified on The Fathers (Padres) save** — 21 tables × 269 rows ingested. Jackson Merrill 2028: derived wOBA=0.350 OPS+=124 bWAR=3.6 → **L_IE-routed wOBA=0.343 OPS+=125 bWAR=3.6 (bit-for-bit OOTP IE match)**. Gap distribution on 98 single-stint MLB batters in 2028: OPS+ median 2pts max 25, FIP median 0.02 max 0.82, ERA+ median 3pts max 186 — all eliminated by routing. Coverage 98 batters + 114 pitchers (the current-year org roster).
+
+  **Remaining slices** (Slice 2, deferred — diminishing returns):
+  - Route basic batting/pitching stints (AVG/OBP/SLG/ERA/WHIP). Already 99%+ exact via Python computation; routing closes the last single rounding edge case (max gap 0.001 in spot check).
+  - Route fielding stats (PCT/RNG/ZR/EFF/CERA). Verified routable via `v_lie_player_fielding_display` view; not yet wired into `_fetch_fielding_rows`.
+  - Route roster + leaderboards + cockpit. Same view, same eligibility predicate — wiring pattern locked, just hasn't been applied yet.
+  - Per-position spray %s / BAR count / Statcast EV cells / IFH% / BUH%. Routable, but each is its own column on the player page (currently dropped per D41). Re-enable requires both routing + frontend column resurrection.
 
 - [ ] **Pitching xstats re-enable** (~30 min)
   Switch player page pitching Advanced to expose `xwoba` / `xba` / `xslg` (SUM/PA scaled values in `f_player_season_xstats_pitching`) instead of the dropped per-BIP averages. Match: 96-97% (rounding-grade) — would not violate D41 policy. **Why not yet**: schema additions + frontend wiring. Trivial work but not urgent. Batting side stays out (89% match — under threshold; needs the per-player calibration below).

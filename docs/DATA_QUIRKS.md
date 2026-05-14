@@ -417,19 +417,31 @@ mislead. Always test the prior data before believing the prior hypothesis.
 Things that could lift the dropped columns back into the UI later. **None
 of these are blocking** — the app is in a strong, honest state without them.
 
-### L_IE display routing (~2-3 hrs)
+### L_IE display routing — Slice 1 ✅ DONE 2026-05-14
 
-- **What**: ingest `<save>/import_export/*.csv` (OOTP-generated IE roster
-  exports) into a new `lie_*` warehouse layer. API routes prefer `lie_*`
-  values when present; fall back to derivations otherwise.
-- **Coverage**: ~80% of the app (player page, roster page, cockpit
-  spotlights, movements, pressure board, compare cards) — anything
-  org-roster-scoped.
-- **Caveat**: user has to manually export rosters in OOTP after each sim
-  advance (1 click, 3 seconds). Diamond can detect stale exports via file
-  mtime and surface a "needs refresh" badge.
-- **Net effect**: every value in the app becomes bit-for-bit identical to
-  what OOTP shows in-game, for org-roster players.
+- **Status**: SHIPPED. `src/diamond/schema/l_ie.py` ingests 21 `lie_*`
+  tables (one per `<save>/import_export/*_organization_-_roster_*.csv`).
+  Org-agnostic suffix discovery; DROP-and-rebuild on every warehouse
+  refresh (point-in-time snapshot). Per-discipline unified views
+  `v_lie_player_{batting,pitching,fielding}_display` parse OOTP display
+  strings to typed numerics ready to COALESCE in API CTEs. Wired into
+  `rebuild_l1_l2` after L3 build.
+- **Routing live for**: `_fetch_advanced_batting` + `_fetch_advanced_pitching`
+  in `routes/players.py` — single-stint players, latest year only.
+  Multi-stint years keep per-stint derivations to avoid mismatching
+  IE's per-player aggregate against our per-(year, level) grain.
+  View-existence gated by `_view_exists` so warehouses predating L_IE
+  fall through to derivations without erroring.
+- **Verified**: Jackson Merrill 2028 derived wOBA=0.350 OPS+=124 bWAR=3.6
+  → **L_IE-routed wOBA=0.343 OPS+=125 bWAR=3.6 (bit-for-bit OOTP IE match)**.
+  Padres save: 98 batters + 114 pitchers gain bit-for-bit accuracy on
+  latest-year advanced stats. Pre-routing gap distribution: OPS+ median
+  2 max 25, FIP median 0.02 max 0.82, ERA+ median 3 max 186 — all eliminated.
+- **Remaining slices** (deferred — diminishing returns):
+  - Basic batting/pitching stints (already 99%+ exact via Python computation).
+  - Fielding stats (view ready, not yet wired into `_fetch_fielding_rows`).
+  - Roster + leaderboards + cockpit (same eligibility predicate; trivial wiring).
+  - Per-position spray %s / BAR count / Statcast cells / IFH% / BUH% (column resurrection on the frontend; values exist in L_IE views).
 
 ### Pitching xstats re-enable (~30 min)
 

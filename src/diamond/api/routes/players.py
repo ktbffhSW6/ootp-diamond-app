@@ -70,6 +70,22 @@ _THROWS = {1: "R", 2: "L"}
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _view_exists(con: duckdb.DuckDBPyConnection, view_name: str) -> bool:
+    """Check whether a view exists in the active warehouse schema.
+
+    Used to gate the L_IE display-routing JOIN in ``_fetch_advanced_*``
+    so warehouses predating the L_IE layer (no ``v_lie_*`` views) still
+    serve API requests without erroring. The next ``diamond ingest``
+    materializes the views and the routing kicks in automatically.
+    """
+    row = con.execute(
+        "SELECT 1 FROM information_schema.views "
+        "WHERE table_schema = 'main' AND table_name = ? LIMIT 1",
+        [view_name],
+    ).fetchone()
+    return row is not None
+
+
 def _safe_div(num: float, denom: float) -> float | None:
     """Division returning None on zero denominator, rounded to 3 places.
 
@@ -364,14 +380,20 @@ def _fetch_advanced_batting(
     See `src/diamond/schema/l3_advanced.py` for the grain rationale —
     one row per (player, year, league_id, level_id), with park factor
     and league constants resolved at build time.
+
+    **L_IE display routing (D41)**: for single-stint org-roster players,
+    the latest-year row's OPS+ / wOBA / WAR are pulled from
+    ``v_lie_player_batting_display`` — bit-for-bit OOTP IE values. Prior
+    years and multi-stint years fall through to derivations. View
+    materialized by ``src/diamond/schema/l_ie.py``. The view absence
+    (warehouse predates L_IE) is handled defensively — the join is
+    skipped and derivations come through unchanged.
     """
-    # Phase 4a-extended-3: xstats JOIN dropped — per-BIP averages aren't
-    # surfaced on the player page anymore. The L3 table stays for
-    # invariants / future L_IE display routing.
     has_leverage = con.execute(
         "SELECT COUNT(*) > 0 FROM information_schema.tables "
         "WHERE table_name = 'f_player_season_leverage_batting'"
     ).fetchone()[0]
+    has_lie = _view_exists(con, "v_lie_player_batting_display")
     lev_select = (
         "lv.wpa, lv.re24"
         if has_leverage else "NULL AS wpa, NULL AS re24"
@@ -382,19 +404,65 @@ def _fetch_advanced_batting(
         "AND lv.league_id = f.league_id AND lv.level_id = f.level_id"
         if has_leverage else ""
     )
+    if has_lie:
+        ie_cte = """
+        WITH latest_year AS (
+            SELECT MAX(year) AS yr FROM f_player_season_advanced_batting
+        ),
+        ie_eligible AS (
+            -- Single-stint players in the latest year: safe to swap-in
+            -- IE per-player aggregates without losing per-stint fidelity.
+            SELECT player_id
+            FROM f_player_season_advanced_batting
+            WHERE year = (SELECT yr FROM latest_year)
+            GROUP BY player_id
+            HAVING COUNT(*) = 1
+        )
+        """
+        woba_select = (
+            "COALESCE(CASE WHEN f.year = (SELECT yr FROM latest_year) "
+            "  AND f.player_id IN (SELECT player_id FROM ie_eligible) "
+            "  THEN lie.woba_ie END, f.woba) AS woba"
+        )
+        opsplus_select = (
+            "COALESCE(CASE WHEN f.year = (SELECT yr FROM latest_year) "
+            "  AND f.player_id IN (SELECT player_id FROM ie_eligible) "
+            "  THEN lie.ops_plus_ie END, f.ops_plus) AS ops_plus"
+        )
+        bwar_select = (
+            "COALESCE(CASE WHEN f.year = (SELECT yr FROM latest_year) "
+            "  AND f.player_id IN (SELECT player_id FROM ie_eligible) "
+            "  THEN lie.war_ie END, f.b_war) AS b_war"
+        )
+        ie_join = (
+            "LEFT JOIN v_lie_player_batting_display lie "
+            "ON lie.player_id = f.player_id"
+        )
+    else:
+        ie_cte = ""
+        woba_select = "f.woba"
+        opsplus_select = "f.ops_plus"
+        bwar_select = "f.b_war"
+        ie_join = ""
     rows = con.execute(
         f"""
+        {ie_cte}
         SELECT
             f.year, f.league_id, f.level_id,
             l.abbr            AS league_abbr,
             (f.year - EXTRACT(YEAR FROM pl.date_of_birth))::INTEGER AS age,
             CAST(f.pa AS BIGINT) AS pa,
-            f.woba, f.wraa, f.wrc, f.wrc_plus, f.ops_plus, f.o_war, f.b_war,
+            {woba_select},
+            f.wraa, f.wrc, f.wrc_plus,
+            {opsplus_select},
+            f.o_war,
+            {bwar_select},
             f.park_avg,
             {lev_select}
         FROM f_player_season_advanced_batting f
         LEFT JOIN leagues         l  ON l.league_id  = f.league_id
         LEFT JOIN players_current pl ON pl.player_id = f.player_id
+        {ie_join}
         {lev_join}
         WHERE f.player_id = ?
         ORDER BY f.year, f.level_id, f.league_id
@@ -435,12 +503,17 @@ def _fetch_advanced_pitching(
 
     Filtered server-side to outs >= 30 (10 IP) by the L3 builder, so
     short-cup-of-coffee pitcher seasons don't surface here.
+
+    **L_IE display routing (D41)**: for single-stint org-roster pitchers,
+    the latest-year row's FIP / ERA+ / WAR are pulled from
+    ``v_lie_player_pitching_display`` — bit-for-bit OOTP IE values. The
+    view absence (warehouse predates L_IE) is handled defensively.
     """
-    # Phase 4a-extended-3: xstats JOIN dropped (same as batting side).
     has_leverage = con.execute(
         "SELECT COUNT(*) > 0 FROM information_schema.tables "
         "WHERE table_name = 'f_player_season_leverage_pitching'"
     ).fetchone()[0]
+    has_lie = _view_exists(con, "v_lie_player_pitching_display")
     lev_select = (
         "lv.wpa, lv.li, lv.re24, lv.clutch"
         if has_leverage else "NULL AS wpa, NULL AS li, NULL AS re24, NULL AS clutch"
@@ -451,19 +524,64 @@ def _fetch_advanced_pitching(
         "AND lv.league_id = f.league_id AND lv.level_id = f.level_id"
         if has_leverage else ""
     )
+    if has_lie:
+        ie_cte = """
+        WITH latest_year AS (
+            SELECT MAX(year) AS yr FROM f_player_season_advanced_pitching
+        ),
+        ie_eligible AS (
+            SELECT player_id
+            FROM f_player_season_advanced_pitching
+            WHERE year = (SELECT yr FROM latest_year)
+            GROUP BY player_id
+            HAVING COUNT(*) = 1
+        )
+        """
+        fip_select = (
+            "COALESCE(CASE WHEN f.year = (SELECT yr FROM latest_year) "
+            "  AND f.player_id IN (SELECT player_id FROM ie_eligible) "
+            "  THEN lie.fip_ie END, f.fip) AS fip"
+        )
+        eraplus_select = (
+            "COALESCE(CASE WHEN f.year = (SELECT yr FROM latest_year) "
+            "  AND f.player_id IN (SELECT player_id FROM ie_eligible) "
+            "  THEN lie.era_plus_ie END, f.era_plus) AS era_plus"
+        )
+        pwar_select = (
+            "COALESCE(CASE WHEN f.year = (SELECT yr FROM latest_year) "
+            "  AND f.player_id IN (SELECT player_id FROM ie_eligible) "
+            "  THEN lie.war_ie END, f.p_war) AS p_war"
+        )
+        ie_join = (
+            "LEFT JOIN v_lie_player_pitching_display lie "
+            "ON lie.player_id = f.player_id"
+        )
+    else:
+        ie_cte = ""
+        fip_select = "f.fip"
+        eraplus_select = "f.era_plus"
+        pwar_select = "f.p_war"
+        ie_join = ""
     rows = con.execute(
         f"""
+        {ie_cte}
         SELECT
             f.year, f.league_id, f.level_id,
             l.abbr            AS league_abbr,
             (f.year - EXTRACT(YEAR FROM pl.date_of_birth))::INTEGER AS age,
             CAST(f.outs AS BIGINT) AS outs,
-            f.ip_display, f.fip, f.era_plus, f.pit_war, f.p_war, f.p_ra9_war,
+            f.ip_display,
+            {fip_select},
+            {eraplus_select},
+            f.pit_war,
+            {pwar_select},
+            f.p_ra9_war,
             f.park_avg,
             {lev_select}
         FROM f_player_season_advanced_pitching f
         LEFT JOIN leagues         l  ON l.league_id  = f.league_id
         LEFT JOIN players_current pl ON pl.player_id = f.player_id
+        {ie_join}
         {lev_join}
         WHERE f.player_id = ?
         ORDER BY f.year, f.level_id, f.league_id
