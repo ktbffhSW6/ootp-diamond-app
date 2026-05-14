@@ -1977,3 +1977,99 @@ A "Diamond-derived" badge or wider tolerance band would have preserved the colum
 
 - `cd422af` — spray drop + chart clipping fix
 - `169ad0c` — full ditch (xstats + Contact mode + leaderboards)
+
+
+## D42 — L_IE display routing layer (per-save IE-canonical display values)
+
+**Date**: 2026-05-14
+**Status**: Committed. Slice 1 shipped (advanced bat/pit). Remaining slices deferred.
+
+**Context**: D41 (display ditch) dropped every UI column where Diamond could differ from OOTP IE by more than rounding. That left ~85% of the user-facing surface displaying values 95+% IE-matching — within rounding. But the remaining ~5% rounding noise on the columns that DO display creates inconsistent user experience: Diamond OPS+=124 vs OOTP IE OPS+=125 for Jackson Merrill 2028, etc. Per the user invariant **"Any number you see in the app matches what OOTP shows in the game, within rounding"** — even a 1-point OPS+ gap erodes trust.
+
+### Decision
+
+Ingest the OOTP-generated `<save>/import_export/*_organization_-_roster_*.csv` files into a per-save **L_IE warehouse layer** (21 `lie_*` tables, 5,649 rows on Padres). Add an API display-routing layer that prefers L_IE values for eligible players, falls back to derivations otherwise. **Bit-for-bit OOTP IE for org-roster latest-year**; honest L3 derivation for everyone else.
+
+### Architecture
+
+- **21 lie_\* tables**, one per import_export CSV. DROP-and-rebuild on every warehouse refresh (unlike L_REF which is frozen — these are POINT-IN-TIME snapshots of OOTP UI exports; user must manually re-export via Reports → Roster Exports in OOTP UI).
+- **Org-agnostic suffix discovery**: `*_organization_-_roster_*.csv` glob matches both Sox + Padres prefix conventions.
+- **Three unified views** parse OOTP display strings to typed numerics:
+  - `v_lie_player_batting_display` — 38 cols
+  - `v_lie_player_pitching_display` — 26 cols
+  - `v_lie_player_fielding_display` — 19 cols
+
+  Parses `.250` → 0.250, `9.1%` → 9.1 (whole-percent scale), `$28 800 000` → 28800000, `1 (auto.)` → 1, `-` / `—` → NULL.
+- **API CTE routing pattern**: derive `latest_year` + `ie_eligible` (single-stint players in latest year). LEFT JOIN the unified view; COALESCE per-column. View-existence gated by `_view_exists` helper so warehouses predating L_IE fall through to derivations without erroring.
+- **Provenance stamp**: `_diamond_settings.l_ie.{last_ingest_ts, source_dir, table_count, files_json, missing_json}` on every refresh.
+
+### Why single-stint-only eligibility
+
+IE exports per-player AGGREGATE rows. A player with two stints (AAA → MLB mid-season) appears once in IE with combined totals. Our advanced fact table is per-(year, league, level). Swapping IE aggregate into ONE specific stint row would be wrong. **Single-stint predicate** restricts routing to players with exactly one stint in the latest year — covers 98% of active org-roster batters and 100% of MLB starters. Multi-stint years keep per-stint L3 derivations (correct semantic).
+
+### Slice 1 outcome (Padres save, 2026-05-14)
+
+- 21 lie_\* tables × 269 rows ingested.
+- API routing live for `_fetch_advanced_batting` + `_fetch_advanced_pitching`.
+- Jackson Merrill 2028: derived wOBA=0.350 OPS+=124 bWAR=3.6 → **L_IE-routed wOBA=0.343 OPS+=125 bWAR=3.6** (bit-for-bit OOTP IE).
+- Gap distribution on 98 single-stint MLB batters: OPS+ median 2pts max 25, FIP median 0.02 max 0.82, ERA+ median 3pts max 186 — **all eliminated**.
+
+### Deferred slices (diminishing returns)
+
+- **Basic batting/pitching stints** (AVG/OBP/SLG/ERA/WHIP) — already 99+% exact via Python computation. Routing closes the rare 0.001 rounding edge case.
+- **Fielding stats** (PCT/RNG/ZR/EFF/CERA) — view ready, not yet wired into `_fetch_fielding_rows`.
+- **Roster + leaderboards + cockpit** — same eligibility predicate, trivial wiring.
+- **Per-position spray %s / BAR count / Statcast cells / IFH% / BUH%** — routable via L_IE, but each is its own column dropped by D41 on the frontend. Re-enable requires column resurrection on the frontend, not just routing.
+
+### Wiring
+
+- New file: `src/diamond/schema/l_ie.py` (~700 LOC).
+- Wired into `rebuild_l1_l2` between L3 and the D40 invariants watchdog.
+- API routing in `src/diamond/api/routes/players.py` — `_fetch_advanced_batting` + `_fetch_advanced_pitching` use a CTE pattern: `WITH latest_year AS ..., ie_eligible AS (single-stint check)`, then `LEFT JOIN v_lie_player_*_display` + COALESCE.
+- New helper `_view_exists(con, view_name)` defensively gates the L_IE JOIN — pre-L_IE warehouses still serve API requests.
+
+### Commit
+
+- `521cc22` — L_IE Slice 1: bit-for-bit OOTP IE values on advanced bat/pit (D41)
+
+
+## D43 — Career-stint event tables use team-scope filter (not player-scope)
+
+**Date**: 2026-05-14
+**Status**: Committed (commit `8137ab3`).
+**Context**: The D40 invariants watchdog (D40 + commit `251a0dd`) on first run flagged 7 real `team_pa_count` failures on the Padres save — team 274 in 2026 L4 was off by 79 PA vs the OOTP team_history cache. Investigation traced to a fundamental scope-semantics gap.
+
+### The bug
+
+`_scoped_players` is built from `l0_players` (the current-roster SNAPSHOT) where `team_id IN _scoped_teams`. Retired/released players have `team_id = 0` in the snapshot. Their PRIOR stints on a scoped team (e.g. Raphael Gladu, player 25396, 79 PA on team 274 in 2026 L4) are dropped because they fail the snapshot filter.
+
+The L1 event tables `players_career_{batting,pitching,fielding}_event` used `WHERE player_id IN (SELECT player_id FROM _scoped_players)` as their scope filter — so these retired-player stints never reached `f_player_season_batting`/`_pitching`/`_fielding`. Team aggregates lost their PA, the watchdog flagged it.
+
+### Decision
+
+Switch the three `players_career_*_event` L1 specs from `_SCOPE_PLAYER` to `_SCOPE_TEAM` (`WHERE team_id IN _scoped_teams`). Now **every stint on a scoped team passes through, regardless of the player's current roster status**. Two consequences:
+
+1. **Captures historical roster members** — retired players, traded-away players, foreign-league-exited players whose stint counts toward team totals. Resolves the 7 reds.
+2. **Correctly EXCLUDES rival-team stints** of currently-rostered players. Manny Machado mid-2027 stint on the Yankees (if he had one) would NOT appear under team_id=Yankees in our aggregate even though he is currently a Padre. This is the more sane semantic — `f_player_season_batting WHERE team_id=Padres` should mean "stints on the Padres," not "all stints of players currently on the Padres."
+
+### Trade-off accepted
+
+`f_player_career` now picks up Lahman-imported historical players with stints on scoped teams (Babe Ruth on Boston, etc.). Pre-fix: 9,252 rows; post-fix: 109,810 rows (~8x growth). The Lahman entries are legitimate historical roster members of scoped teams, not spurious data. Storage cost is ~10MB. Smoke assertion updated to compare against the union of season-fact player_ids instead of `_scoped_players` (which still represents "current snapshot org" for UI consumers).
+
+### `_scoped_players` itself unchanged
+
+The snapshot-based construction stays for UI consumers — Cockpit "Players in scope" count, save endpoint, etc. The widening only happens at the career-stint event-table filter level. This preserves the UI semantic ("how many players are CURRENTLY on the org") while fixing the aggregation semantic ("which stints belong to this team-year").
+
+### Outcome
+
+- Watchdog: **99.8% → 100.0% green** (4,553 / 4,554 invariants pass).
+- The remaining 1 red is OOTP's own L0-vs-team_history -2 PA quirk on Boston 2026 MLB — documented as informational, not a Diamond bug.
+- Verified: Raphael Gladu's 79 PA now reaches f_player_season_batting for team=274 y=2026.
+
+### Watchdog as forcing function
+
+D40 was designed to surface this class of bug. The first run of the watchdog FOUND the bug we didn't know we had, traced it to a single fix point, validated the fix. **This is the watchdog working as intended.** Future regressions on this class of issue will fail loud rather than silently drift.
+
+### Commit
+
+- `8137ab3` — Fix: switch career-stint events to team_id scope (D40 watchdog finding)

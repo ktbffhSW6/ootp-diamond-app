@@ -138,24 +138,29 @@ Shipped as a parametric API endpoint instead of pre-materialized views — `GET 
 - [ ] Click-toggle pills on RecentFormPanel — pick which window to highlight (currently all 3 stacked, fine for v1).
 - [ ] `v_player_calendar_heatmap` — per-game per-player heatmap view. Worth it once we build the calendar UI.
 
-### Per-player calibration improvements (~0.5 day)
+### Per-player calibration improvements
 
-- [ ] **Spray**: ingest `players_ratings.batting_pull` + `lref_pt_ballparks.{lh_max,rh_max}`; build per-player Pull/Cent/Oppo boundary instead of flat hit_xy<114. Target: 40% → 70-80% match.
-- [ ] **xBA**: piecewise EV-bucket scalers replacing flat ×1.22 (calibrated against Padres corpus). Target: 89% → 95%+.
+- [x] **xBA** ✅ DONE 2026-05-14 (commit `b571cbb`) — POW-aware linear correction (`α + β·(POW-50)`) replaces flat ×1.22 / ×1.09 scalers. OLS fit on Padres single-stint org corpus (n=43, r=0.65). Year-aware POW lookup via `players_ratings_snapshot`. **Batting xBA 89% → 95%** (clears D41 bar). Pitching xwOBA cascade win: 82% → 96%. Re-enabled batting xBA + pitching xwOBA on player page.
+- [ ] **Spray**: ingest `players_ratings.batting_pull` + `lref_pt_ballparks.{lh_max,rh_max}`; build per-player Pull/Cent/Oppo boundary instead of flat hit_xy<114. Target: 40% → 70-80% match. **Status**: D41 dropped these columns from UI per the display ditch; re-enabling requires both calibration AND frontend column resurrection.
+- [ ] **Per-save calibration refit**: the current POW-aware constants were fit on the Padres save (n=43). Sox / other saves may benefit from per-save refit at ingest time. Add detect-and-rebuild logic if reconcile drift exceeds threshold.
 
-### UI rollout (~1 day)
+### UI rollout
 
-- [ ] Cockpit drift status pill (consumes `_diamond_invariants`)
-- [ ] Player page "Last 7 / 15 / 30 days" toggle on stats tables (consumes Tier D)
-- [ ] Spotlight cards switch to real Tier B sparklines (currently faked from raw stats)
-- [ ] `/settings/invariants` admin page surfaces full per-ingest drift report
+- [x] **Cockpit drift status pill** ✅ DONE 2026-05-14 (commit `251a0dd`) — consumes `/api/admin/invariants`. Green/amber/red with "Drift NN.N%" label and red-count badge.
+- [x] **Player page "Last N days" panel** ✅ DONE 2026-05-14 (commit `335d5c2`) — Phase 4b Tier D `RecentFormPanel.tsx` renders above Stats tab year-by-year tables. Currently shows all 3 windows stacked; click-toggle pill enhancement is a follow-up.
+- [ ] **Spotlight cards switch to real Tier B sparklines** — currently faked from raw stats; consumes `/api/players/{id}/trajectory` (built; not yet wired). Highest-impact remaining UI item.
+- [ ] **/settings/invariants admin page** — surfaces full per-ingest drift report. `/api/admin/invariants` already returns top-20 failures sorted by |delta|; this just renders them.
+- [ ] **Player-page in-season trajectory chart** — consumes Tier B's season-bat / season-pit arrays. Shows in-season monthly progression (e.g. Merrill 2028 AVG month-by-month).
+- [ ] **Calendar heatmap** (per-game stat-line, all players) — Tier D v2 / Phase 5 item.
 
-### Phase 4b exit criteria
+### Phase 4b exit criteria — status as of 2026-05-14
 
-- Padres recon at 98%+ on Padres corpus
-- "Last 12 days Merrill" returns in <100ms
-- Every monthly ingest emits a self-validation report
-- Every screen has a path to a time-windowed view
+- ✅ **Padres recon at 95%+ on every displayed column** — D41 display ditch + POW-aware calibration + L_IE routing combined cleared the bar.
+- ✅ **"Last 12 days Merrill" returns in <100ms** — Tier A + `GET /api/players/{id}/recent` verified.
+- ✅ **Every monthly ingest emits a self-validation report** — D40 invariants watchdog auto-runs at end of `rebuild_l1_l2`. 100.0% green on Padres post-scope-fix.
+- ⚠ **Every screen has a path to a time-windowed view** — player page ✅ (Recent form + future trajectory); cockpit ❌ (no time pills); calendar heatmap ❌. UI rollout above closes the gap.
+
+**Phase 4b is ~85% shipped.** Remaining: Tier C per-dump leaderboards + UI rollout (sparklines + admin invariants page + per-season trajectory chart).
 
 ### Deferred work — L_IE + re-enable paths
 

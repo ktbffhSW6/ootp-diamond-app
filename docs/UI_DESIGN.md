@@ -112,6 +112,12 @@ Your org, today. Dashboard-style, fast-loading.
 - **Anomaly flags** (Smart-tier AI) — "3 players regressed sharply in
   last 14 days," "Mayer wRC+ split improved to 142 vs RHP"
 - **Last-sync indicator** (footer): warehouse status, dump count, latest dump
+- **Drift pill** *(Phase 4b D40, shipped 2026-05-14, commit `251a0dd`)* —
+  header chip rendering "Drift NN.N%" colored green / amber / red based on
+  the D40 invariants watchdog's overall.status. Adds a `· NR` red-count
+  badge when reds > 0. Tooltips show the per-metric tally + last-run
+  dump date. Consumes `/api/admin/invariants`. Hidden gracefully on
+  warehouses that predate the watchdog.
 
 Shape inspired by: Bref team page + Fangraphs depth charts + a touch of
 Bloomberg ticker for anomalies.
@@ -127,8 +133,20 @@ against the player's level/league/position cohort, not MLB-wide.
 **Tabbed sections** (sticky tabs):
 - **Stats** — career table + season splits (vs L/R, home/away, by month,
   RISP, late-close)
+  - **Recent form panel** *(Phase 4b Tier D, shipped 2026-05-14, commit
+    `335d5c2`)* — sits above the year-by-year tables. Renders both batting
+    and pitching aggregates over rolling calendar-day windows (default 7d
+    / 15d / 30d). Anchor = player's most recent regular-season game (NOT
+    today — works for retired players + mid-season views). Localized date
+    range display ("Jul 24-31, 2028"). "No games in window" empty state.
+    Component: `web/components/RecentFormPanel.tsx`. Consumes
+    `/api/players/{id}/recent`.
 - **Charts** — embedded chart instances (powered by the chart builder):
   spray, EV/LA scatter, career trajectory
+  - **Future**: per-dump trajectory chart (Phase 4b Tier B follow-up) —
+    consumes `/api/players/{id}/trajectory` season_bat / season_pit arrays.
+    Shows in-season month-by-month progression (e.g. Merrill 2028 AVG
+    .231 → .290 → .284 → .282 → .288).
 - **Game log** — filterable date range, expandable game detail
 - **Comparisons** — Bref-style similarity scores + side-by-side picker
 - **Scouting** — current ratings + ratings evolution over time + scouting

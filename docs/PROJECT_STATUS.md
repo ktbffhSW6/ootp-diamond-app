@@ -4,9 +4,24 @@
 > state of the project, what was last done, and what is most likely next.
 > Update this file at the end of every substantive session.
 
-**Last updated**: 2026-05-14 (Phase 4b in progress) — **Tier A + Tier D shipped on top of the L_IE / xstats-calibration chain.** Phase 4b Tier A (`f_player_game_batting` 1.1M rows + `f_player_game_pitching` 355K rows, commit `d7a9b7c`) materializes per-(player, year, game) stat lines from OOTP's monthly cumulative game logs — cross-dump deduped, `(player_id, date)`-sorted, JOIN-denormalized to canonical game date. Phase 4b Tier D (commit `335d5c2`) consumes them: new `GET /api/players/{id}/recent?windows=7,15,30` returns aggregated batting + pitching lines over each calendar-day window, anchored to the player's most recent regular-season game. New `RecentFormPanel.tsx` renders on the player Stats tab. **GM-decision signal verified**: Merrill last 7d .321 SLG=.714 (hot stretch), Mason Miller last 30d 20K/1BB/ERA=0.00 (elite closer), Brad Keller last 30d 5.1 IP / ERA=15.19 (DFA candidate). Phase E.5 smoke section added. Smoke + TS typecheck pass.
+**Last updated**: 2026-05-14 (Phase 4b ~85% done — biggest session of the project so far). **9 commits landed**:
 
-**2026-05-14 (earlier)** — **L_IE display routing Slice 1 ✅ SHIPPED.** New `src/diamond/schema/l_ie.py` (21 tables + 3 unified views) ingests `<save>/import_export/*.csv` on every warehouse rebuild. API `_fetch_advanced_batting` + `_fetch_advanced_pitching` now LEFT JOIN `v_lie_player_{batting,pitching}_display` and COALESCE wOBA/OPS+/FIP/ERA+/WAR for single-stint org-roster players in the latest year. **Bit-for-bit OOTP IE match**: Jackson Merrill 2028 derived wOBA=0.350 OPS+=124 bWAR=3.6 → routed wOBA=0.343 OPS+=125 bWAR=3.6 (matches the IE export exactly). 98 single-stint batters + 114 pitchers gain bit-for-bit accuracy on the Padres save's 2028 latest-year rows; pre-routing gap distribution OPS+ median 2 max 25 / FIP median 0.02 max 0.82 / ERA+ median 3 max 186 all eliminated. View-existence gated via `_view_exists` so warehouses predating L_IE fall through to derivations without erroring. Smoke passes. **See DATA_QUIRKS.md L_IE entry + BACKLOG.md Phase 4b deferred-work section for full receipts.**
+1. **`521cc22`** — L_IE display routing Slice 1. New `src/diamond/schema/l_ie.py` (21 tables + 3 unified views) ingests `<save>/import_export/*.csv` on every rebuild. API `_fetch_advanced_*` now COALESCE OOTP IE values for single-stint org-roster players in latest year. Merrill 2028: derived wOBA=0.350 OPS+=124 → routed wOBA=0.343 OPS+=125 (bit-for-bit IE match). 98 batters + 114 pitchers gain bit-for-bit accuracy on Padres 2028.
+2. **`8a446ec`** — Pitching xBA + xSLG re-enable (96% / 97% IE match — over D41 95% bar). Player Advanced view + leaderboards catalog.
+3. **`b571cbb`** — Phase 4b POW-aware xstat calibration. OLS fit on Padres single-stint org corpus (n=43, r=0.65): replaced flat 1.22 xBA / 1.09 xSLG scalers with `correction = α + β·(POW-50)`. Year-aware POW lookup via `players_ratings_snapshot`. **Batting xBA 89% → 95%** (clears D41 bar). Pitching xwOBA 82% → 96% (cascade). Re-enabled batting xBA + pitching xwOBA on player page.
+4. **`d7a9b7c`** — Phase 4b **Tier A** game-grain facts. New `src/diamond/schema/l2_game_grain.py`. `f_player_game_batting` 1.1M rows + `f_player_game_pitching` 355K rows on Padres. Cross-dump dedup + JOIN to deduped `l0_games` for canonical date. ORDER BY (player_id, date) for physical sort. Phase E.5 smoke section added.
+5. **`335d5c2`** — Phase 4b **Tier D** rolling windows. New `GET /api/players/{id}/recent?windows=7,15,30` aggregates batting + pitching over each calendar-day window. `RecentFormPanel.tsx` renders above Stats tab. GM signal verified: Merrill last 7d SLG=.714, Mason Miller 30d ERA=0.00, Brad Keller 30d ERA=15.19.
+6. **`251a0dd`** — Phase 4b **D40 invariants watchdog**. New `src/diamond/schema/invariants.py`. Compares L2_OOTP cached aggregates vs Diamond-derived. Stores `_diamond_invariants` (dump_date, scope, metric, dump_value, derived_value, delta, status). 9 invariants. Initial Padres: 99.8% green (4,545/4,554). New `GET /api/admin/invariants` + cockpit drift pill.
+7. **`8137ab3`** — Watchdog-driven bug fix. Investigated 7 `team_pa_count` reds → root cause: career-stint event tables filtered by `_SCOPE_PLAYER` (snapshot-based) dropped retired/released players' stints on scoped teams (e.g. Raphael Gladu's 79 PA on team 274 in 2026 L4). Switched to `_SCOPE_TEAM` filter. **Watchdog 99.8% → 100.0% green** (4,553/4,554; remaining 1 red is OOTP's own L0-vs-team_history -2 PA quirk on Boston 2026 MLB).
+8. **`e6146e3`** — Phase 4b **Tier B** per-dump history snapshots. New `src/diamond/schema/l2_history.py`. `f_player_season_batting_history` 15M rows + `_pitching_history` 8M + `f_player_career_history` 3M. Sources from L0 directly (L1 events collapse to MAX(dump_date)). Cross-stint dedup at (player, year, team, league, level, split, stint, dump_date) grain. New `GET /api/players/{id}/trajectory` endpoint. Real sparkline data ready: Merrill 2028 monthly AVG .231 → .290 → .284 → .282 → .288; Mason Miller career: 250G/115SV/ERA=2.69 → 289G/138SV/ERA=2.55.
+
+**Cumulative outcome**:
+- Every advanced-stat column on the player page is now bit-for-bit OOTP IE for org-roster (latest year), within rounding elsewhere
+- Watchdog protects warehouse build integrity going forward (100% green baseline)
+- Rolling-window endpoints unlock GM-decision insights (hot/cold over last N days)
+- Per-dump trajectory data ready for future sparkline UI rollout
+
+**Most recent prior batch — 2026-05-10 (final)** — **Phase 4a ✅ CLOSED + Phase 4a-extended {-1,-2,-3} ✅ CLOSED + display ditch ✅ SHIPPED + D41 display-policy committed.**
 
 **2026-05-10 (final)** — **Phase 4a ✅ CLOSED + Phase 4a-extended {-1,-2,-3} ✅ CLOSED + display ditch ✅ SHIPPED + D41 display-policy committed.** All 7 original Phase 4a deliverables landed in earlier sessions today. After Phase 4a closed, an honest audit surfaced 72 recon columns still under 100% — Phase 4a-ext-1 ran a five-formula-correction recon drive (cascading +20-45pp across LA/EV/spray/x-stat columns), Phase 4a-ext-2 stress-tested the "structural" labels rigorously (Pull/Cent/Oppo confirmed unreachable via `r=0.17` correlation; IFH% multi-dim closed 57% → 71%), Phase 4a-ext-3 reverse-engineered the OOTP barrel cone (`EV ≥ 97, LA ∈ [26-(EV-97), 30+(EV-97)]` — BAR 40% → 67% / BAR% 74% → 94%). Then per **D41 display policy**: every column with <95% IE match dropped from the user-facing app (spray %s, Contact mode 4 of 6 cols, Advanced xstats triplet, leaderboards 6 stats). Spray chart kept (visually correct after `[0,255]` clipping fix). The Diamond user invariant — **"any number you see in the app matches what OOTP shows in the game, within rounding"** — is now upheld across every surface. L3 builders still materialize the dropped columns as drift-watch + Phase 4b invariants-watchdog inputs. **See DATA_QUIRKS.md for the master ledger; DECISIONS.md D40+D41 for the architectural commitments.**
 
@@ -40,14 +55,14 @@ Phase 4b scope fix (career-event)         ✓ 2026-05-14 (8137ab3; 99.8% → 100
 Phase 4b Tier B (history snapshots)       ✓ 2026-05-14 (15M+8M+3M rows; trajectory API)
 ─────────────────────────────────────────
 Phase 4b remaining: Tier C per-dump leaderboards + UI rollout (real sparklines on spotlight, /settings/invariants admin page)
-Phase 5 — The Baseball Almanac            ← ~10-14 dev-days
+Phase 4b deferred: Tier B v2 (rate-stat history with per-dump league constants)
 Phase 5  — The Baseball Almanac           ← ~10-14 dev-days
 Phase 6  — Multi-save scaffolding         ← ~3-5 dev-days
 Phase 7  — AI as analytical layer         ← ~3-5 dev-days
 Phase 8  — Polish + distribution          ← deferred post-summer
 ```
 
-**See DECISIONS.md D40 + D41** for the architectural commitments; **DATA_QUIRKS.md** for the master ledger of every formula calibration / permanent limitation / display-policy decision.
+**See DECISIONS.md D40 + D41 + D42 + D43** for the architectural commitments; **DATA_QUIRKS.md** for the master ledger of every formula calibration / permanent limitation / display-policy decision.
 
 ### Phase 4a — Audit Closure (~2-3 dev-days)
 

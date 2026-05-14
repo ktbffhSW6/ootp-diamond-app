@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 The project keeps long-running engineering context in `docs/`. Always read at the start of a session:
 
 - `docs/PROJECT_STATUS.md` — current phase, what works, what was last done, what's next.
-- `docs/DECISIONS.md` — append-only log of architectural/scope decisions with rationale (D1–D41).
+- `docs/DECISIONS.md` — append-only log of architectural/scope decisions with rationale (D1–D43).
 - `docs/DATA_QUIRKS.md` — ⭐ **master at-a-glance reference for every OOTP-data quirk, formula calibration, permanent limitation, and display-policy decision**. Read this BEFORE re-investigating any reconcile mismatch. SEALED entries explicitly say "don't re-investigate."
 - `docs/DATA_NOTES.md` — chronological deep-dive log of empirical findings, codebooks, IE display conventions. DATA_QUIRKS is the index; this is the long-form receipts.
 - `docs/BACKLOG.md` — prioritized open work, grouped by phase (Schema/Ingest → Analysis → UI).
@@ -18,7 +18,7 @@ The project keeps long-running engineering context in `docs/`. Always read at th
 
 These files are the source of truth for "why" — favor updating them over leaving knowledge in chat.
 
-**Current phase: Phase 4b — Maximize the Warehouse** (next), then Phase 5 — Baseball Almanac, then Phase 6 (multi-save) → 7 (AI analyst) → 8 (distribution, deferred). **Phase 4a ✅ CLOSED 2026-05-10**; **Phase 4a-extended-1/-2/-3 ✅ CLOSED 2026-05-10** (recon drive on never-re-examined gaps); **Display ditch ✅ CLOSED 2026-05-10** (unreliable cols pulled from UI per D41). The L0/L1/L2/L3 + L_REF + History layer architecture is sound and stays put; Phase 4b is additive — game-grain fact tables (`f_player_game_*`) for time-series, per-dump snapshots of derived stats (`f_*_history`), invariants watchdog (`_diamond_invariants`) self-validating against OOTP-authoritative columns wired in Phase 4a #2, per-player calibration (spray, xSLG) replacing flat scalers from D39. **See DECISIONS.md D40 + D41 + DATA_QUIRKS.md for the full picture.**
+**Current phase: Phase 4b — Maximize the Warehouse** (in progress, ~85% shipped), then Phase 5 — Baseball Almanac, then Phase 6 (multi-save) → 7 (AI analyst) → 8 (distribution, deferred). **Phase 4a ✅ CLOSED 2026-05-10**; **Phase 4a-extended-1/-2/-3 ✅ CLOSED 2026-05-10**; **Display ditch ✅ CLOSED 2026-05-10** (D41); **L_IE display routing Slice 1 ✅ CLOSED 2026-05-14** (commit `521cc22`); **Phase 4b deferred-items chain ✅ CLOSED 2026-05-14** (pitching xstats re-enable + POW-aware calibration + batting xBA / pitching xwOBA re-enable: `8a446ec`, `b571cbb`); **Phase 4b Tier A (game-grain) ✅ CLOSED 2026-05-14** (`d7a9b7c`); **Phase 4b Tier D (rolling windows + Recent form panel) ✅ CLOSED 2026-05-14** (`335d5c2`); **Phase 4b D40 invariants watchdog ✅ CLOSED 2026-05-14** (`251a0dd`); **Phase 4b career-event scope fix ✅ CLOSED 2026-05-14** (`8137ab3` — 99.8% → 100% green); **Phase 4b Tier B (per-dump history + trajectory API) ✅ CLOSED 2026-05-14** (`e6146e3`). **Phase 4b remaining**: Tier C per-dump leaderboard snapshots, UI rollout (real Tier B sparklines on spotlight cards, `/settings/invariants` admin page), Tier B v2 (rate-stat history). **See DECISIONS.md D40 + D41 + D42 + D43 + DATA_QUIRKS.md for the full picture.**
 
 **Most recent ship — 2026-05-14 shipped Phase 4b Tier B per-dump history snapshots + trajectory API.** New `src/diamond/schema/l2_history.py` (~250 LOC) materializes three counting-stat history tables sourced from L0 directly (L1 events collapse to MAX(dump_date); L0 retains all dumps): `f_player_season_batting_history` PK `(player_id, year, league_id, level_id, split_id, dump_date)` 15M rows on Padres; `_pitching_history` 8M rows; `f_player_career_history` PK `(player_id, dump_date)` 3M rows. Cross-stint dedup at the `(player, year, team, league, level, split, stint, dump_date)` grain before GROUP BY collapses to per-season rollup. Same team-scope filter as the D40 fix (catches retired-player historical stints). Wired into `rebuild_l1_l2` between L2_game_grain and L3; +100s rebuild penalty. New `GET /api/players/{id}/trajectory` endpoint returns `career_bat` + `career_pit` per-dump trajectory points + latest-season slices, with rate stats (AVG/OBP/SLG/OPS/ERA/WHIP/K-9) computed server-side from counting stats. Pre-Tier-B-defensive: empty arrays on warehouses predating the build. **Verified on Padres**: Merrill 2028 monthly AVG trajectory .231 → .290 → .284 → .282 → .288 (29 career-batting dumps surface, 5 in-season for latest 2028). Mason Miller career closer line: 250G/115SV/ERA=2.69 → 289G/138SV/ERA=2.55 across 29 dumps — real sparkline data ready. Tier B v2 (advanced rate-stat history with per-dump league constants) deferred to Phase 5 if needed. **Unblocked**: trajectory queries, real sparklines, engine-patch detection, reconciliation history. UI rollout (spotlight cards switching to real per-dump trajectories) is a follow-up.
 
@@ -157,7 +157,9 @@ src/diamond/
     app.py                  factory + CORS for localhost:3000 (GET + POST allowed)
     routes/                 one module per resource:
                               health, save, glossary, players, roster,
-                              movements, standings, admin
+                              movements, standings, admin, recent (Phase 4b
+                              Tier D rolling windows), trajectory (Phase 4b
+                              Tier B per-dump trajectory)
     schemas/                Pydantic response models — single source of truth
     warehouse.py            per-process root DuckDB conn + cursor-per-request +
                             get_active_save() for save-level metadata
@@ -180,12 +182,54 @@ src/diamond/
                             Each builder asserts orphan columns via
                             _assert_columns_present (loud failure on
                             OOTP version-bump column drops).
+    l2_game_grain.py        Phase 4b Tier A — per-(player, year, game) fact
+                            tables sourced from `l0_players_game_*`. Two
+                            tables: f_player_game_batting (1.1M Padres),
+                            f_player_game_pitching (355K). Cross-dump dedup
+                            via ROW_NUMBER PARTITION BY natural key ORDER BY
+                            dump_date DESC; JOIN to deduped l0_games for
+                            date. ORDER BY (player_id, date) for sequential
+                            scans. Unblocks rolling windows + Phase 5 Almanac.
+    l2_history.py           Phase 4b Tier B — per-dump SCD2 history snapshots
+                            sourced from L0 directly (L1 events collapse to
+                            MAX(dump_date)). Three tables:
+                            f_player_season_batting_history (15M rows),
+                            f_player_season_pitching_history (8M),
+                            f_player_career_history (3M). Cross-stint dedup
+                            at (player, year, team, league, level, split,
+                            stint, dump_date) grain before GROUP BY collapses
+                            to per-season rollup. Same team-scope filter as
+                            the D40-fix career events.
+    invariants.py           Phase 4b D40 watchdog — comparator over L2_OOTP
+                            (OOTP-cached) vs Diamond-derived aggregates.
+                            Stores per-(team, year, level, metric) drift
+                            into `_diamond_invariants` with green/amber/red
+                            status. 9 invariants (team AVG/OBP/SLG/ERA/WHIP
+                            /K9/BB9 + PA/HR event counts). 99.8%→100% green
+                            on Padres post the 2026-05-14 career-event scope
+                            fix. Auto-runs at end of rebuild_l1_l2.
+    l_ref.py                D27 — per-save reference layer frozen at first
+                            ingest. 27 lref_* tables from the OOTP install
+                            folder (`misc/`, `database/`, `stats/`).
+    l_ie.py                 D41-routing — per-save L_IE display layer sourced
+                            from `<save>/import_export/*_organization_-_roster_*.csv`.
+                            21 lie_* tables (DROP-and-rebuild per refresh,
+                            unlike L_REF which is frozen). Three unified
+                            views v_lie_player_{batting,pitching,fielding}_display
+                            parse OOTP display strings to typed numerics
+                            ready to COALESCE in API CTEs. Wired into
+                            `_fetch_advanced_batting` + `_fetch_advanced_pitching`
+                            via single-stint org-roster + latest-year
+                            eligibility predicate.
     l3.py                   trade attribution / movements / draft / records / awards / streaks
     l3_advanced.py          per-(player, year, league, level) advanced-stats fact tables
                             (sabermetric: woba/wraa/wrc/wrc+/ops+/owar/**bwar**;
                              fip/siera/era+/pwar/**p_war**/**p_ra9_war**)
                             + Statcast cohort tables (f_player_season_statcast_batting +
                             _pitching: bip/max_ev_p90/avg_ev/hh%/brl%/ss%, BIP ≥ 30)
+                            + x-stats (f_player_season_xstats_batting +
+                            _pitching: xba/xslg/xwoba via L_REF interpolation
+                            + POW-aware per-player calibration on batting).
     build.py                orchestrator + admin (_diamond_ingests, _diamond_settings)
   dictionary/               D15 stat dictionary (60 entries — single source of truth for labels)
     __init__.py             Stat dataclass + CATEGORIES tuple
@@ -222,6 +266,9 @@ web/
                             pairs + 6 spotlight cards with inline career-WAR sparklines
                             + auto-generated NLG insights + last 8 ledger rows.
                             Composed via /api/cockpit in one round-trip.
+                            Header pill (Phase 4b D40 2026-05-14): "Drift NN.N%"
+                            shows watchdog overall status (green/amber/red);
+                            consumes /api/admin/invariants.
     (legacy)                — old tools-grid landing replaced 2026-05-12 by cockpit v2
     league/page.tsx         standings — sub-league × division × team
                             from `team_record_snapshot`, picker grouped
@@ -260,6 +307,12 @@ web/
   components/
     PlayerStatsTab.tsx      client component — disclosure-row tables for the player Stats tab
                             + Defensive Profile section (per-position 20-80 cube)
+    RecentFormPanel.tsx     Phase 4b Tier D — "Recent form" panel above
+                            the Stats tab year-by-year tables. Renders both
+                            batting + pitching tables stacked, one row per
+                            window (7d / 15d / 30d). Localized date-range
+                            display. "No games in window" empty state.
+                            Consumes /api/players/{id}/recent.
     RosterClient.tsx        client component — three filter pills (Level/Role/Hand) + three-mode
                             stat toggle (Basic/Advanced/Contact); dense Bref-style tables
     FormulaBlock.tsx        KaTeX wrapper with parse-fail fallback
@@ -278,7 +331,7 @@ web/
 
 Every data-fetching page **must** `export const dynamic = "force-dynamic"`. Without it, Next's default static prerender at `next build` time calls the API while uvicorn isn't running and fails with `ECONNREFUSED`. See `docs/DEV.md` "Adding a new API route" for the canonical recipe.
 
-**API surface today** (34 endpoints — D34 removed `/api/admin/shutdown` 2026-05-16; D35 added `/api/ai/chat/stream`): `/api/health`, `/api/save`, `/api/cockpit`, `/api/glossary`, `/api/glossary/{id}`, `/api/players/{id}` (also returns per-position fielding cube + service-time/roster-status block + situational-batting splits + active contract block + xwOBA-BIP / xBA-BIP / xSLG-BIP per advanced row — D29 Slice 2), `/api/players/{id}/batted_balls?year=&level_id=` (BIP events for spray + EV-LA), `/api/roster`, `/api/movements?year=YYYY[&include_pending=1]`, `/api/standings?league_id=&year=`, `/api/records?scope=&discipline=&category=&era=&limit=`, `/api/awards?league_id=&award_id=&era=&limit=`, `/api/hof?view=&limit=`, `/api/streaks?streak_id=&scope=&limit=`, `/api/draft?year=`, `/api/pressure?year=&limit=`, `/api/compare?ids=`, `/api/leaderboards/options`, `/api/leaderboards?stat=&year=&level_id=&league_id=&pa_min=&limit=` (xwOBA / xBA / xSLG added to catalog), `/api/chart-builder?x=&y=&color=&year=&level_id=&league_id=&qualifier_min=&limit=`, **`/api/parks`** (240 modern ballparks from lref_pt_ballparks with 7-segment geometry + LH/RH split factors), `/api/saves`, `POST /api/saves/active`, `GET/POST /api/saves/{name}/config` (per-save audit_team_id + scope persistence — D3 v2.1), `/api/ai/settings`, `POST /api/ai/settings`, `POST /api/ai/summarize`, `/api/photos/players/{id}.png` (revalidation-cached, D24), **`/api/photos/teams/{team_id}.png?size=N`** (D30 Slice B — size-snaps to OOTP variant 16/25/40/50/110/full), **`/api/photos/hof`** (D30 Slice D — manifest of plaques on disk), **`/api/photos/hof/{bbref_id}.png`** (D30 Slice D — streams from install hof/), `GET /api/admin/dump-status`, **`GET /api/admin/metabase-status`** (D31 — same-origin liveness probe for Workshop tab; returns running / configured / active_save_db / message), `POST /api/admin/ingest` (auto-detects + ingests new dumps mid-session), **`POST /api/ai/chat`** (D33 — synchronous chat with tool loop), **`POST /api/ai/chat/stream`** (D35 Tier C — `text/event-stream` SSE variant of `/api/ai/chat`; emits `text_delta` / `tool_use` / `tool_result` / `iteration` / `done` events).
+**API surface today** (37 endpoints — D34 removed `/api/admin/shutdown` 2026-05-16; D35 added `/api/ai/chat/stream`; Phase 4b 2026-05-14 added `/api/players/{id}/recent`, `/api/players/{id}/trajectory`, `/api/admin/invariants`): `/api/health`, `/api/save`, `/api/cockpit`, `/api/glossary`, `/api/glossary/{id}`, `/api/players/{id}` (also returns per-position fielding cube + service-time/roster-status block + situational-batting splits + active contract block + xwOBA-BIP / xBA-BIP / xSLG-BIP per advanced row — D29 Slice 2), `/api/players/{id}/batted_balls?year=&level_id=` (BIP events for spray + EV-LA), `/api/roster`, `/api/movements?year=YYYY[&include_pending=1]`, `/api/standings?league_id=&year=`, `/api/records?scope=&discipline=&category=&era=&limit=`, `/api/awards?league_id=&award_id=&era=&limit=`, `/api/hof?view=&limit=`, `/api/streaks?streak_id=&scope=&limit=`, `/api/draft?year=`, `/api/pressure?year=&limit=`, `/api/compare?ids=`, `/api/leaderboards/options`, `/api/leaderboards?stat=&year=&level_id=&league_id=&pa_min=&limit=` (xwOBA / xBA / xSLG added to catalog), `/api/chart-builder?x=&y=&color=&year=&level_id=&league_id=&qualifier_min=&limit=`, **`/api/parks`** (240 modern ballparks from lref_pt_ballparks with 7-segment geometry + LH/RH split factors), `/api/saves`, `POST /api/saves/active`, `GET/POST /api/saves/{name}/config` (per-save audit_team_id + scope persistence — D3 v2.1), `/api/ai/settings`, `POST /api/ai/settings`, `POST /api/ai/summarize`, `/api/photos/players/{id}.png` (revalidation-cached, D24), **`/api/photos/teams/{team_id}.png?size=N`** (D30 Slice B — size-snaps to OOTP variant 16/25/40/50/110/full), **`/api/photos/hof`** (D30 Slice D — manifest of plaques on disk), **`/api/photos/hof/{bbref_id}.png`** (D30 Slice D — streams from install hof/), `GET /api/admin/dump-status`, **`GET /api/admin/metabase-status`** (D31 — same-origin liveness probe for Workshop tab; returns running / configured / active_save_db / message), `POST /api/admin/ingest` (auto-detects + ingests new dumps mid-session), **`POST /api/ai/chat`** (D33 — synchronous chat with tool loop), **`POST /api/ai/chat/stream`** (D35 Tier C — `text/event-stream` SSE variant of `/api/ai/chat`; emits `text_delta` / `tool_use` / `tool_result` / `iteration` / `done` events), **`GET /api/players/{id}/recent?windows=7,15,30`** (Phase 4b Tier D — aggregated batting + pitching lines over each calendar-day window, anchored to player's most recent regular-season game; consumes `f_player_game_*`), **`GET /api/players/{id}/trajectory`** (Phase 4b Tier B — career + latest-season per-dump trajectory points with rate stats computed server-side from counting columns; consumes `f_player_career_history` + `f_player_season_*_history`), **`GET /api/admin/invariants`** (Phase 4b D40 — overall + per-metric watchdog rollup + top-20 failures sorted by |delta|; powers the cockpit drift pill).
 
 ### Warehouse layers
 
@@ -305,6 +358,41 @@ L2  facts   8 tables (f_player_season_*, f_player_career, f_team_season,
                       on (game_id, season_year). PK = (year, game_id,
                       batter_id, pa_in_game_seq) — `year` is in the key
                       because OOTP recycles `game_id` across seasons.
+
+L2_OOTP             D40 Phase 4a #2 (2026-05-10) — 9 OOTP-cache passthrough
+                    fact tables + 1 view exposing the previously-orphan
+                    OOTP-cached rate stats as named columns. See
+                    `schema/l2_ootp.py` for the full inventory. Feeds
+                    the D40 invariants watchdog as its dump-value source.
+
+L2_game_grain       Phase 4b Tier A (2026-05-14) — 2 game-grain fact tables:
+                      f_player_game_batting  PK (player_id, year, game_id),
+                                              ~1.1M rows on Padres / 430K Sox
+                                              smoke, 18 stat cols incl PA/AB/H/
+                                              HR/RBI/BB/K + dims + canonical date
+                      f_player_game_pitching PK same shape, ~355K Padres /
+                                              134K smoke, 25 cols (outs/BF/H/ER/
+                                              BB/K/HR+ GS/W/L/SV/BS/HLD)
+                    Cross-dump dedup via ROW_NUMBER ORDER BY dump_date DESC.
+                    JOIN to deduped l0_games for canonical date.
+                    ORDER BY (player_id, date) in CTAS — DuckDB physically
+                    sorts the table on disk for sequential scan speed.
+                    Game-grain fielding deferred (no L0 source).
+
+L2_history          Phase 4b Tier B (2026-05-14) — 3 per-dump SCD2 history
+                    tables sourced from L0 directly (L1 events collapse
+                    to MAX(dump_date)):
+                      f_player_season_batting_history  PK (player_id, year,
+                            league_id, level_id, split_id, dump_date)
+                            ~15M rows on Padres (29 dumps × 600K player-seasons)
+                      f_player_season_pitching_history same shape, ~8M rows
+                      f_player_career_history          PK (player_id, dump_date)
+                            ~3M rows (career rollups per dump)
+                    Cross-stint dedup at the (player, year, team, league,
+                    level, split, stint, dump_date) grain before GROUP BY
+                    collapses to per-season rollup. Same team-scope filter
+                    as the D40 fix. Powers /api/players/{id}/trajectory and
+                    future sparkline UI consumers. ~100s rebuild penalty.
 L3  derived 11 tables — trade_participant, player_movements, draft_class,
                        record_player, award_career_player, award_franchise,
                        player_streak, **f_player_season_advanced_batting +
@@ -318,7 +406,22 @@ L3  derived 11 tables — trade_participant, player_movements, draft_class,
                        **f_player_season_statcast_batting + _pitching** (Statcast
                        cohort: BIP / max_EV_P90 / avg_EV / hard_hit% /
                        sweet_spot% / barrel%; BIP ≥ 30 quality threshold;
-                       materialized from f_pa_event)
+                       materialized from f_pa_event),
+                       **f_player_season_xstats_batting + _pitching**
+                       (Phase 4a-ext-1 + Phase 4b POW-aware calibration on
+                       batting: xba/xslg via L_REF (LA, EV) interpolation
+                       with per-player POW correction `0.00823 + 0.00054·(POW-50)`
+                       for xba and `0.01527 + 0.00115·(POW-50)` for xslg;
+                       year-aware POW lookup via `players_ratings_snapshot`),
+                       **f_player_season_leverage_batting + _pitching**
+                       (WPA + RE24 + LI + Clutch from L0 + lref_re288_table)
+
+_diamond_invariants Phase 4b D40 (2026-05-14) — warehouse drift watchdog,
+                    one row per (team, year, level, metric) per dump_date
+                    storing the OOTP-cached vs Diamond-derived comparison.
+                    9 active invariants on Padres yield 100.0% green (4,553
+                    / 4,554; 1 informational red on Boston 2026 MLB is
+                    OOTP's own L0-vs-team_history quirk).
 History (one-time) lahman / bref / statcast / mlbapi / chadwick crosswalk
 L_REF (Slice 1 shipped 2026-05-14, D26+D27) — 27 tables / 575,587 rows
                   per-save reference data, frozen at first ingest
