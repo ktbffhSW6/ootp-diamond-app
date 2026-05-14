@@ -75,13 +75,15 @@
 
 Starts after Phase 4a closes. Save-agnostic by construction (every builder reads `<save>/diamond/diamond.duckdb`, no IDs hardcoded). See DECISIONS.md D40 for full design.
 
-### Tier A — Game-grain fact tables (~0.5 day)
+### Tier A — Game-grain fact tables ✅ DONE 2026-05-14 (commit `d7a9b7c`)
 
-- [ ] `f_player_game_batting` — PK `(player_id, year, game_id)` — built from `l0_players_game_batting` JOIN `games_event` for date denormalization, DuckDB sort key `(player_id, date)`
-- [ ] `f_player_game_pitching` — same shape from `l0_players_game_pitching_stats`
-- [ ] `f_player_game_fielding` — same shape from `l0_players_career_fielding_stats`
+- [x] `f_player_game_batting` — PK `(player_id, year, game_id)` — built from `l0_players_game_batting` JOIN deduped `l0_games` for date denormalization, ORDER BY `(player_id, date)` in CTAS for physical sort. 1.1M rows on Padres save (430K on Sox smoke).
+- [x] `f_player_game_pitching` — same shape from `l0_players_game_pitching_stats` filtered to split_id=1. 355K rows Padres / 134K Sox smoke.
+- [ ] `f_player_game_fielding` — **DEFERRED**: no game-grain fielding source in L0 (the `l0_players_career_fielding_stats` referenced in original plan is stint-level). Fielding rolling-windows would need either a custom event-derivation or a future OOTP source.
 
-Unblocks: "last 12 days Merrill", calendar heatmaps, streak engine, Phase 5 stretch comparator.
+Implementation in `src/diamond/schema/l2_game_grain.py` (~210 LOC). Cross-dump dedup via `ROW_NUMBER PARTITION BY natural_key ORDER BY dump_date DESC` (same pattern as `f_pa_event`, D17). Wired into `rebuild_l1_l2` between L2_OOTP and L3 (+1.1s warehouse rebuild penalty). Phase E.5 smoke check added.
+
+Unblocked: "last N days Merrill", calendar heatmaps, streak engine, Phase 5 stretch comparator.
 
 ### D40 invariants watchdog (~1 day)
 
@@ -109,11 +111,19 @@ Unblocks: trajectory queries, real sparklines, engine-patch detection, reconcili
 
 Unblocks: "who was leading on June 1?"
 
-### Tier D — Rolling-window materialized views (~0.5 day)
+### Tier D — Rolling-window materialized views ✅ DONE 2026-05-14 (commit `335d5c2`)
 
-- [ ] `v_player_last_7_batting`, `v_player_last_15_batting`, `v_player_last_30_batting`
-- [ ] `v_player_last_5_starts_pitching`, `v_player_last_10_starts_pitching`
-- [ ] `v_player_calendar_heatmap` (per-game stat-line, all players)
+Shipped as a parametric API endpoint instead of pre-materialized views — `GET /api/players/{id}/recent?windows=7,15,30` aggregates from Tier A's game-grain facts on demand. Tiny payload (~6 rows), trivial DuckDB cost.
+
+- [x] Endpoint + schemas: `src/diamond/api/{routes,schemas}/recent.py`. Defaults to `windows=7,15,30`. Anchor = player's most recent regular-season game (NOT today's date). Filter to `game_type=0`. Pre-Tier-A-defense: returns empty arrays when game-grain tables missing.
+- [x] Frontend `RecentFormPanel.tsx` renders both batting + pitching tables stacked above the Stats-tab year-by-year tables. Localized date-range display. "No games in window" empty state.
+- [x] Wired into `/player/[id]` Stats tab via parallel fetch.
+
+**Verified on Padres**: Merrill last 7d 9-for-28 (.321, 3 HR, OPS=1.101); Mason Miller last 30d 20 K / 1 BB / ERA=0.00 (elite closer stretch); Brad Keller last 30d 11 G / 5.1 IP / ERA=15.19 (DFA candidate). The windows surface trajectory that cumulative season totals hide — exactly the GM-decision signal Tier D was built for.
+
+**Deferred to follow-up** (UI rollout):
+- [ ] Click-toggle pills on RecentFormPanel — pick which window to highlight (currently all 3 stacked, fine for v1).
+- [ ] `v_player_calendar_heatmap` — per-game per-player heatmap view. Worth it once we build the calendar UI.
 
 ### Per-player calibration improvements (~0.5 day)
 
