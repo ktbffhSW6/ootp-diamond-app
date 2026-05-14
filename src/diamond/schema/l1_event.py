@@ -264,13 +264,25 @@ SYNTHETIC_PK_EVENTS: list[L1EventSpec] = [
         primary_key=("dump_date", "file_seq"),
         natural_key=("player_id", "year", "team_id", "league_id", "level_id",
                      "split_id", "stint"),
-        scope_where=_SCOPE_PLAYER,
+        # 2026-05-14 D40 fix: switched from _SCOPE_PLAYER to _SCOPE_TEAM.
+        # The D40 invariants watchdog flagged 7 real `team_pa_count` reds
+        # — team 274 in 2026 L4 was off by 79 PA vs the OOTP cache. Root
+        # cause: retired/released players (`l0_players.team_id = 0` in
+        # the live snapshot) whose 2026 stints on a scoped team were
+        # dropped because `_scoped_players` is snapshot-based and excludes
+        # them. Filtering this event table by `team_id IN _scoped_teams`
+        # catches every stint on a scoped team regardless of the player's
+        # current roster status. Also correctly EXCLUDES rival-team stints
+        # of currently-rostered players (e.g. Machado's mid-2027 stint
+        # on a non-scoped team), which is the more sane semantic.
+        scope_where=_SCOPE_TEAM,
         keep_admin=True,
         notes=(
             "Natural key has dups in OOTP data (e.g. player 118234 in 1948 "
             "shows two rows with same (player,year,team,...) but different AB). "
             "L2 f_player_season_batting aggregates across these by the "
-            "natural key."
+            "natural key. Scope = _SCOPE_TEAM (D40 fix 2026-05-14) — "
+            "every stint on a scoped team passes through, retired or not."
         ),
     ),
     L1EventSpec(
@@ -278,16 +290,16 @@ SYNTHETIC_PK_EVENTS: list[L1EventSpec] = [
         primary_key=("dump_date", "file_seq"),
         natural_key=("player_id", "year", "team_id", "league_id", "level_id",
                      "split_id", "stint"),
-        scope_where=_SCOPE_PLAYER, keep_admin=True,
-        notes="Same OOTP-source dup pattern as career_batting.",
+        scope_where=_SCOPE_TEAM, keep_admin=True,
+        notes="Same OOTP-source dup pattern as career_batting. _SCOPE_TEAM (D40 fix).",
     ),
     L1EventSpec(
         "players_career_fielding_event", "l0_players_career_fielding_stats",
         primary_key=("dump_date", "file_seq"),
         natural_key=("player_id", "year", "team_id", "league_id", "level_id",
                      "split_id", "position"),
-        scope_where=_SCOPE_PLAYER, keep_admin=True,
-        notes="Same OOTP-source dup pattern.",
+        scope_where=_SCOPE_TEAM, keep_admin=True,
+        notes="Same OOTP-source dup pattern. _SCOPE_TEAM (D40 fix).",
     ),
     L1EventSpec(
         "players_awards_event", "l0_players_awards",

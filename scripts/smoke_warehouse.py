@@ -458,17 +458,43 @@ def smoke_l2(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
         f"[green]✓[/green] f_pa_event dim flatten complete (year, league_id, level_id all populated)"
     )
 
-    # Sanity: f_player_career row count should match scoped player count
+    # Sanity: every player_id in f_player_career must come from one of the
+    # three season-fact tables (it's UNION'd from those three by construction).
+    #
+    # Note (2026-05-14 D40 fix): the prior assertion "f_player_career ≤
+    # _scoped_players" no longer holds. The career-stint event tables now
+    # filter by `team_id IN _scoped_teams` (was `player_id IN _scoped_players`)
+    # so retired/released players whose 2026+ stints on a scoped team were
+    # previously dropped are now captured. f_player_career also picks up
+    # Lahman-imported historical entries with stints on scoped teams (Babe
+    # Ruth on Boston, etc.) — these are legitimate historical roster
+    # members, not spurious data.
     n_career = rows["f_player_career"]
-    n_scoped = con.execute("SELECT COUNT(*) FROM _scoped_players").fetchone()[0]
-    if n_career > n_scoped:
+    # Match the f_player_career builder's split-id filters exactly:
+    # batting + pitching use split_id=1 (overall); fielding uses split_id=0
+    # (no platoon split). Players who only appear in non-canonical splits
+    # are intentionally excluded from f_player_career — they'd double-count
+    # if rolled in.
+    n_season_pids = con.execute(
+        """
+        SELECT COUNT(DISTINCT player_id) FROM (
+            SELECT player_id FROM f_player_season_batting  WHERE split_id = 1
+            UNION
+            SELECT player_id FROM f_player_season_pitching WHERE split_id = 1
+            UNION
+            SELECT player_id FROM f_player_season_fielding WHERE split_id = 0
+        )
+        """
+    ).fetchone()[0]
+    if n_career != n_season_pids:
         console.print(
-            f"[red]FAIL:[/red] f_player_career={n_career} > _scoped_players={n_scoped}"
+            f"[red]FAIL:[/red] f_player_career={n_career} "
+            f"≠ union of season-fact player_ids ({n_season_pids})"
         )
         return False
     console.print(
-        f"[green]✓[/green] f_player_career has {n_career:,} rows "
-        f"(of {n_scoped:,} scoped players — others have no career stats yet)"
+        f"[green]✓[/green] f_player_career row count matches union of season-fact "
+        f"player_ids ({n_career:,} players)"
     )
 
     # Idempotency
