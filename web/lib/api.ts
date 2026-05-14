@@ -34,6 +34,7 @@ import type {
   LeaderboardResponse,
   MovementsResponse,
   ParksResponse,
+  PlayerRecentResponse,
   PlayerResponse,
   PressureResponse,
   RecordsResponse,
@@ -86,6 +87,20 @@ export async function getGlossaryEntry(
 // converts that to Next.js notFound().
 export async function getPlayer(playerId: number): Promise<PlayerResponse> {
   return fetchJson<PlayerResponse>(`/api/players/${playerId}`);
+}
+
+// Rolling-window stats — last N calendar days of batting + pitching
+// aggregated from the game-grain fact tables (Phase 4b Tier A + D).
+// Default windows = "7,15,30". Anchor is the player's most recent
+// regular-season game (NOT today). Empty arrays = no game-grain data
+// (warehouse pre-Tier-A, or player has no batting / no pitching).
+export async function getPlayerRecent(
+  playerId: number,
+  windows: string = "7,15,30",
+): Promise<PlayerRecentResponse> {
+  return fetchJson<PlayerRecentResponse>(
+    `/api/players/${playerId}/recent?windows=${encodeURIComponent(windows)}`,
+  );
 }
 
 // Movement-ledger payload for the user-team org for one season.

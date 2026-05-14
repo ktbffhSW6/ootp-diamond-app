@@ -1310,6 +1310,79 @@ export interface PlayerPositionFielding {
   experience: number | null;
 }
 /**
+ * Aggregate batting line over the most recent N calendar days.
+ *
+ * Slash line and rate stats are computed from the aggregated counting
+ * stats — same arithmetic as the season-totals helpers in
+ * ``routes/players.py``.
+ */
+export interface PlayerRecentBatting {
+  window_days: number;
+  games_in_window: number;
+  first_date: string | null;
+  last_date: string | null;
+  pa: number;
+  ab: number;
+  h: number;
+  d: number;
+  t: number;
+  hr: number;
+  r: number;
+  rbi: number;
+  bb: number;
+  k: number;
+  hbp: number;
+  sb: number;
+  cs: number;
+  avg: number | null;
+  obp: number | null;
+  slg: number | null;
+  ops: number | null;
+}
+/**
+ * Aggregate pitching line over the most recent N calendar days.
+ *
+ * Outs is the source-of-truth counting stat; ``ip_display`` is the
+ * Bref-style display ``int.frac`` (e.g. ``172.1`` = 172⅓ innings).
+ */
+export interface PlayerRecentPitching {
+  window_days: number;
+  games_in_window: number;
+  starts: number;
+  first_date: string | null;
+  last_date: string | null;
+  outs: number;
+  ip_display: number;
+  bf: number;
+  h: number;
+  r: number;
+  er: number;
+  bb: number;
+  k: number;
+  hr_allowed: number;
+  era: number | null;
+  whip: number | null;
+  k_per_9: number | null;
+  bb_per_9: number | null;
+}
+/**
+ * All standard rolling windows in one response.
+ *
+ * Returns aggregate stat lines for three pre-computed window sizes
+ * (7, 15, 30 days) so the frontend can toggle between them without
+ * extra round-trips. Both ``bat`` and ``pit`` arrays contain
+ * one row per window, in the order ``[7, 15, 30]``.
+ *
+ * Either array can be empty if the player has no batting / pitching
+ * appearances in the warehouse at all (e.g. position players who
+ * never pitched).
+ */
+export interface PlayerRecentResponse {
+  player_id: number;
+  bat: PlayerRecentBatting[];
+  pit: PlayerRecentPitching[];
+}
+/**
  * ``GET /api/players/{player_id}`` response.
  *
  * Fields are nullable when the player never accumulated stats of that

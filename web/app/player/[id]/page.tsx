@@ -30,9 +30,10 @@ import { PlayerAvatar } from "@/components/PlayerAvatar";
 import { PlayerContractCard } from "@/components/PlayerContractCard";
 import { PlayerStatsTab } from "@/components/PlayerStatsTab";
 import { PlayerTabNav, type PlayerTab } from "@/components/PlayerTabNav";
+import { RecentFormPanel } from "@/components/RecentFormPanel";
 import { StadiumSprayChart } from "@/components/StadiumSprayChart";
 import { TeamLogo } from "@/components/TeamLogo";
-import { getBattedBalls, getGlossary, getParks, getPlayer, getSave } from "@/lib/api";
+import { getBattedBalls, getGlossary, getParks, getPlayer, getPlayerRecent, getSave } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -81,9 +82,9 @@ export default async function PlayerPage({ params, searchParams }: Props) {
   // dictionary). batted_balls populates the inline Spray + EV-LA
   // sections (gated on bip_count > 0). save metadata gives us the
   // user's home park abbr for the stadium-overlay default.
-  let player, glossary, battedBalls, save, parks;
+  let player, glossary, battedBalls, save, parks, recent;
   try {
-    [player, glossary, battedBalls, save, parks] = await Promise.all([
+    [player, glossary, battedBalls, save, parks, recent] = await Promise.all([
       getPlayer(playerId),
       getGlossary(),
       // Don't fail the whole page if batted_balls 404s — defensive,
@@ -96,6 +97,9 @@ export default async function PlayerPage({ params, searchParams }: Props) {
       // OOTP-canonical geometry path. Tolerant of failure: hand-coded
       // dimensions still render the chart correctly without it.
       getParks().catch(() => null),
+      // Rolling-window stats (Phase 4b Tier D) — gracefully empty on
+      // warehouses predating Tier A, or players with no game data.
+      getPlayerRecent(playerId).catch(() => null),
     ]);
   } catch (err) {
     if (err instanceof Error && err.message.includes("404")) {
@@ -305,7 +309,15 @@ export default async function PlayerPage({ params, searchParams }: Props) {
       <PlayerTabNav active={tab} playerId={playerId} hasBip={hasBip} />
 
       {/* Tab content — only the active tab renders. */}
-      {tab === "stats" && <PlayerStatsTab player={player} glossary={glossary} />}
+      {tab === "stats" && (
+        <>
+          {/* Rolling windows panel (Phase 4b Tier D) — sits above the
+              year-by-year tables. Renders nothing if both bat + pit
+              arrays are empty (e.g. amateurs with no game data). */}
+          <RecentFormPanel data={recent} />
+          <PlayerStatsTab player={player} glossary={glossary} />
+        </>
+      )}
 
       {tab === "charts" && !hasBip && (
         <section className="rounded-md border border-border bg-surface-card p-8 text-center text-content-muted">

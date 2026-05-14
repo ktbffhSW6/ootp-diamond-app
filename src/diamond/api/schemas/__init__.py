@@ -106,6 +106,11 @@ from diamond.api.schemas.pressure import (
     PressurePlayer,
     PressureResponse,
 )
+from diamond.api.schemas.recent import (
+    PlayerRecentBatting,
+    PlayerRecentPitching,
+    PlayerRecentResponse,
+)
 from diamond.api.schemas.records import (
     RecordCategoryRef,
     RecordRow,
@@ -203,6 +208,9 @@ __all__ = [
     "PlayerPitchingSeason",
     "PlayerPitchingStint",
     "PlayerPositionFielding",
+    "PlayerRecentBatting",
+    "PlayerRecentPitching",
+    "PlayerRecentResponse",
     "PlayerResponse",
     "PlayerRosterStatus",
     "PlayerSituationalRow",
