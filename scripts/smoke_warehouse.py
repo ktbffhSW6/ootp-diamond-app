@@ -481,6 +481,57 @@ def smoke_l2(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
     return True
 
 
+def smoke_l2_game_grain(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
+    """Phase E.5 — L2 game-grain (Phase 4b Tier A).
+
+    Builds `f_player_game_batting` + `f_player_game_pitching` and verifies:
+      - both tables exist with non-zero rows
+      - PK uniqueness on (player_id, year, game_id)
+      - date column is NOT NULL for every row (JOIN succeeded)
+      - rebuild is idempotent
+    """
+    from diamond.schema.l2_game_grain import build_l2_game_grain
+
+    console.rule("Phase E.5 — L2 game-grain facts (Phase 4b Tier A)")
+    rows = build_l2_game_grain(con, verbose=True)
+
+    for tbl in ("f_player_game_batting", "f_player_game_pitching"):
+        n = rows.get(tbl, 0)
+        if n == 0:
+            console.print(f"[red]FAIL:[/red] {tbl} is empty")
+            return False
+        # PK uniqueness
+        dupes = con.execute(
+            f"SELECT COUNT(*) - COUNT(DISTINCT (player_id, year, game_id)) FROM {tbl}"
+        ).fetchone()[0]
+        if dupes > 0:
+            console.print(f"[red]FAIL:[/red] {tbl} has {dupes} duplicate PK rows")
+            return False
+        # date is JOINed in; must be non-null for every row
+        null_date = con.execute(
+            f"SELECT COUNT(*) FROM {tbl} WHERE date IS NULL"
+        ).fetchone()[0]
+        if null_date > 0:
+            console.print(
+                f"[red]FAIL:[/red] {tbl} has {null_date} rows with NULL date "
+                f"(games_dedup JOIN missed)"
+            )
+            return False
+        console.print(
+            f"[green]✓[/green] {tbl}: {n:,} rows, PK unique, date populated"
+        )
+
+    rows_2 = build_l2_game_grain(con, verbose=False)
+    if rows != rows_2:
+        console.print(
+            "[red]FAIL:[/red] L2 game-grain rebuild changed row counts"
+        )
+        return False
+    console.print("[green]✓[/green] L2 game-grain rebuild is idempotent")
+
+    return True
+
+
 def smoke_l3(con: duckdb.DuckDBPyConnection, console: Console) -> bool:
     """Phase F invariants (L3 derived).
 
@@ -886,6 +937,8 @@ def main() -> int:
     if not smoke_l1_snapshot(con, save, console):
         return 1
     if not smoke_l2(con, console):
+        return 1
+    if not smoke_l2_game_grain(con, console):
         return 1
     if not smoke_l3(con, console):
         return 1

@@ -517,6 +517,7 @@ def rebuild_l1_l2(
     from diamond.schema.l1_reference import build_l1_reference
     from diamond.schema.l1_snapshot import build_l1_snapshot
     from diamond.schema.l2 import build_l2
+    from diamond.schema.l2_game_grain import build_l2_game_grain
     from diamond.schema.l2_ootp import build_l2_ootp
     from diamond.schema.l3 import build_l3
     from diamond.schema.l_ie import build_l_ie
@@ -545,6 +546,9 @@ def rebuild_l1_l2(
     if verbose:
         console.rule("L2 OOTP-cache passthroughs (D40 Phase 4a #2)")
     out["l2_ootp"] = build_l2_ootp(con, verbose=verbose)
+    if verbose:
+        console.rule("L2 game-grain facts (Phase 4b Tier A)")
+    out["l2_game_grain"] = build_l2_game_grain(con, verbose=verbose)
     if verbose:
         console.rule("L3 derived")
     out["l3"] = build_l3(con, verbose=verbose)
