@@ -152,6 +152,10 @@ from diamond.api.schemas.streaks import (
     StreakRow,
     StreaksResponse,
 )
+from diamond.api.schemas.trajectory import (
+    TrajectoryPoint,
+    TrajectoryResponse,
+)
 
 __all__ = [
     "AIProviderInfo",
@@ -252,5 +256,7 @@ __all__ = [
     "StreakCategoryRef",
     "StreakRow",
     "StreaksResponse",
+    "TrajectoryPoint",
+    "TrajectoryResponse",
     "TeamRef",
 ]

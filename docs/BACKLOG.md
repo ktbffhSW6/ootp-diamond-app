@@ -98,15 +98,24 @@ Unblocked: "last N days Merrill", calendar heatmaps, streak engine, Phase 5 stre
 - [ ] **Follow-up**: investigate the 7 red `team_pa_count` failures (cross-stint aggregation bug somewhere in L1/L2). Phase 4b polish.
 - [ ] **Follow-up**: history trends visible across dumps — needs Tier B (SCD2 snapshots) first.
 
-### Tier B — Per-dump derived-stat history snapshots (~1 day)
+### Tier B — Per-dump history snapshots ✅ DONE 2026-05-14
 
-- [ ] `f_player_season_advanced_batting_history` — SCD Type 2 on the L3 layer
-- [ ] `f_player_season_advanced_pitching_history`
-- [ ] `f_player_season_statcast_batting_history` + `_pitching_history`
-- [ ] `f_player_season_xstats_batting_history` + `_pitching_history`
-- [ ] Current L3 tables become `_current` views filtered to `MAX(dump_date)`
+Shipped counting-stat history tables (not the originally-planned SCD2-on-L3-derived-stats). The L0 already carries dump_date on every row, so backfilling counting-stats per-dump from L0 directly gives instant 29-month sparkline data on first build — no need to wait for forward-only snapshots to accumulate.
 
-Unblocks: trajectory queries, real sparklines, engine-patch detection, reconciliation history.
+- [x] `src/diamond/schema/l2_history.py` builds three history tables:
+  - `f_player_season_batting_history` — PK `(player_id, year, league_id, level_id, split_id, dump_date)` — 15M rows on Padres
+  - `f_player_season_pitching_history` — same shape — 8M rows
+  - `f_player_career_history` — PK `(player_id, dump_date)` — 3M rows (career rollups per dump)
+- [x] Sources from `l0_players_career_*_stats` directly (L1 events collapse to MAX(dump_date)). Same team-scope filter as the recent D40 fix.
+- [x] Cross-stint dedup at `(player, year, team, league, level, split, stint, dump_date)` grain before GROUP BY collapses to season-rollup.
+- [x] Wired into `rebuild_l1_l2` between L2_game_grain and L3. ~100s rebuild penalty (acceptable; runs once per ingest).
+- [x] `GET /api/players/{id}/trajectory` endpoint returns career-bat + career-pit + latest-season slices. Pre-Tier-B-defensive: empty arrays when history tables missing.
+
+**Verified on Padres**: Merrill 2028 monthly AVG trajectory .231 → .290 → .284 → .282 → .288. Mason Miller career closer line — 250 G / 115 SV / ERA=2.69 → 289 G / 138 SV / ERA=2.55 over 29 dumps. Real sparkline data ready for consumption.
+
+**Tier B v2 — deferred** (advanced rate-stat history): wOBA / wRC+ / OPS+ / FIP per-dump trajectories. Needs per-dump league constants which currently only exist for the latest dump. Roll into Phase 5 if needed.
+
+**Unblocked**: trajectory queries, real sparklines (UI rollout pending), engine-patch detection ("did some stat suddenly jump after a save advance?"), reconciliation history.
 
 ### Tier C — Per-dump leaderboard snapshots (~0.5 day)
 

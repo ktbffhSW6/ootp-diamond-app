@@ -49,6 +49,7 @@ from diamond.api.routes import (
     saves,
     standings,
     streaks,
+    trajectory,
 )
 
 
@@ -102,6 +103,7 @@ def create_app() -> FastAPI:
     app.include_router(awards.router, prefix="/api", tags=["awards"])
     app.include_router(hof.router, prefix="/api", tags=["hof"])
     app.include_router(streaks.router, prefix="/api", tags=["streaks"])
+    app.include_router(trajectory.router, prefix="/api", tags=["trajectory"])
     app.include_router(draft.router, prefix="/api", tags=["draft"])
     app.include_router(pressure.router, prefix="/api", tags=["pressure"])
     app.include_router(cockpit.router, prefix="/api", tags=["cockpit"])

@@ -36,8 +36,10 @@ Phase 4b deferred items (3x)              ✓ 2026-05-14 (L_IE / pitching xstats
 Phase 4b Tier A (game-grain facts)        ✓ 2026-05-14 (d7a9b7c)
 Phase 4b Tier D (rolling windows + UI)    ✓ 2026-05-14 (335d5c2)
 Phase 4b D40 invariants watchdog          ✓ 2026-05-14 (99.8% green; cockpit pill)
+Phase 4b scope fix (career-event)         ✓ 2026-05-14 (8137ab3; 99.8% → 100% green)
+Phase 4b Tier B (history snapshots)       ✓ 2026-05-14 (15M+8M+3M rows; trajectory API)
 ─────────────────────────────────────────
-Phase 4b remaining: investigate team_pa_count reds + Tier B/C (history snapshots) + UI polish
+Phase 4b remaining: Tier C per-dump leaderboards + UI rollout (real sparklines on spotlight, /settings/invariants admin page)
 Phase 5 — The Baseball Almanac            ← ~10-14 dev-days
 Phase 5  — The Baseball Almanac           ← ~10-14 dev-days
 Phase 6  — Multi-save scaffolding         ← ~3-5 dev-days

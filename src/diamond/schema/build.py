@@ -518,6 +518,7 @@ def rebuild_l1_l2(
     from diamond.schema.l1_snapshot import build_l1_snapshot
     from diamond.schema.l2 import build_l2
     from diamond.schema.l2_game_grain import build_l2_game_grain
+    from diamond.schema.l2_history import build_l2_history
     from diamond.schema.l2_ootp import build_l2_ootp
     from diamond.schema.l3 import build_l3
     from diamond.schema.invariants import run_invariants
@@ -550,6 +551,9 @@ def rebuild_l1_l2(
     if verbose:
         console.rule("L2 game-grain facts (Phase 4b Tier A)")
     out["l2_game_grain"] = build_l2_game_grain(con, verbose=verbose)
+    if verbose:
+        console.rule("L2 history snapshots (Phase 4b Tier B)")
+    out["l2_history"] = build_l2_history(con, verbose=verbose)
     if verbose:
         console.rule("L3 derived")
     out["l3"] = build_l3(con, verbose=verbose)

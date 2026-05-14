@@ -2127,3 +2127,54 @@ export interface StreaksResponse {
   rows: StreakRow[];
   total_in_scope: number;
 }
+/**
+ * One sample of a per-(player, year?, level?) timeline.
+ *
+ * `dump_date` is the canonical x-axis (ISO date string). Counting
+ * stats are pre-summed; rate stats (avg/era/etc.) compute on the
+ * backend so the frontend doesn't have to know the formulas.
+ *
+ * Any stat field can be None when the denominator is zero or the
+ * player has no data for that dump.
+ */
+export interface TrajectoryPoint {
+  dump_date: string;
+  pa?: number | null;
+  ab?: number | null;
+  h?: number | null;
+  hr?: number | null;
+  rbi?: number | null;
+  bb?: number | null;
+  k?: number | null;
+  avg?: number | null;
+  obp?: number | null;
+  slg?: number | null;
+  ops?: number | null;
+  g?: number | null;
+  gs?: number | null;
+  sv?: number | null;
+  outs?: number | null;
+  ip_display?: number | null;
+  era?: number | null;
+  whip?: number | null;
+  k_per_9?: number | null;
+}
+/**
+ * Career + per-season trajectories for one player.
+ *
+ * `career` is the cumulative-to-each-dump roll-up — what you'd want
+ * on a spotlight card's "career arc" sparkline.
+ *
+ * `per_season[year]` is the in-season month-by-month trajectory for
+ * a single season (year+level fixed). Use the latest year for the
+ * most-relevant view.
+ */
+export interface TrajectoryResponse {
+  player_id: number;
+  career_bat: TrajectoryPoint[];
+  career_pit: TrajectoryPoint[];
+  season_year: number | null;
+  season_level_id: number | null;
+  season_bat: TrajectoryPoint[];
+  season_pit: TrajectoryPoint[];
+}
