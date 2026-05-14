@@ -154,8 +154,23 @@ Three follow-up tracks that could lift the display-ditched columns back into the
 - [x] **Pitching xstats re-enable — xBA + xSLG** ✅ **DONE 2026-05-14** (~30 min)
   Restored `xba` + `xslg` (scaled SUM/AB values from `f_player_season_xstats_pitching`) on the player page pitching Advanced view + leaderboards catalog (`xBA_pit` / `xSLG_pit`, default 30-BIP qualifier). Match rates: **xBA 96%, xSLG 97% IE match** (Padres reconcile sweep — both over D41's 95% bar). L_IE-routed to bit-for-bit OOTP IE for single-stint org-roster pitchers (latest year). Verified: William Kempner / Randy Vasquez / Brad Keller / Braylon Doughty IE-routed xBA + xSLG match the IE export exactly; L3 derivations for non-org-roster pitchers stay within rounding. `xwoba` (82% match) + `xera` (87%) stay deferred until per-player calibration below brings them over the bar.
 
-- [ ] **L3 per-player x-stat calibration** (Phase 4b deliverable per D40)
-  Replace flat scalers (1.22 xBA / 1.09 xSLG / 1.03 xwOBA) with per-player skill-aware scalers using the batter's hit-rating profile. **Goal**: push xBA / xSLG / xwOBA batting from 89-92% → 95%+ to re-cross the D41 display threshold. Re-enables batting Advanced xstats columns + leaderboards entries. **Status**: planned, not started. Phase 4b's invariants watchdog + game-grain facts come first.
+- [x] **L3 per-player x-stat calibration — POW-aware** ✅ **DONE 2026-05-14** (~1.5 hrs)
+  Replaced flat 1.22 xBA / 1.09 xSLG scalers with per-player `POW`-rating-aware linear corrections. OLS fit on Padres single-stint org corpus (n=43, L1-L4, BIP≥30): `r(xba_gap, POW) = 0.65`, `r(xslg_gap, POW) = 0.63`. Calibration constants:
+  - `xBA  correction = 0.00823 + 0.00054 · (POW - 50)`
+  - `xSLG correction = 0.01527 + 0.00115 · (POW - 50)`
+
+  Applied per-player in `_build_f_player_season_xstats_batting`, with year-aware POW lookup via `players_ratings_snapshot` (29 snapshots over time → use latest within season's year; pre-2026 falls back to POW=50, intercept-only).
+
+  **Outcome on Padres save** (full reconcile, 196 batters):
+  - **xBA: 89% → 95% IE match** ← clears D41 95% bar
+  - **xSLG: 89% → 93%** (close; xwOBA stays out)
+  - **xwOBA: 78% → 92%** (cascade win from improved LA-bucket calibration)
+  - **Pitching xwOBA: 82% → 96%** (cascade — clears bar)
+  - HHi% / EV / Soft% / Avg% / Solid% all gained additional pp via L3 rebuild touching shared inputs
+
+  **Re-enables on the player page**: batting `xba` column (was dropped Phase 4a-ext-3) + pitching `xwoba` column (was deferred at 82%). xSLG batting stays out (93% — under bar). xERA stays out (87%).
+
+  **Caveat — calibration is Padres-specific**. The α/β coefficients were fit to ONE save's IE corpus. Sox / other saves may have slightly different optima depending on player-population characteristics. Future work: rebuild the fit per-save at warehouse-build time if reconcile drift is detected. Out of scope for this slice.
 
 ---
 

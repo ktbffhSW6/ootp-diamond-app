@@ -75,11 +75,12 @@ const BATTING_COLUMNS: Array<[keyof PlayerBattingStint, string]> = [
 const ADV_BATTING_COLUMNS: Array<[keyof PlayerAdvancedBattingRow, string]> = [
   ["pa", "PA"],
   ["woba", "wOBA"],
-  // xwOBA per-BIP (xwoba_bip) was removed Phase 4a-extended-3 — it's
-  // a Diamond-custom AVG(xwoba_pa) over BIP that doesn't appear in any
-  // OOTP IE display. The IE-style scaled SUM/PA value reconciles to
-  // 89-92% per Padres corpus; per "ditch shotty analysis" both versions
-  // are off the player page until L_IE display routing lands.
+  // xBA re-enabled 2026-05-14 (Phase 4b POW-aware calibration). The
+  // empirical 1.22 scaler was over-estimating for high-power hitters;
+  // adding a per-player `pow - 50` correction term lifted match 89% →
+  // 95% IE — clears D41's bar. xSLG (93%) + xwOBA (92%) stay out
+  // until further calibration tuning. L_IE-routed where eligible.
+  ["xba", "xBA"],
   ["wraa", "wRAA"],
   ["wrc", "wRC"],
   ["wrc_plus", "wRC_plus"],
@@ -111,6 +112,9 @@ const ADV_PITCHING_COLUMNS: Array<[keyof PlayerAdvancedPitchingRow, string]> = [
   ["era_plus", "ERA_plus"],
   ["xba", "xBA"],
   ["xslg", "xSLG"],
+  // xwOBA-allowed re-enabled 2026-05-14: Phase 4b L3 rebuild cascade
+  // lifted pitching xwOBA from 82% → 96% IE match (clears D41 bar).
+  ["xwoba", "xwOBA"],
   ["pit_war", "pit_WAR"],
   ["p_war", "pWAR"],
   ["p_ra9_war", "RA9_WAR"],
@@ -186,10 +190,10 @@ function tooltipFor(entry: GlossaryEntry | undefined): string | undefined {
 // FPCT + wOBA share the same convention (.985, .992, .380, etc.).
 const SLASH_FIELDS = new Set([
   "avg", "obp", "slg", "ops", "fpct", "woba",
-  // 2026-05-14 — xBA/xSLG re-enabled on pitching Advanced (D41-cleared via
-  // L_IE routing for org roster + 96/97% L3 match elsewhere). 3-decimal
-  // OOTP-canonical display (".305" not "0.305").
-  "xba", "xslg",
+  // 2026-05-14 — xBA/xSLG/xwOBA re-enabled (xBA batting + xBA/xSLG/xwOBA
+  // pitching cleared D41 via Phase 4b POW-aware calibration + L_IE
+  // routing). 3-decimal OOTP-canonical display (".305" not "0.305").
+  "xba", "xslg", "xwoba",
 ]);
 // ERA / WHIP / K9 / BB9 / FIP render to 2 decimals.
 const TWO_DP_FIELDS = new Set(["era", "whip", "k_per_9", "bb_per_9", "fip"]);

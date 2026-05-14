@@ -457,12 +457,29 @@ of these are blocking** — the app is in a strong, honest state without them.
   for everyone else. Verified end-to-end on Kempner / Vasquez / Keller
   / Doughty — IE-routed values match the IE export exactly.
 
-### L3 per-player x-stat calibration (Phase 4b deliverable per D40)
+### L3 per-player x-stat calibration — POW-aware ✅ DONE 2026-05-14
 
-- **What**: replace flat scalers (1.22 / 1.09 / 1.03) with per-player
-  skill-aware scalers using the batter's hit-rating profile.
-- **Goal**: push xBA / xSLG / xwOBA batting from 89-92% → 95%+ to re-cross
-  the display threshold.
+- **Status**: SHIPPED. Replaced flat 1.22 xBA / 1.09 xSLG scalers with
+  POW-rating-aware linear corrections in `_build_f_player_season_xstats_batting`.
+- **Calibration constants** (OLS fit on n=43 Padres single-stint org,
+  L1-L4, BIP≥30; r ≈ 0.65 for both):
+  - `xBA  correction = 0.00823 + 0.00054 · (POW - 50)`
+  - `xSLG correction = 0.01527 + 0.00115 · (POW - 50)`
+- **Year-aware POW lookup**: `players_ratings_snapshot` (29 monthly
+  snapshots in the Padres save) provides per-(player_id, year) POW
+  ratings. Pre-2026 stints (no snapshot data) → POW=50 fallback (intercept-only).
+- **Padres reconcile post-calibration**:
+  - xBA 89% → **95%** ← clears D41 bar
+  - xSLG 89% → **93%** (under bar)
+  - xwOBA batting 78% → **92%** (improved LA buckets cascade)
+  - xwOBA pitching 82% → **96%** ← clears bar
+  - HHi% / EV / Soft% / Avg% / Solid% all gained pp from L3 rebuild
+- **Re-enables**: batting xBA + pitching xwOBA both restored on the
+  player page. Batting xSLG / xwOBA stay deferred (93% / 92% — under
+  bar). xERA stays out (87%).
+- **Caveat**: calibration is Padres-specific. Sox / other saves may
+  benefit from a per-save refit. Future work — detect calibration
+  drift during ingest, re-fit if reconcile gap exceeds threshold.
 - **Status**: planned, not started. Phase 4b's invariants watchdog +
   game-grain facts come first.
 

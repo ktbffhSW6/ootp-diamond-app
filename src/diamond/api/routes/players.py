@@ -393,6 +393,10 @@ def _fetch_advanced_batting(
         "SELECT COUNT(*) > 0 FROM information_schema.tables "
         "WHERE table_name = 'f_player_season_leverage_batting'"
     ).fetchone()[0]
+    has_xstats = con.execute(
+        "SELECT COUNT(*) > 0 FROM information_schema.tables "
+        "WHERE table_name = 'f_player_season_xstats_batting'"
+    ).fetchone()[0]
     has_lie = _view_exists(con, "v_lie_player_batting_display")
     lev_select = (
         "lv.wpa, lv.re24"
@@ -403,6 +407,15 @@ def _fetch_advanced_batting(
         "ON lv.player_id = f.player_id AND lv.year = f.year "
         "AND lv.league_id = f.league_id AND lv.level_id = f.level_id"
         if has_leverage else ""
+    )
+    # xstats join (2026-05-14 Phase 4b re-enable). xBA passed POW-aware
+    # calibration → 95% IE match. xSLG (93%) + xwOBA (92%) stay out
+    # until further calibration brings them over.
+    xstats_join = (
+        "LEFT JOIN f_player_season_xstats_batting xs "
+        "ON xs.player_id = f.player_id AND xs.year = f.year "
+        "AND xs.league_id = f.league_id AND xs.level_id = f.level_id"
+        if has_xstats else ""
     )
     if has_lie:
         ie_cte = """
@@ -434,6 +447,18 @@ def _fetch_advanced_batting(
             "  AND f.player_id IN (SELECT player_id FROM ie_eligible) "
             "  THEN lie.war_ie END, f.b_war) AS b_war"
         )
+        if has_xstats:
+            xba_select = (
+                "COALESCE(CASE WHEN f.year = (SELECT yr FROM latest_year) "
+                "  AND f.player_id IN (SELECT player_id FROM ie_eligible) "
+                "  THEN lie.xba_ie END, xs.xba) AS xba"
+            )
+        else:
+            xba_select = (
+                "CASE WHEN f.year = (SELECT yr FROM latest_year) "
+                "  AND f.player_id IN (SELECT player_id FROM ie_eligible) "
+                "  THEN lie.xba_ie END AS xba"
+            )
         ie_join = (
             "LEFT JOIN v_lie_player_batting_display lie "
             "ON lie.player_id = f.player_id"
@@ -443,6 +468,7 @@ def _fetch_advanced_batting(
         woba_select = "f.woba"
         opsplus_select = "f.ops_plus"
         bwar_select = "f.b_war"
+        xba_select = "xs.xba AS xba" if has_xstats else "NULL AS xba"
         ie_join = ""
     rows = con.execute(
         f"""
@@ -457,12 +483,14 @@ def _fetch_advanced_batting(
             {opsplus_select},
             f.o_war,
             {bwar_select},
+            {xba_select},
             f.park_avg,
             {lev_select}
         FROM f_player_season_advanced_batting f
         LEFT JOIN leagues         l  ON l.league_id  = f.league_id
         LEFT JOIN players_current pl ON pl.player_id = f.player_id
         {ie_join}
+        {xstats_join}
         {lev_join}
         WHERE f.player_id = ?
         ORDER BY f.year, f.level_id, f.league_id
@@ -472,7 +500,8 @@ def _fetch_advanced_batting(
     out: list[PlayerAdvancedBattingRow] = []
     for r in rows:
         (year, league_id, level_id, league_abbr, age, pa,
-         woba, wraa, wrc, wrc_plus, ops_plus, o_war, b_war, park_avg,
+         woba, wraa, wrc, wrc_plus, ops_plus, o_war, b_war, xba,
+         park_avg,
          wpa, re24) = r
         out.append(PlayerAdvancedBattingRow(
             year=int(year),
@@ -489,6 +518,7 @@ def _fetch_advanced_batting(
             ops_plus=int(ops_plus) if ops_plus is not None else None,
             o_war=float(o_war) if o_war is not None else None,
             b_war=float(b_war) if b_war is not None else None,
+            xba=float(xba) if xba is not None else None,
             park_avg=float(park_avg) if park_avg is not None else None,
             wpa=float(wpa) if wpa is not None else None,
             re24=float(re24) if re24 is not None else None,
@@ -575,6 +605,11 @@ def _fetch_advanced_pitching(
                 "  AND f.player_id IN (SELECT player_id FROM ie_eligible) "
                 "  THEN lie.xslg_ie END, xs.xslg) AS xslg"
             )
+            xwoba_select = (
+                "COALESCE(CASE WHEN f.year = (SELECT yr FROM latest_year) "
+                "  AND f.player_id IN (SELECT player_id FROM ie_eligible) "
+                "  THEN lie.xwoba_ie END, xs.xwoba) AS xwoba"
+            )
         else:
             # IE-routed when present, NULL otherwise (no L3 xstats table).
             xba_select = (
@@ -587,6 +622,11 @@ def _fetch_advanced_pitching(
                 "  AND f.player_id IN (SELECT player_id FROM ie_eligible) "
                 "  THEN lie.xslg_ie END AS xslg"
             )
+            xwoba_select = (
+                "CASE WHEN f.year = (SELECT yr FROM latest_year) "
+                "  AND f.player_id IN (SELECT player_id FROM ie_eligible) "
+                "  THEN lie.xwoba_ie END AS xwoba"
+            )
         ie_join = (
             "LEFT JOIN v_lie_player_pitching_display lie "
             "ON lie.player_id = f.player_id"
@@ -598,6 +638,7 @@ def _fetch_advanced_pitching(
         pwar_select = "f.p_war"
         xba_select = "xs.xba AS xba" if has_xstats else "NULL AS xba"
         xslg_select = "xs.xslg AS xslg" if has_xstats else "NULL AS xslg"
+        xwoba_select = "xs.xwoba AS xwoba" if has_xstats else "NULL AS xwoba"
         ie_join = ""
     rows = con.execute(
         f"""
@@ -615,6 +656,7 @@ def _fetch_advanced_pitching(
             f.p_ra9_war,
             {xba_select},
             {xslg_select},
+            {xwoba_select},
             f.park_avg,
             {lev_select}
         FROM f_player_season_advanced_pitching f
@@ -632,7 +674,7 @@ def _fetch_advanced_pitching(
     for r in rows:
         (year, league_id, level_id, league_abbr, age, outs,
          ip_display, fip, era_plus, pit_war, p_war, p_ra9_war,
-         xba, xslg, park_avg,
+         xba, xslg, xwoba, park_avg,
          wpa, li, re24, clutch) = r
         out.append(PlayerAdvancedPitchingRow(
             year=int(year),
@@ -650,6 +692,7 @@ def _fetch_advanced_pitching(
             p_ra9_war=float(p_ra9_war) if p_ra9_war is not None else None,
             xba=float(xba) if xba is not None else None,
             xslg=float(xslg) if xslg is not None else None,
+            xwoba=float(xwoba) if xwoba is not None else None,
             park_avg=float(park_avg) if park_avg is not None else None,
             wpa=float(wpa) if wpa is not None else None,
             li=float(li) if li is not None else None,

@@ -951,12 +951,16 @@ export interface ParksResponse {
  * isn't a well-defined number.
  *
  * Phase 4a-extended-3 (2026-05-10) dropped the `x*_bip` triplet
- * (xwoba_bip / xba_bip / xslg_bip) — they're per-BIP averages, not
- * what OOTP IE displays. The IE-style scaled SUM/PA / SUM/AB versions
- * in `f_player_season_xstats_batting` reconcile to 89-92% match on
- * batting, gap dominated by per-player skill variance the empirical
- * scalers can't capture. Per "ditch shotty analysis" policy. Tables
- * remain in L3 for future L_IE routing.
+ * (xwoba_bip / xba_bip / xslg_bip) — those are per-BIP averages, not
+ * what OOTP IE displays.
+ *
+ * **2026-05-14 — Phase 4b xstats partial re-enable**: `xba` is
+ * restored as the calibrated SUM/AB value from `f_player_season_xstats_batting`.
+ * Per-player POW-rating-aware correction (replaces the flat 1.22 scaler)
+ * pushes match: **89% → 95% IE match** — over the D41 95% bar. L_IE-
+ * routed to bit-for-bit OOTP IE for single-stint org-roster batters in
+ * the latest year. `xslg` (93%) and `xwoba` (92%) stay deferred — close,
+ * but under the strict bar; awaiting xSLG-specific calibration tuning.
  */
 export interface PlayerAdvancedBattingRow {
   year: number;
@@ -973,6 +977,7 @@ export interface PlayerAdvancedBattingRow {
   ops_plus: number | null;
   o_war: number | null;
   b_war: number | null;
+  xba?: number | null;
   park_avg: number | null;
   wpa?: number | null;
   re24?: number | null;
@@ -988,12 +993,13 @@ export interface PlayerAdvancedBattingRow {
  * per-BIP averages aren't what OOTP IE displays. FIP / ERA+ / pWAR
  * remain as the canonical pitcher-quality columns.
  *
- * **2026-05-14 xstats partial re-enable**: `xba` + `xslg` are restored
- * as scaled SUM/AB values from ``f_player_season_xstats_pitching``
- * (96% / 97% IE-match — over the D41 95% bar). L_IE-routed to bit-
- * for-bit OOTP IE values for single-stint org-roster pitchers, latest
- * year. ``xwoba`` and ``xera`` stay deferred until the per-player
- * calibration in Phase 4b lifts them over the bar.
+ * **2026-05-14 xstats re-enable**: `xba`, `xslg`, `xwoba` are restored
+ * as scaled SUM/AB / SUM/PA values from ``f_player_season_xstats_pitching``.
+ * Match rates: xBA 96%, xSLG 97%, xwOBA 96% — all over the D41 95% bar
+ * (xwOBA cleared 82% → 96% via the cascade from Phase 4b batting
+ * calibration touching shared L1/L2 inputs). L_IE-routed to bit-for-bit
+ * OOTP IE values for single-stint org-roster pitchers in the latest
+ * year. ``xera`` (87%) stays deferred until calibration brings it over.
  */
 export interface PlayerAdvancedPitchingRow {
   year: number;
@@ -1011,6 +1017,7 @@ export interface PlayerAdvancedPitchingRow {
   p_ra9_war: number | null;
   xba?: number | null;
   xslg?: number | null;
+  xwoba?: number | null;
   park_avg: number | null;
   wpa?: number | null;
   li?: number | null;

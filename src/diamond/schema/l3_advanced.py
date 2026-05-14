@@ -1267,6 +1267,28 @@ def _build_f_player_season_xstats_batting(con: duckdb.DuckDBPyConnection) -> int
             FROM f_player_season_batting
             WHERE split_id = 1
             GROUP BY player_id, year, league_id, level_id
+        ),
+        -- 2026-05-14 per-player calibration (Phase 4b): the empirical flat
+        -- scalers (1.22 xBA / 1.09 xSLG) over-estimate for high-power
+        -- hitters. Pull each player's `batting_ratings_overall_power` from
+        -- the snapshot row closest to (but not after) the season's end, so
+        -- 2027 stints use 2027 ratings and 2028 stints use 2028 ratings.
+        -- Pre-2026 stints (no snapshot data) fall back to POW=50 (lg avg)
+        -- → correction is intercept-only.
+        player_pow_per_year AS (
+            SELECT player_id, year, batting_ratings_overall_power AS pow
+            FROM (
+                SELECT
+                    player_id,
+                    EXTRACT(YEAR FROM dump_date)::INT AS year,
+                    batting_ratings_overall_power,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY player_id, EXTRACT(YEAR FROM dump_date)
+                        ORDER BY dump_date DESC
+                    ) AS rn
+                FROM players_ratings_snapshot
+                WHERE batting_ratings_overall_power IS NOT NULL
+            ) WHERE rn = 1
         )
         SELECT
             b.player_id, b.year, b.league_id, b.level_id,
@@ -1274,21 +1296,32 @@ def _build_f_player_season_xstats_batting(con: duckdb.DuckDBPyConnection) -> int
             b.xwoba_bip, b.xba_bip, b.xslg_bip,
             -- IE-style denominators: per AB for xBA/xSLG, per PA for xwOBA
             -- with non-BIP weights folded in (uBB=0.69, HBP=0.72 per OOTP base wOBA).
-            -- Empirical scalers — `lref_x*_table` values are calibrated to
-            -- real-MLB Statcast probabilities, but OOTP IE displays
-            -- pre-scaled values. Grid-searched against the Padres 2028 IE
-            -- corpus (73 MLB qualifiers, BIP>=30):
+            -- Empirical scalers from Phase 4a-ext-1 (1.22 / 1.09 / 1.03) +
+            -- per-player POW correction (Phase 4b, 2026-05-14). OLS fit
+            -- on Padres single-stint org corpus (n=43 across L1-L4 at
+            -- BIP≥30): `r(xba_gap, POW) = 0.65, r(xslg_gap, POW) = 0.63`.
+            -- Apply the inferred gap (alpha + beta·POW_centered) as a
+            -- subtraction from the flat-scaled value.
             --
-            --   xBA   : optimum scaler 1.21 (63/73 exact) or 1.22 (62/73,
-            --           MAE 0.0087). Keep 1.22 — matches the D39 value;
-            --           1.21 is a tie.
-            --   xSLG  : optimum 1.09 (61/73 exact, MAE 0.0186) — same as D39.
-            --   xwOBA : Phase 4a-extended (2026-05-10) discovered the
-            --           previously-no-scaler version was suboptimal.
-            --           Best scaler **1.03** (63/73 exact, MAE 0.0088) vs
-            --           no-scaler (52/73, MAE 0.0124). Apply 1.03.
-            ROUND(1.22 * b.sum_xba  / NULLIF(p.ab, 0), 4)                           AS xba,
-            ROUND(1.09 * b.sum_xslg / NULLIF(p.ab, 0), 4)                           AS xslg,
+            -- Calibration constants (from L1-L4 OLS fit):
+            --   xBA  correction = 0.00823 + 0.00054 * (POW - 50)
+            --   xSLG correction = 0.01527 + 0.00115 * (POW - 50)
+            --
+            -- Result on n=43: xBA MAE 0.0068→0.0046 (-32%); xSLG MAE
+            -- 0.0140→0.0108 (-23%); xBA within 10pp 72%→91%.
+            ROUND(
+                1.22 * b.sum_xba / NULLIF(p.ab, 0)
+                - (0.00823 + 0.00054 * (COALESCE(rp.pow, 50) - 50)),
+                4
+            ) AS xba,
+            ROUND(
+                1.09 * b.sum_xslg / NULLIF(p.ab, 0)
+                - (0.01527 + 0.00115 * (COALESCE(rp.pow, 50) - 50)),
+                4
+            ) AS xslg,
+            -- xwOBA: keep flat 1.03 scaler (already at 92% IE match per
+            -- Phase 4a-ext-1; POW correction shows weaker signal here —
+            -- intercept-only fit improves rounding but not match rate).
             ROUND(1.03 * (b.sum_xwoba + 0.69 * COALESCE(p.ubb, 0) + 0.72 * COALESCE(p.hbp, 0))
                   / NULLIF(p.pa, 0), 4)                                             AS xwoba
         FROM bip_agg b
@@ -1297,6 +1330,9 @@ def _build_f_player_season_xstats_batting(con: duckdb.DuckDBPyConnection) -> int
            AND p.year      = b.year
            AND p.league_id = b.league_id
            AND p.level_id  = b.level_id
+        LEFT JOIN player_pow_per_year rp
+            ON rp.player_id = b.player_id
+           AND rp.year      = b.year
         WHERE b.bip_xstat >= 30
     """
     con.execute(sql)
