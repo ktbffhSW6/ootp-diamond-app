@@ -89,8 +89,11 @@ _ABAT = "f_player_season_advanced_batting"
 _APIT = "f_player_season_advanced_pitching"
 _SBAT = "f_player_season_statcast_batting"
 _SPIT = "f_player_season_statcast_pitching"
-# _XBAT / _XPIT (xstats tables) dropped from leaderboards catalog
-# Phase 4a-extended-3 — see "Statcast" cluster comments below.
+# 2026-05-14: _XPIT re-introduced for pitching xBA + xSLG re-enable
+# (96/97% IE-match; over D41 bar). _XBAT stays dropped — batting xstats
+# are 89-92% match, still under threshold; awaiting per-player
+# calibration in Phase 4b.
+_XPIT = "f_player_season_xstats_pitching"
 _LBAT = "f_player_season_leverage_batting"
 _LPIT = "f_player_season_leverage_pitching"
 
@@ -164,6 +167,15 @@ LEADERBOARD_STATS: dict[str, StatSpec] = {
     "pWAR":     StatSpec("pWAR",     "pWAR",   "pitching", _APIT, "MAX(p_war)",    "MAX(outs)", "IP", 100, "desc", 1),
     "RA9_WAR":  StatSpec("RA9_WAR",  "RA9-WAR","pitching", _APIT, "MAX(p_ra9_war)","MAX(outs)", "IP", 100, "desc", 1),
     "pit_WAR":  StatSpec("pit_WAR",  "pit_WAR","pitching", _APIT, "MAX(pit_war)",  "MAX(outs)", "IP", 100, "desc", 1),
+    # ── Pitching x-stats (Phase 4a-ext-1 calibration; 2026-05-14 re-enable) ──
+    # xBA + xSLG restored: 96% / 97% IE match (over D41's 95% bar). Sourced
+    # from `f_player_season_xstats_pitching` (scaled SUM/AB values). On the
+    # player page these route through L_IE for bit-for-bit OOTP match on
+    # the org roster; here in the leaderboards we expose the L3 derivation
+    # at 96-97% rounding-grade match. xwOBA (82%) + xERA (87%) stay deferred
+    # until per-player calibration (Phase 4b) clears the bar.
+    "xBA_pit":  StatSpec("xBA_pit",  "xBA",    "pitching", _XPIT, "MAX(xba)",  "MAX(bip_xstat)", "BIP", 30, "asc", 3),
+    "xSLG_pit": StatSpec("xSLG_pit", "xSLG",   "pitching", _XPIT, "MAX(xslg)", "MAX(bip_xstat)", "BIP", 30, "asc", 3),
     # ── Statcast ────────────────────────────────────────────────────
     # Phase 4a-extended-3 (2026-05-10) dropped AVG_EV (83-87% IE match),
     # BARREL_PCT (74% batting), SWEET_SPOT_PCT (no IE counterpart),

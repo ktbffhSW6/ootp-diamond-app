@@ -151,8 +151,8 @@ Three follow-up tracks that could lift the display-ditched columns back into the
   - Route roster + leaderboards + cockpit. Same view, same eligibility predicate — wiring pattern locked, just hasn't been applied yet.
   - Per-position spray %s / BAR count / Statcast EV cells / IFH% / BUH%. Routable, but each is its own column on the player page (currently dropped per D41). Re-enable requires both routing + frontend column resurrection.
 
-- [ ] **Pitching xstats re-enable** (~30 min)
-  Switch player page pitching Advanced to expose `xwoba` / `xba` / `xslg` (SUM/PA scaled values in `f_player_season_xstats_pitching`) instead of the dropped per-BIP averages. Match: 96-97% (rounding-grade) — would not violate D41 policy. **Why not yet**: schema additions + frontend wiring. Trivial work but not urgent. Batting side stays out (89% match — under threshold; needs the per-player calibration below).
+- [x] **Pitching xstats re-enable — xBA + xSLG** ✅ **DONE 2026-05-14** (~30 min)
+  Restored `xba` + `xslg` (scaled SUM/AB values from `f_player_season_xstats_pitching`) on the player page pitching Advanced view + leaderboards catalog (`xBA_pit` / `xSLG_pit`, default 30-BIP qualifier). Match rates: **xBA 96%, xSLG 97% IE match** (Padres reconcile sweep — both over D41's 95% bar). L_IE-routed to bit-for-bit OOTP IE for single-stint org-roster pitchers (latest year). Verified: William Kempner / Randy Vasquez / Brad Keller / Braylon Doughty IE-routed xBA + xSLG match the IE export exactly; L3 derivations for non-org-roster pitchers stay within rounding. `xwoba` (82% match) + `xera` (87%) stay deferred until per-player calibration below brings them over the bar.
 
 - [ ] **L3 per-player x-stat calibration** (Phase 4b deliverable per D40)
   Replace flat scalers (1.22 xBA / 1.09 xSLG / 1.03 xwOBA) with per-player skill-aware scalers using the batter's hit-rating profile. **Goal**: push xBA / xSLG / xwOBA batting from 89-92% → 95%+ to re-cross the D41 display threshold. Re-enables batting Advanced xstats columns + leaderboards entries. **Status**: planned, not started. Phase 4b's invariants watchdog + game-grain facts come first.

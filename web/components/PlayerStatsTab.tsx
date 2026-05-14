@@ -97,14 +97,20 @@ const ADV_BATTING_COLUMNS: Array<[keyof PlayerAdvancedBattingRow, string]> = [
 // (flat-1.13-replacement) + RA9-WAR (runs-based parallel — defense /
 // sequencing-sensitive). Three views of the same season.
 //
-// xwOBA-allowed (xwoba_bip) was removed Phase 4a-extended-3 — same
-// reasoning as the batting side: per-BIP avg isn't what OOTP IE
-// displays. FIP / ERA+ / pWAR remain as the canonical pitcher-quality
-// columns.
+// xwOBA-allowed (xwoba_bip) was removed Phase 4a-extended-3.
+//
+// 2026-05-14 re-enable: xBA + xSLG restored as scaled SUM/AB values from
+// `f_player_season_xstats_pitching`. Both clear the D41 95% IE-match bar
+// (xBA 96%, xSLG 97% on the Padres save) and route through L_IE for
+// bit-for-bit OOTP match on single-stint org-roster pitchers in the
+// latest year. xwOBA (82% match) and xERA (87%) stay deferred until
+// per-player calibration in Phase 4b.
 const ADV_PITCHING_COLUMNS: Array<[keyof PlayerAdvancedPitchingRow, string]> = [
   ["ip_display", "IP"],
   ["fip", "FIP"],
   ["era_plus", "ERA_plus"],
+  ["xba", "xBA"],
+  ["xslg", "xSLG"],
   ["pit_war", "pit_WAR"],
   ["p_war", "pWAR"],
   ["p_ra9_war", "RA9_WAR"],
@@ -180,6 +186,10 @@ function tooltipFor(entry: GlossaryEntry | undefined): string | undefined {
 // FPCT + wOBA share the same convention (.985, .992, .380, etc.).
 const SLASH_FIELDS = new Set([
   "avg", "obp", "slg", "ops", "fpct", "woba",
+  // 2026-05-14 — xBA/xSLG re-enabled on pitching Advanced (D41-cleared via
+  // L_IE routing for org roster + 96/97% L3 match elsewhere). 3-decimal
+  // OOTP-canonical display (".305" not "0.305").
+  "xba", "xslg",
 ]);
 // ERA / WHIP / K9 / BB9 / FIP render to 2 decimals.
 const TWO_DP_FIELDS = new Set(["era", "whip", "k_per_9", "bb_per_9", "fip"]);

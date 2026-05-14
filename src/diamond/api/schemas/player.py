@@ -351,9 +351,15 @@ class PlayerAdvancedPitchingRow(BaseModel):
     (most outs at this level).
 
     Phase 4a-extended-3 (2026-05-10) dropped the `x*_bip` triplet —
-    same reasoning as the batting side. Per-BIP averages aren't what
-    OOTP IE displays. FIP / ERA+ / pWAR remain as the canonical
-    pitcher-quality columns.
+    per-BIP averages aren't what OOTP IE displays. FIP / ERA+ / pWAR
+    remain as the canonical pitcher-quality columns.
+
+    **2026-05-14 xstats partial re-enable**: `xba` + `xslg` are restored
+    as scaled SUM/AB values from ``f_player_season_xstats_pitching``
+    (96% / 97% IE-match — over the D41 95% bar). L_IE-routed to bit-
+    for-bit OOTP IE values for single-stint org-roster pitchers, latest
+    year. ``xwoba`` and ``xera`` stay deferred until the per-player
+    calibration in Phase 4b lifts them over the bar.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -371,6 +377,12 @@ class PlayerAdvancedPitchingRow(BaseModel):
     pit_war: float | None
     p_war: float | None           # OOTP FIP-WAR (canonical pWAR)
     p_ra9_war: float | None       # OOTP RA9-based WAR
+    # Statcast-style expected outcomes (Phase 4a-ext-3 + 2026-05-14 re-enable).
+    # Scaled SUM/AB values from `f_player_season_xstats_pitching`. L_IE-routed
+    # to bit-for-bit OOTP IE for single-stint org-roster pitchers, otherwise
+    # L3 derivation at 96-97% IE match.
+    xba: float | None = None
+    xslg: float | None = None
     park_avg: float | None
     # Leverage stack (Slice A): WPA + LI + RE24-against + Clutch.
     # OOTP supplies per-game WPA and per-game LI sums directly; RE24-

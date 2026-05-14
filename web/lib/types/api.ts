@@ -985,9 +985,15 @@ export interface PlayerAdvancedBattingRow {
  * (most outs at this level).
  *
  * Phase 4a-extended-3 (2026-05-10) dropped the `x*_bip` triplet —
- * same reasoning as the batting side. Per-BIP averages aren't what
- * OOTP IE displays. FIP / ERA+ / pWAR remain as the canonical
- * pitcher-quality columns.
+ * per-BIP averages aren't what OOTP IE displays. FIP / ERA+ / pWAR
+ * remain as the canonical pitcher-quality columns.
+ *
+ * **2026-05-14 xstats partial re-enable**: `xba` + `xslg` are restored
+ * as scaled SUM/AB values from ``f_player_season_xstats_pitching``
+ * (96% / 97% IE-match — over the D41 95% bar). L_IE-routed to bit-
+ * for-bit OOTP IE values for single-stint org-roster pitchers, latest
+ * year. ``xwoba`` and ``xera`` stay deferred until the per-player
+ * calibration in Phase 4b lifts them over the bar.
  */
 export interface PlayerAdvancedPitchingRow {
   year: number;
@@ -1003,6 +1009,8 @@ export interface PlayerAdvancedPitchingRow {
   pit_war: number | null;
   p_war: number | null;
   p_ra9_war: number | null;
+  xba?: number | null;
+  xslg?: number | null;
   park_avg: number | null;
   wpa?: number | null;
   li?: number | null;

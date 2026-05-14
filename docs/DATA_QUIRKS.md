@@ -443,15 +443,19 @@ of these are blocking** — the app is in a strong, honest state without them.
   - Roster + leaderboards + cockpit (same eligibility predicate; trivial wiring).
   - Per-position spray %s / BAR count / Statcast cells / IFH% / BUH% (column resurrection on the frontend; values exist in L_IE views).
 
-### Pitching xstats re-enable (~30 min)
+### Pitching xstats re-enable — xBA + xSLG ✅ DONE 2026-05-14
 
-- **What**: switch player page pitching Advanced to expose `xwoba` / `xba`
-  / `xslg` (SUM/PA scaled values in `f_player_season_xstats_pitching`)
-  instead of the dropped per-BIP averages.
-- **Match**: 96-97% (rounding-grade). Could be re-added without violating
-  display policy.
-- **Why not yet**: schema additions + frontend wiring. Trivial work but
-  not urgent. Batting side stays out (89% match — under threshold).
+- **Status**: SHIPPED. Restored `xba` + `xslg` (scaled SUM/AB values
+  from `f_player_season_xstats_pitching`) on the player page pitching
+  Advanced view + leaderboards catalog (`xBA_pit` / `xSLG_pit` ids;
+  default 30-BIP qualifier; ascending — lower is better for pitchers).
+- **Match rates** (Padres reconcile): xBA **96%**, xSLG **97%** —
+  both over D41's 95% bar. xwOBA (82%) and xERA (87%) stay deferred
+  until per-player calibration brings them over the bar.
+- **Routing**: L_IE-routed to bit-for-bit OOTP IE for single-stint
+  org-roster pitchers in latest year; L3 derivation at 96-97% match
+  for everyone else. Verified end-to-end on Kempner / Vasquez / Keller
+  / Doughty — IE-routed values match the IE export exactly.
 
 ### L3 per-player x-stat calibration (Phase 4b deliverable per D40)
 
